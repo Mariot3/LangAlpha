@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <!-- This build reserves the strip macOS window buttons float over, so a
          desktop shell may hide the titlebar and hand the top of the window to
@@ -315,6 +317,9 @@
          loaded non-blocking via the media="print" swap. -->
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400..700&family=Sora:wght@400..700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
     <title>LangAlpha</title>
+      <script>
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function () {});
+    </script>
   </head>
   <body>
     <script>
