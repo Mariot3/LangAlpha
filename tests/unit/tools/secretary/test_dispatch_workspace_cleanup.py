@@ -33,15 +33,17 @@ from src.server.services.report_back.flash import keys, reserve
 from src.tools.secretary.tools import ptc_agent
 from tests.unit.server.handlers.chat.redis_fakes import FakeCache as _FakeCache
 
+from .conftest import NEW_WORKSPACE_ID, FakeResp, FakeSession, workspace_manager
+
 RESERVE_MOD = "src.server.services.report_back.flash.reserve"
 
 USER_ID = "user-1"
 FLASH_THREAD_ID = "flash-thread-1"
-NEW_WORKSPACE_ID = "33333333-3333-3333-3333-333333333333"
 
 
 def _tool_call(args: dict, call_id: str = "call_test") -> dict:
-    return {"name": "ptc_agent", "args": args, "id": call_id, "type": "tool_call"}
+    # ``state`` is what the graph injects; nothing here was approved in advance.
+    return {"name": "ptc_agent", "args": {**args, "state": {}}, "id": call_id, "type": "tool_call"}
 
 
 def _config() -> dict:
@@ -51,13 +53,6 @@ def _config() -> dict:
 
 def _payload(result) -> dict:
     return json.loads(result.update["messages"][0].content)
-
-
-def _manager(delete: AsyncMock | None = None) -> MagicMock:
-    mgr = MagicMock()
-    mgr.create_workspace = AsyncMock(return_value={"workspace_id": NEW_WORKSPACE_ID})
-    mgr.delete_workspace = delete or AsyncMock(return_value=True)
-    return mgr
 
 
 @pytest.fixture
@@ -80,45 +75,11 @@ def _fill_flash_cap(cache) -> None:
         }
 
 
-class _FakeResp:
-    def __init__(self, status: int = 200, body: dict | None = None) -> None:
-        self.status = status
-        self._body = body if body is not None else {"status": "dispatched"}
-
-    async def __aenter__(self) -> "_FakeResp":
-        return self
-
-    async def __aexit__(self, *_exc) -> bool:
-        return False
-
-    async def json(self) -> dict:
-        return self._body
-
-
-class _FakeSession:
-    def __init__(
-        self, resp: _FakeResp | None = None, post_exc: Exception | None = None
-    ) -> None:
-        self._resp = resp
-        self._post_exc = post_exc
-
-    async def __aenter__(self) -> "_FakeSession":
-        return self
-
-    async def __aexit__(self, *_exc) -> bool:
-        return False
-
-    def post(self, *_args, **_kwargs) -> _FakeResp:
-        if self._post_exc is not None:
-            raise self._post_exc
-        return self._resp
-
-
 @pytest.mark.asyncio
 async def test_precheck_rejection_skips_workspace_creation(cache):
     """A deterministic cap hit fails BEFORE any sandbox is provisioned."""
     _fill_flash_cap(cache)
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
@@ -144,7 +105,7 @@ async def test_reserve_rejection_deletes_auto_created_workspace(cache):
     """The pre-check/reserve race path: the cap fills between the pre-check and
     reserve(), so the just-created workspace must be deleted, not leaked."""
     _fill_flash_cap(cache)
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
@@ -173,7 +134,7 @@ async def test_reserve_rejection_deletes_auto_created_workspace(cache):
 async def test_cleanup_failure_still_returns_the_cap_error(cache):
     """A failed best-effort delete must not mask the cap rejection."""
     _fill_flash_cap(cache)
-    mgr = _manager(delete=AsyncMock(side_effect=RuntimeError("sandbox teardown failed")))
+    mgr = workspace_manager(delete=AsyncMock(side_effect=RuntimeError("sandbox teardown failed")))
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
@@ -201,14 +162,14 @@ async def test_dispatch_error_status_deletes_auto_created_workspace(cache):
     """A >=400 dispatch response (e.g. the credit gate) proves the run never
     started — the endpoint's error paths all precede its create_task — so the
     just-created workspace is deleted, not leaked."""
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
     ), patch(
-        "aiohttp.ClientSession", return_value=_FakeSession(_FakeResp(status=402))
+        "aiohttp.ClientSession", return_value=FakeSession(FakeResp(status=402))
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -226,7 +187,7 @@ async def test_dispatch_timeout_with_probe_down_keeps_workspace_and_reservation(
     """A timed-out dispatch may have started the run server-side; when the
     admission-marker probe can't answer either (Redis blip), both the
     workspace and the report-back reservation must survive."""
-    mgr = _manager()
+    mgr = workspace_manager()
     _ledger_probe_raises(ledger)
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
@@ -234,7 +195,7 @@ async def test_dispatch_timeout_with_probe_down_keeps_workspace_and_reservation(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
     ), patch(
-        "aiohttp.ClientSession", return_value=_FakeSession(post_exc=TimeoutError())
+        "aiohttp.ClientSession", return_value=FakeSession(post_exc=TimeoutError())
     ), patch(
         "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
@@ -309,7 +270,7 @@ def _ledger_probe_raises(ledger) -> None:
     ledger.side_effect = ConnectionError("db blip")
 
 
-class _LostBodyResp(_FakeResp):
+class _LostBodyResp(FakeResp):
     async def json(self) -> dict:
         raise aiohttp.ClientPayloadError("response body lost")
 
@@ -319,14 +280,14 @@ async def test_success_status_with_lost_body_commits_and_reports_dispatched(cach
     """A 2xx whose body can't be read is a DISPATCHED run: the status alone
     proves scheduling, so the reservation commits before the body parse and
     the tool reports success."""
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
     ), patch(
-        "aiohttp.ClientSession", return_value=_FakeSession(_LostBodyResp(status=200))
+        "aiohttp.ClientSession", return_value=FakeSession(_LostBodyResp(status=200))
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -344,7 +305,7 @@ async def test_ambiguous_loss_with_admission_marker_reports_success(cache, ledge
     """Codex round-8 F1: a lost exchange whose admission marker appears is a
     DELIVERED dispatch — the tool reports plain success (no unknown_retained
     ambiguity for the model to mis-handle)."""
-    mgr = _manager()
+    mgr = workspace_manager()
     _attempt_with_our_gen(cache, ledger)
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
@@ -353,7 +314,7 @@ async def test_ambiguous_loss_with_admission_marker_reports_success(cache, ledge
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
+        return_value=FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -372,7 +333,7 @@ async def test_ambiguous_loss_with_no_marker_on_fresh_pair_retains(cache):
     may still be mid-admission (platform auth/credit checks can outlast the
     grace) — and nothing pre-existing can be lost by keeping a fresh pair, so
     the reservation and workspace are retained as unknown (TTL-bounded)."""
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
@@ -380,7 +341,7 @@ async def test_ambiguous_loss_with_no_marker_on_fresh_pair_retains(cache):
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
+        return_value=FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
     ), patch(
         "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
@@ -401,7 +362,7 @@ async def test_foreign_marker_on_fresh_pair_is_not_success(cache, ledger):
     """Codex round-9 F3: gen-scoping — a marker that doesn't carry OUR
     generation no longer confirms the dispatch. On a fresh pair it retains
     as unknown instead of claiming success."""
-    mgr = _manager()
+    mgr = workspace_manager()
     _attempt_with_gen(ledger, "someone-elses-gen")
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
@@ -410,7 +371,7 @@ async def test_foreign_marker_on_fresh_pair_is_not_success(cache, ledger):
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
+        return_value=FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
     ), patch(
         "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
@@ -430,7 +391,7 @@ async def test_ambiguous_loss_with_probe_down_retains_unknown(cache, ledger):
     """When the marker probe itself fails, the outcome stays unknown — keep
     the reservation (TTL-bounded) and surface the retained thread id so the
     model can check agent_output instead of blind-re-dispatching."""
-    mgr = _manager()
+    mgr = workspace_manager()
     _ledger_probe_raises(ledger)
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
@@ -439,7 +400,7 @@ async def test_ambiguous_loss_with_probe_down_retains_unknown(cache, ledger):
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
+        return_value=FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
     ), patch(
         "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
@@ -463,7 +424,7 @@ async def test_cancellation_mid_exchange_retains_reservation(cache):
     report-back wiring."""
     import asyncio
 
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
@@ -471,7 +432,7 @@ async def test_cancellation_mid_exchange_retains_reservation(cache):
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(post_exc=asyncio.CancelledError()),
+        return_value=FakeSession(post_exc=asyncio.CancelledError()),
     ):
         with pytest.raises(asyncio.CancelledError):
             await ptc_agent.ainvoke(
@@ -487,14 +448,14 @@ async def test_non_200_success_status_is_not_scheduling_proof(cache):
     """Codex round-7 F2: a 3xx/2xx-non-200 is not the endpoint's reply (it
     answers exactly 200; redirects are disabled) — never success. Delivery
     stays unproven either way, so the fresh pair retains as unknown."""
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
     ), patch(
-        "aiohttp.ClientSession", return_value=_FakeSession(_FakeResp(status=302))
+        "aiohttp.ClientSession", return_value=FakeSession(FakeResp(status=302))
     ), patch(
         "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
@@ -516,7 +477,7 @@ async def test_non_dict_200_body_reconciles_without_raising(cache, ledger):
     must not AttributeError out of the tool — the 200 keeps the reservation
     committed (status proof stands) and the outcome reconciles as unknown
     when the marker can't confirm."""
-    mgr = _manager()
+    mgr = workspace_manager()
     _ledger_probe_raises(ledger)
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
@@ -525,7 +486,7 @@ async def test_non_dict_200_body_reconciles_without_raising(cache, ledger):
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(_FakeResp(status=200, body=[])),
+        return_value=FakeSession(FakeResp(status=200, body=[])),
     ), patch(
         "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
@@ -545,7 +506,7 @@ async def test_200_with_contradictory_body_never_rolls_back(cache):
     """A clean marker-absent verdict after a REAL 200 must still retain: the
     exact-status proof outranks the probe (the two contradicting is a state
     we can't explain, so the safe side is keep)."""
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
@@ -553,7 +514,7 @@ async def test_200_with_contradictory_body_never_rolls_back(cache):
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(_FakeResp(status=200, body={"status": "nope"})),
+        return_value=FakeSession(FakeResp(status=200, body={"status": "nope"})),
     ), patch(
         "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
@@ -575,14 +536,14 @@ async def test_cancel_during_post_rejection_cleanup_does_not_commit(cache):
     cleanup must not commit the already-dead reservation."""
     import asyncio
 
-    mgr = _manager(delete=AsyncMock(side_effect=asyncio.CancelledError()))
+    mgr = workspace_manager(delete=AsyncMock(side_effect=asyncio.CancelledError()))
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
     ), patch(
-        "aiohttp.ClientSession", return_value=_FakeSession(_FakeResp(status=402))
+        "aiohttp.ClientSession", return_value=FakeSession(FakeResp(status=402))
     ):
         with pytest.raises(asyncio.CancelledError):
             await ptc_agent.ainvoke(
@@ -596,7 +557,7 @@ async def test_cancel_during_post_rejection_cleanup_does_not_commit(cache):
 async def test_connection_never_established_rolls_back_reservation(cache):
     """A refused connection proves the request never reached the endpoint:
     the reservation rolls back and the auto-created workspace is deleted."""
-    mgr = _manager()
+    mgr = workspace_manager()
     with patch(
         "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
@@ -604,7 +565,7 @@ async def test_connection_never_established_rolls_back_reservation(cache):
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession",
-        return_value=_FakeSession(
+        return_value=FakeSession(
             post_exc=aiohttp.ClientConnectorError(MagicMock(), OSError("refused"))
         ),
     ):
@@ -663,7 +624,7 @@ def _continuation_patches(post_exc: Exception) -> list:
         patch("src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})),
         patch(
             "aiohttp.ClientSession",
-            return_value=_FakeSession(post_exc=post_exc),
+            return_value=FakeSession(post_exc=post_exc),
         ),
         patch("src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0),
     ]
@@ -788,7 +749,7 @@ async def test_an_auto_created_name_lost_to_two_races_takes_the_next_free_one(ca
     from src.server.database.workspace_names import WorkspaceNameTaken
 
     _fill_flash_cap(cache)
-    mgr = _manager()
+    mgr = workspace_manager()
     mgr.create_workspace = AsyncMock(side_effect=[
         WorkspaceNameTaken("analyze this"),
         WorkspaceNameTaken("analyze this (2)"),

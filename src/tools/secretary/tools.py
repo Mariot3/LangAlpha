@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Annotated
 
+from langchain.tools import InjectedState
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -22,6 +23,7 @@ from src.tools.secretary._commands import (
     verify_thread_owner,
     verify_workspace_owner,
 )
+from src.tools.secretary.approvals import preapproved
 from src.tools.secretary.dispatch import dispatch
 from src.utils.nested import without_keys
 
@@ -77,6 +79,7 @@ async def _get_thread_output(
 async def manage_workspaces(
     action: str,
     config: RunnableConfig,
+    state: Annotated[dict, InjectedState],
     name: str | None = None,
     description: str | None = None,
     workspace_id: str | None = None,
@@ -99,7 +102,8 @@ async def manage_workspaces(
         return await workspaces_list(user_id, tool_call_id)
     elif action == "create":
         return await workspaces_create(
-            user_id, name, description, tool_call_id
+            user_id, name, description, tool_call_id,
+            preapproved=preapproved(state, tool_call_id),
         )
     elif action == "delete":
         return await _workspaces_delete(user_id, workspace_id, tool_call_id)
@@ -152,22 +156,24 @@ async def workspaces_create(
     name: str | None,
     description: str | None,
     tool_call_id: str,
+    preapproved: bool = False,
 ) -> Command:
-    """Create a new workspace with HITL confirmation."""
+    """Create a new workspace, once the user confirms unless ``preapproved``."""
     if not name:
         return error_command(
             "name is required for create action", tool_call_id
         )
 
-    approved, _ = hitl_confirm(
-        "create_workspace",
-        {"workspace_name": name, "workspace_description": description or ""},
-    )
-
-    if not approved:
-        return decline_command(
-            "User declined workspace creation.", tool_call_id
+    if not preapproved:
+        approved, _ = hitl_confirm(
+            "create_workspace",
+            {"workspace_name": name, "workspace_description": description or ""},
         )
+
+        if not approved:
+            return decline_command(
+                "User declined workspace creation.", tool_call_id
+            )
 
     from src.server.database.workspace_names import (
         WorkspaceNameInvalid,
@@ -184,15 +190,16 @@ async def workspaces_create(
             description=description,
         )
 
-        workspace_id = str(workspace["workspace_id"])
-        return success_command(
-            {
-                "success": True,
-                "workspace_id": workspace_id,
-                "workspace_name": workspace["name"],
-            },
-            tool_call_id,
-        )
+        result = {
+            "success": True,
+            "workspace_id": str(workspace["workspace_id"]),
+            "workspace_name": workspace["name"],
+        }
+        if preapproved:
+            # The card for it is drawn from this result.
+            result["preapproved"] = True
+            result["workspace_description"] = description or ""
+        return success_command(result, tool_call_id)
     except WorkspaceNameTaken as e:
         if e.workspace_id is None:
             # The holder was renamed or deleted before it could be named.
@@ -291,6 +298,7 @@ async def _workspaces_stop(
 async def ptc_agent(
     question: str,
     config: RunnableConfig,
+    state: Annotated[dict, InjectedState],
     workspace_id: str | None = None,
     thread_id: str | None = None,
     report_back: bool = True,
@@ -312,7 +320,8 @@ async def ptc_agent(
             Set to False when the user wants to check results themselves.
     """
     return await dispatch(
-        question, config, workspace_id, thread_id, report_back, tool_call_id
+        question, config, workspace_id, thread_id, report_back, tool_call_id,
+        preapproved=preapproved(state, tool_call_id),
     )
 
 

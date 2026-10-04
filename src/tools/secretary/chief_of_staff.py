@@ -2,21 +2,23 @@
 
 Each workspace has its own agent, its analyst, and the Chief of Staff in Home
 hands work to them rather than doing it in their folders. A hand-off always
-names its workspace: a new one is created first, under its own approval, so
-the user agrees to the workspace before any work is handed to it. It lists and
-creates workspaces but does not delete or stop them: Home runs on the computer
-a stop would take down, and deleting is the user's to do from the workspace
-itself. ``agent_output`` is how it reads a thread, so its ``manage_threads``
-has no second way to.
+names its workspace: a new one is created first, under its own approval or
+one the user gave in advance, so the user agrees to the workspace before any
+work is handed to it. It lists and creates workspaces but does not delete or
+stop them: Home runs on the computer a stop would take down, and deleting is
+the user's to do from the workspace itself. ``agent_output`` is how it reads a
+thread, so its ``manage_threads`` has no second way to.
 """
 
 from typing import Annotated
 
+from langchain.tools import InjectedState
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.types import Command
 
 from src.tools.secretary._commands import InjectedToolCallId, error_command
+from src.tools.secretary.approvals import preapproved
 from src.tools.secretary.dispatch import dispatch
 from src.tools.secretary.tools import (
     agent_output,
@@ -31,6 +33,7 @@ from src.tools.secretary.tools import (
 async def chief_of_staff_workspaces(
     action: str,
     config: RunnableConfig,
+    state: Annotated[dict, InjectedState],
     name: str | None = None,
     description: str | None = None,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
@@ -51,7 +54,10 @@ async def chief_of_staff_workspaces(
     if action == "list":
         return await workspaces_list(user_id, tool_call_id)
     if action == "create":
-        return await workspaces_create(user_id, name, description, tool_call_id)
+        return await workspaces_create(
+            user_id, name, description, tool_call_id,
+            preapproved=preapproved(state, tool_call_id),
+        )
     return error_command(
         f"Unknown action: {action}. Use list or create.", tool_call_id
     )
@@ -61,12 +67,13 @@ async def chief_of_staff_workspaces(
 async def delegate_to_analyst(
     question: str,
     config: RunnableConfig,
+    state: Annotated[dict, InjectedState],
     workspace_id: str | None = None,
     thread_id: str | None = None,
     report_back: bool = True,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> Command:
-    """Hand work to a workspace's analyst, who does it there in the background once the user approves.
+    """Hand work to a workspace's analyst, who does it there in the background unless the user declines.
 
     Needs workspace_id or thread_id: a workspace that does not exist yet is
     created with manage_workspaces first.
@@ -90,7 +97,8 @@ async def delegate_to_analyst(
             tool_call_id,
         )
     return await dispatch(
-        question, config, workspace_id, thread_id, report_back, tool_call_id
+        question, config, workspace_id, thread_id, report_back, tool_call_id,
+        preapproved=preapproved(state, tool_call_id),
     )
 
 

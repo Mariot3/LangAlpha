@@ -30,7 +30,8 @@ _ORIGIN = {
 
 
 def _tool_call(args: dict, call_id: str = "call_test") -> dict:
-    return {"name": "ptc_agent", "args": args, "id": call_id, "type": "tool_call"}
+    # ``state`` is what the graph injects; nothing here was approved in advance.
+    return {"name": "ptc_agent", "args": {**args, "state": {}}, "id": call_id, "type": "tool_call"}
 
 
 def _config() -> dict:

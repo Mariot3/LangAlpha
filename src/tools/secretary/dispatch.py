@@ -172,13 +172,15 @@ async def dispatch(
     thread_id: str | None,
     report_back: bool,
     tool_call_id: str,
+    preapproved: bool = False,
 ) -> Command:
     """Start ``question`` as a background turn of a workspace's own agent.
 
     The workspace is ``workspace_id``, or ``thread_id``'s when continuing one;
     with neither, a workspace is created for the question. The dispatcher's
     own workspace is refused: a turn there is the dispatcher again, not the
-    agent of the workspace it meant.
+    agent of the workspace it meant. A ``preapproved`` hand-off, one the user
+    approved in advance, starts without asking.
     """
     import aiohttp
 
@@ -240,29 +242,30 @@ async def dispatch(
             tool_call_id,
         )
 
-    approved, response = hitl_confirm(
-        "ptc_agent",
-        {
-            "workspace_id": workspace_id,
-            "workspace_name": workspace_name,
-            "thread_id": thread_id,
-            "question": question,
-            "report_back": report_back,
-            "tool_call_id": tool_call_id,
-        },
-    )
-
-    if not approved:
-        return decline_command(
-            "User declined PTC agent dispatch.", tool_call_id
+    if not preapproved:
+        approved, response = hitl_confirm(
+            "ptc_agent",
+            {
+                "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
+                "thread_id": thread_id,
+                "question": question,
+                "report_back": report_back,
+                "tool_call_id": tool_call_id,
+            },
         )
 
-    # Apply user overrides from HITL decision (e.g. toggling report_back)
-    decisions = response.get("decisions", [])
-    if decisions:
-        overrides = decisions[0].get("overrides", {})
-        if "report_back" in overrides:
-            report_back = overrides["report_back"]
+        if not approved:
+            return decline_command(
+                "User declined PTC agent dispatch.", tool_call_id
+            )
+
+        # Apply user overrides from HITL decision (e.g. toggling report_back)
+        decisions = response.get("decisions", [])
+        if decisions:
+            overrides = decisions[0].get("overrides", {})
+            if "report_back" in overrides:
+                report_back = overrides["report_back"]
 
     auto_created_workspace = False
     if not is_continuation:
@@ -299,6 +302,7 @@ async def dispatch(
                             raise
                         name = await _free_workspace_name(user_id, workspace_name)
                 workspace_id = str(workspace["workspace_id"])
+                workspace_name = name
                 auto_created_workspace = True
             except Exception as e:
                 logger.error(f"Failed to create workspace for PTC dispatch: {e}")
@@ -329,6 +333,22 @@ async def dispatch(
     async with reserve(
         flash_thread_id, thread_id, workspace_id, flash_workspace_id, user_id
     ) as slot:
+
+        def dispatched() -> Command:
+            # The card for a pre-approved hand-off is drawn from this result,
+            # since no approval request carried the workspace's name.
+            result = {
+                "success": True,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
+                "thread_id": thread_id,
+                "status": "dispatched",
+                "report_back": slot.wired,
+            }
+            if preapproved:
+                result["preapproved"] = True
+            return success_command(result, tool_call_id)
+
         # Cap rejection or a fail-closed origin write — abort (reserve rolls back).
         if slot.error is not None:
             # No HTTP was sent, so a workspace auto-created above is provably
@@ -481,28 +501,10 @@ async def dispatch(
             slot.commit()
             if confirmed:
                 # The lost reply was a real acceptance of THIS request.
-                return success_command(
-                    {
-                        "success": True,
-                        "workspace_id": workspace_id,
-                        "thread_id": thread_id,
-                        "status": "dispatched",
-                        "report_back": slot.wired,
-                    },
-                    tool_call_id,
-                )
+                return dispatched()
             return _unknown_dispatch_command(
                 ambiguous_error, thread_id, workspace_id, tool_call_id
             )
 
         slot.commit()
-        return success_command(
-            {
-                "success": True,
-                "workspace_id": workspace_id,
-                "thread_id": thread_id,
-                "status": "dispatched",
-                "report_back": slot.wired,
-            },
-            tool_call_id,
-        )
+        return dispatched()

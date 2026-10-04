@@ -483,6 +483,88 @@ async def test_update_preferences_valid_search_depth_accepted(client, payload):
     assert resp.status_code == 200
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["auto_approve_handoffs", "auto_approve_workspace_creation"])
+@pytest.mark.parametrize("bad_value", ["true", 1, 0, {"on": True}])
+async def test_update_preferences_non_boolean_auto_approve_rejected(client, key, bad_value):
+    """A setting that skips approval cards is refused unless it is a real
+    boolean, rather than guessed from "true", 1 or 0."""
+    with patch(
+        f"{DB}.upsert_user_preferences",
+        new_callable=AsyncMock,
+    ) as mock_upsert:
+        resp = await client.put(
+            "/api/v1/users/me/preferences",
+            json={"other_preference": {key: bad_value}},
+        )
+
+    assert resp.status_code == 422
+    locs = [error["loc"] for error in resp.json()["detail"]]
+    assert any(key in loc for loc in locs)
+    mock_upsert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["auto_approve_handoffs", "auto_approve_workspace_creation"])
+@pytest.mark.parametrize("value", [True, False, None])
+async def test_update_preferences_auto_approve_boolean_or_none_accepted(client, key, value):
+    """``None`` must reach the merge as ``{key: None}``, which deletes the
+    key: turning a setting off goes back to asking."""
+    with (
+        patch(
+            f"{DB}.db_get_user",
+            new_callable=AsyncMock,
+            return_value=_user(),
+        ),
+        patch(
+            f"{DB}.upsert_user_preferences",
+            new_callable=AsyncMock,
+            return_value=_prefs(),
+        ) as mock_upsert,
+        patch(
+            f"{DB}.maybe_complete_onboarding",
+            new_callable=AsyncMock,
+        ),
+    ):
+        resp = await client.put(
+            "/api/v1/users/me/preferences",
+            json={"other_preference": {key: value}},
+        )
+
+    assert resp.status_code == 200
+    assert mock_upsert.await_args.kwargs["other_preference"] == {key: value}
+
+
+@pytest.mark.asyncio
+async def test_update_preferences_unrelated_other_preference_keys_untouched(client):
+    """A patch that never mentions the auto-approve keys must not leak them in
+    as ``None`` alongside the key the client actually sent, or it would delete
+    an auto-approve setting the client never touched."""
+    with (
+        patch(
+            f"{DB}.db_get_user",
+            new_callable=AsyncMock,
+            return_value=_user(),
+        ),
+        patch(
+            f"{DB}.upsert_user_preferences",
+            new_callable=AsyncMock,
+            return_value=_prefs(),
+        ) as mock_upsert,
+        patch(
+            f"{DB}.maybe_complete_onboarding",
+            new_callable=AsyncMock,
+        ),
+    ):
+        resp = await client.put(
+            "/api/v1/users/me/preferences",
+            json={"other_preference": {"voice_input_enabled": True}},
+        )
+
+    assert resp.status_code == 200
+    assert mock_upsert.await_args.kwargs["other_preference"] == {"voice_input_enabled": True}
+
+
 # ---------------------------------------------------------------------------
 # DELETE /api/v1/users/me/preferences
 # ---------------------------------------------------------------------------

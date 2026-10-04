@@ -29,7 +29,8 @@ WORKSPACE_ID = "22222222-2222-2222-2222-222222222222"
 
 def _tool_call(args: dict, call_id: str = "call_test") -> dict:
     """Build a ToolCall-shaped dict so ``ainvoke`` injects ``tool_call_id``."""
-    return {"name": "ptc_agent", "args": args, "id": call_id, "type": "tool_call"}
+    # ``state`` is what the graph injects; nothing here was approved in advance.
+    return {"name": "ptc_agent", "args": {**args, "state": {}}, "id": call_id, "type": "tool_call"}
 
 
 def _config(user_id: str | None = USER_ID) -> dict:

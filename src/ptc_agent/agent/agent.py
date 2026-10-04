@@ -556,6 +556,11 @@ class PTCAgent:
         main_only_middleware.append(ask_user_middleware)
         tools.extend(ask_user_middleware.tools)
 
+        if role == "chief_of_staff":
+            from src.tools.secretary.approvals import StandingApprovalMiddleware
+
+            main_only_middleware.append(StandingApprovalMiddleware(user_id))
+
         from ptc_agent.agent.tools import think_tool
 
         subagent_registry = SubagentRegistry(

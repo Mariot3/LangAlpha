@@ -21,7 +21,8 @@ THREAD_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _call(args: dict) -> dict:
-    return {"name": "delegate_to_analyst", "args": args, "id": "call_1", "type": "tool_call"}
+    # ``state`` is what the graph injects; nothing here was approved in advance.
+    return {"name": "delegate_to_analyst", "args": {**args, "state": {}}, "id": "call_1", "type": "tool_call"}
 
 
 @pytest.mark.asyncio
