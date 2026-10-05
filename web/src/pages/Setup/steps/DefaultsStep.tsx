@@ -82,9 +82,11 @@ export default function DefaultsStep() {
     setError(null);
 
     try {
-      // Compaction + fetch default to flash model if not explicitly set
-      const compaction = advancedModels.compactionModel || flashModel;
-      const fetchModel = advancedModels.fetchModel || flashModel;
+      // Leave unset rather than pinning to today's flash pick: the server
+      // resolves a blank compaction/fetch model from the flash/background
+      // model at turn time, so a later change in Settings keeps following it.
+      const compaction = advancedModels.compactionModel || null;
+      const fetchModel = advancedModels.fetchModel || null;
 
       await updatePreferences.mutateAsync(splitPreferenceWrite({
         preferred_model: primaryModel,

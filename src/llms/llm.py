@@ -346,24 +346,6 @@ def _merged_default_headers(params: dict, *bases: dict | None) -> dict:
 CUSTOM_MODEL_NAME_RE = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,62}$"
 
 
-def _profile_overrides_from_config(model_info: dict) -> dict[str, Any]:
-    """Map a models.json entry onto ``ModelProfile`` keys (manifest is the SoT)."""
-    overrides: dict[str, Any] = {}
-    context = model_info.get("context")
-    if isinstance(context, int):
-        overrides["max_input_tokens"] = context
-    max_tokens = (model_info.get("parameters") or {}).get("max_tokens")
-    if isinstance(max_tokens, int):
-        overrides["max_output_tokens"] = max_tokens
-    modalities = model_info.get("input_modalities")
-    if isinstance(modalities, list):
-        overrides["text_inputs"] = "text" in modalities
-        overrides["image_inputs"] = "image" in modalities
-        overrides["audio_inputs"] = "audio" in modalities
-        overrides["video_inputs"] = "video" in modalities
-    return overrides
-
-
 class LLM:
     """Factory class for creating LangChain LLM clients."""
 
@@ -417,6 +399,7 @@ class LLM:
         # through it the process-wide manifest, for every subsequent request.
         self.parameters = copy.deepcopy(spec.parameters)
         self.extra_body = copy.deepcopy(spec.extra_body)
+        self.profile_overrides = spec.profile
 
         # Apply reasoning effort override (before provider resolution).
         # Validation lives here because this is the only point that sees both
@@ -590,6 +573,13 @@ class LLM:
             client = self._get_gemini_llm()
         else:
             raise ValueError(f"Unsupported SDK: {self.sdk} for provider {self.provider}")
+
+        # The entry's declarations win over the SDK's table, which most models
+        # are missing from, so the two can't drift; capability flags the entry
+        # does not declare are kept.
+        if self.profile_overrides:
+            base = client.profile if isinstance(client.profile, dict) else {}
+            client.profile = {**base, **self.profile_overrides}
 
         # Tag the client with billing metadata so PerCallTokenTracker can
         # attribute each LLM call to the correct billing source, and with the
@@ -834,17 +824,7 @@ class LLM:
         if self.extra_body:
             params["extra_body"] = self.extra_body
 
-        client = ChatZai(**params)
-
-        # Override the package profile with manifest values so the two can't drift
-        # (compaction reads profile["max_input_tokens"]); capability flags preserved.
-        model_info = self.model_config.get_model_config(self.custom_model_name) or {}
-        overrides = _profile_overrides_from_config(model_info)
-        if overrides:
-            base = client.profile if isinstance(client.profile, dict) else {}
-            client.profile = {**base, **overrides}
-
-        return client
+        return ChatZai(**params)
 
     def _get_qwq_llm(self):
         """Get QwQ or QwQ-compatible LLM (for Qwen models with reasoning support)."""

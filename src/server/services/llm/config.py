@@ -41,6 +41,12 @@ _MODE_MODEL_MAP = {
     "flash": ("flash", "preferred_flash_model"),
 }
 
+
+def slot_model(llm: Any, mode: str) -> str:
+    """The model ``mode`` runs on ``llm``; an unset slot falls back to the main model."""
+    return getattr(llm, _MODE_MODEL_MAP[mode][0], None) or llm.name
+
+
 # Saved models a turn reaches besides its own. The flash key is one only on a
 # PTC turn, whose compaction and fetch inherit it. With no flash default saved,
 # the flash slot is the PTC key on either turn (``saved_default_model``), and
@@ -140,7 +146,7 @@ def select_model(
         logger.debug(f"[CHAT] Using the saved {mode} default: {saved}")
     else:
         logger.debug(
-            f"[CHAT] No {pref_key} set, using system default: {getattr(config.llm, model_field, None) or config.llm.name}"
+            f"[CHAT] No {pref_key} set, using system default: {slot_model(config.llm, mode)}"
         )
 
     # A PTC turn never runs the flash model, but compaction and fetch default to
@@ -166,7 +172,7 @@ def select_model(
         config.llm.fallback = user_fallback
 
     return ModelSelection(
-        effective_model=getattr(config.llm, model_field, None) or config.llm.name,
+        effective_model=slot_model(config.llm, mode),
         model_field=model_field,
     )
 

@@ -2,10 +2,9 @@
 
 import asyncio
 import logging
-from typing import Any, cast
+from typing import Any
 
 from langchain_core.messages import AnyMessage
-from langchain_core.messages.utils import trim_messages
 
 from langchain.chat_models import BaseChatModel
 
@@ -16,19 +15,19 @@ from ptc_agent.core.paths import WorkspaceLayout
 from src.llms import get_llm_by_type
 
 from ptc_agent.agent.state import ensure_message_ids
-from ptc_agent.agent.middleware.compaction.types import (
-    CompactionEvent,
-    _DEFAULT_FALLBACK_MESSAGE_COUNT,
-)
+from ptc_agent.agent.middleware.compaction.types import CompactionEvent
 from ptc_agent.agent.middleware.compaction.utils import (
     DEFAULT_SUMMARY_PROMPT,
     build_summary_event,
-    count_tokens_tiktoken,
     find_group_safe_cutoff,
     get_effective_messages,
     partition_at_cutoff,
     truncate_message_args,
     truncate_read_results,
+)
+from ptc_agent.agent.middleware.compaction.model import (
+    summary_trim_budget,
+    trim_for_summary,
 )
 from ptc_agent.agent.middleware.compaction.middleware import _build_summary_request
 from src.llms import maybe_disable_streaming
@@ -163,28 +162,13 @@ async def compact_messages(
     maybe_disable_streaming(compaction_model)
 
     token_threshold = config.get("token_threshold", 120000)
-    trim_limit = token_threshold + 50000
-
-    token_count = count_tokens_tiktoken(messages_to_summarize)
-    if token_count > trim_limit:
-        trimmed = cast(
-            "list[AnyMessage]",
-            trim_messages(
-                messages_to_summarize,
-                max_tokens=trim_limit,
-                token_counter=count_tokens_tiktoken,
-                start_on="human",
-                strategy="last",
-                allow_partial=True,
-                include_system=True,
-            ),
+    messages_to_summarize = trim_for_summary(
+        messages_to_summarize, summary_trim_budget(compaction_model, token_threshold)
+    )
+    if not messages_to_summarize:
+        raise RuntimeError(
+            "Nothing since the last summary fits the compaction model's budget"
         )
-        if trimmed:
-            messages_to_summarize = trimmed
-        else:
-            messages_to_summarize = messages_to_summarize[
-                -_DEFAULT_FALLBACK_MESSAGE_COUNT:
-            ]
 
     # Strip base64 blobs before sending to LLM
     request_messages = await aoffload_base64_content(

@@ -418,7 +418,7 @@ class TestAcreateSummaryWindowClose:
         )
 
     @pytest.mark.asyncio
-    async def test_normal_exception_emits_error_and_returns_fallback(
+    async def test_normal_exception_emits_error_and_returns_none(
         self, monkeypatch
     ):
         mw = self._make_middleware(
@@ -443,15 +443,16 @@ class TestAcreateSummaryWindowClose:
             [HumanMessage(content="hi", id="h")], original_count=1
         )
 
-        assert "upstream down" in result
+        # None, never the error text, which would be saved as the summary.
+        assert result is None
         assert ("summarize", "start") in calls
         assert ("summarize", "error") in calls
 
     @pytest.mark.asyncio
-    async def test_timeout_emits_error_and_returns_fallback(self, monkeypatch):
+    async def test_timeout_emits_error_and_returns_none(self, monkeypatch):
         """A hung auto summarize must self-terminate on the compaction budget,
-        then close the window (error signal) and return a fallback string —
-        same shape as any other LLM failure, so the guard is released."""
+        then close the window (error signal) and return None, like any other
+        LLM failure, so the guard is released and the history is kept."""
         import asyncio
 
         mw = self._make_middleware()
@@ -481,7 +482,7 @@ class TestAcreateSummaryWindowClose:
             [HumanMessage(content="hi", id="h")], original_count=1
         )
 
-        assert result.startswith("Error generating summary")
+        assert result is None
         assert ("summarize", "start") in calls
         assert ("summarize", "error") in calls
 

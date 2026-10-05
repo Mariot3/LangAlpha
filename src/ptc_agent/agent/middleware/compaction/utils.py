@@ -6,7 +6,7 @@ import logging
 import re
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import tiktoken
 
@@ -34,26 +34,7 @@ from ptc_agent.agent.middleware.compaction.types import (
     TRUNCATABLE_TOOLS,
 )
 
-if TYPE_CHECKING:
-    from ptc_agent.config.agent import AgentConfig
-
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Compaction client resolution
-# =============================================================================
-
-
-def resolve_compaction_client(config: AgentConfig) -> Any | None:
-    """Return the compaction LLM client (role-resolved or main-copy), or None.
-
-    With a dedicated compaction model, use the pre-resolved role client
-    (credentialed users) or None (platform users keep the cheap name-based
-    model). Without one, fall back to a copy of the main client.
-    """
-    has_compaction_model = bool(config.llm and config.llm.compaction_name)
-    return config.client_for_role("compaction", fallback_to_main=not has_compaction_model)
 
 
 # =============================================================================
@@ -853,6 +834,21 @@ def resolve_cutoff_index(messages: Sequence[AnyMessage], event: Mapping[str, Any
 # The note older checkpoints carry, which parse_summary_message still splits on
 # when a message predates the summary_length stamp.
 _LEGACY_FILE_NOTE = "\n\nFull conversation history saved to `"
+_SUMMARY_SOURCE = "summarization"
+
+
+def is_summary_message(message: Any) -> bool:
+    """Whether ``message`` is a summary ``build_summary_message`` wrote."""
+    if not isinstance(message, HumanMessage):
+        return False
+    if (message.additional_kwargs or {}).get("lc_source") == _SUMMARY_SOURCE:
+        return True
+    content = message.content
+    return isinstance(content, str) and content.startswith(CONTEXT_SUMMARY_PREFIX)
+
+
+def _after_summary(messages: Sequence[AnyMessage]) -> Sequence[AnyMessage]:
+    return messages[1:] if messages and is_summary_message(messages[0]) else messages
 
 
 def build_summary_message(
@@ -877,7 +873,7 @@ def build_summary_message(
         content=content,
         id=str(uuid.uuid4()),
         additional_kwargs={
-            "lc_source": "summarization",
+            "lc_source": _SUMMARY_SOURCE,
             "summarize_complete": {
                 "summary_length": len(summary),
                 "original_message_count": original_message_count,
@@ -898,13 +894,16 @@ def build_summary_event(
 ) -> CompactionEvent:
     """The event putting ``summary`` in place of ``to_summarize``, pointing
     at the transcript when there is one. ``summarized`` is what the model was
-    sent of them after trimming, which says where the summary starts."""
+    sent of them after trimming, which says where the summary starts; an
+    earlier summary heading both is kept whole, so the start is after it."""
     summary_message = build_summary_message(
         summary,
         transcript,
         original_message_count,
         resumes_at=(
-            summary_resumes_at(raw_messages, to_summarize, summarized)
+            summary_resumes_at(
+                raw_messages, _after_summary(to_summarize), _after_summary(summarized)
+            )
             if transcript is not None
             else None
         ),

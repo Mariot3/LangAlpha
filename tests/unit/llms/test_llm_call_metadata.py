@@ -29,6 +29,7 @@ def _stub_llm(**fields) -> LLM:
     llm.default_headers = None
     llm.parameters = {}
     llm.extra_body = {}
+    llm.profile_overrides = {}
     llm.model = "claude-test-id"
     llm.custom_model_name = "claude-test"
     llm.resolved_reasoning_effort = None
