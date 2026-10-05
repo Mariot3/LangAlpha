@@ -38,7 +38,7 @@ def _payload(result) -> dict:
 async def test_agent_output_defaults_to_one_turn():
     extract = _extract_stub()
     with patch(
-        "src.tools.secretary.tools._verify_thread_owner", AsyncMock(return_value=None)
+        "src.tools.secretary.tools.verify_thread_owner", AsyncMock(return_value=None)
     ), patch(
         "src.tools.secretary.utils.extract_text_from_thread", extract
     ):
@@ -55,7 +55,7 @@ async def test_agent_output_defaults_to_one_turn():
 async def test_agent_output_forwards_turns():
     extract = _extract_stub()
     with patch(
-        "src.tools.secretary.tools._verify_thread_owner", AsyncMock(return_value=None)
+        "src.tools.secretary.tools.verify_thread_owner", AsyncMock(return_value=None)
     ), patch(
         "src.tools.secretary.utils.extract_text_from_thread", extract
     ):
@@ -73,7 +73,7 @@ async def test_agent_output_surfaces_read_failure_as_error():
     """A read failure becomes an error payload, not an empty success result."""
     extract = AsyncMock(side_effect=RuntimeError("db down"))
     with patch(
-        "src.tools.secretary.tools._verify_thread_owner", AsyncMock(return_value=None)
+        "src.tools.secretary.tools.verify_thread_owner", AsyncMock(return_value=None)
     ), patch(
         "src.tools.secretary.utils.extract_text_from_thread", extract
     ):
@@ -90,7 +90,7 @@ async def test_agent_output_surfaces_read_failure_as_error():
 async def test_manage_threads_get_output_forwards_turns():
     extract = _extract_stub()
     with patch(
-        "src.tools.secretary.tools._verify_thread_owner", AsyncMock(return_value=None)
+        "src.tools.secretary.tools.verify_thread_owner", AsyncMock(return_value=None)
     ), patch(
         "src.tools.secretary.utils.extract_text_from_thread", extract
     ):

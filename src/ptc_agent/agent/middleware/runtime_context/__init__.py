@@ -2,8 +2,8 @@
 
 Three surfaces, split by how long the content lives.
 ``BaselineContextMiddleware`` freezes the per-thread baseline (agent.md, the
-memory indices, the memo pointer, identity, and the harness-authored blocks:
-the MCP roster and the skills manifest) into ``runtime_baseline`` at the turn
+memory indices, the memo pointer, identity, and the harness-authored blocks
+in ``harness_blocks.py``) into ``runtime_baseline`` at the turn
 boundary and re-renders it byte-identically as a system block on every call. Everything that is true for one turn is a durable row written once into
 ``messages`` (``durable.py``) so it keeps its place in time: the turn's own
 anchor from ``TurnContextMiddleware``, and whatever moved underneath the
@@ -66,6 +66,7 @@ from .envelope import (
 )
 from .epoch import BaselineEpoch, Observations, advance_epoch
 from .frozen_prompt import FrozenPromptMiddleware
+from .harness_blocks import HARNESS_BLOCKS, HarnessBlock
 from .state import STATE_BASELINE
 from .surface import (
     KNOWN_SURFACES,
@@ -95,6 +96,7 @@ __all__ = [
     "ENVELOPE_HARD_CAP_TOKENS",
     "ENVELOPE_OPEN",
     "ENVELOPE_STEADY_TOKENS",
+    "HARNESS_BLOCKS",
     "KNOWN_SURFACES",
     "MAX_AGENT_MD_SIZE",
     "MAX_MEMORY_BLOCK_SIZE",
@@ -114,6 +116,7 @@ __all__ = [
     "ComposedRequest",
     "DurableUpdate",
     "FrozenPromptMiddleware",
+    "HarnessBlock",
     "MemoSource",
     "MemoryTierSource",
     "Observations",

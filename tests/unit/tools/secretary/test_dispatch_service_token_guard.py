@@ -93,7 +93,7 @@ async def test_ptc_agent_aborts_when_service_token_unset(monkeypatch):
 
     # If any of these run, the guard failed to short-circuit early enough.
     with patch(
-        "src.tools.secretary.tools._hitl_confirm",
+        "src.tools.secretary.dispatch.hitl_confirm",
         side_effect=AssertionError("HITL must not be reached"),
     ), patch(
         "aiohttp.ClientSession",
@@ -117,7 +117,7 @@ async def test_ptc_agent_blank_service_token_is_treated_as_unset(monkeypatch):
     monkeypatch.setattr("src.config.settings.HOST_MODE", "platform")
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "   ")
     with patch(
-        "src.tools.secretary.tools._hitl_confirm",
+        "src.tools.secretary.dispatch.hitl_confirm",
         side_effect=AssertionError("HITL must not be reached"),
     ), patch(
         "aiohttp.ClientSession",
@@ -161,7 +161,7 @@ async def test_ptc_agent_oss_mode_proceeds_without_token(monkeypatch):
     _unset_token(monkeypatch)
 
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(False, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(False, {})
     ) as hitl:
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()

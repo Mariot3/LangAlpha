@@ -906,8 +906,13 @@ async def get_workspaces_for_user(
         )
         params = {"user_id": user_id, "flash_id": get_flash_workspace_id(user_id)}
 
+        # Every order ends on workspace_id, appended below: rows that tie would
+        # otherwise come back in any order, which shifts an offset page and
+        # rewrites the Chief of Staff's activity block with nothing changed.
         if sort_by == "activity":
             order_clause = "is_pinned DESC, COALESCE(last_activity_at, updated_at) DESC"
+        elif sort_by == "recent":
+            order_clause = "COALESCE(last_activity_at, updated_at) DESC"
         elif sort_by == "name":
             order_clause = "is_pinned DESC, name ASC"
         else:
@@ -930,7 +935,7 @@ async def get_workspaces_for_user(
                 SELECT {_WS_COLS}
                 FROM workspaces
                 WHERE user_id = %(user_id)s {status_filter} {flash_filter}
-                ORDER BY {order_clause}
+                ORDER BY {order_clause}, workspace_id DESC
                 LIMIT %(limit)s OFFSET %(offset)s
                 """,
                 {**params, "limit": limit, "offset": offset},

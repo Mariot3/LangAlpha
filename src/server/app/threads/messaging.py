@@ -505,6 +505,7 @@ async def _handle_send_message(
             user_input=user_input,
             user_id=user_id,
             workspace_id=workspace_id,
+            role=route.role,
             is_byok=is_byok,
             config=config,
             dispatched=is_dispatch,

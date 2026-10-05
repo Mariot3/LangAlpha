@@ -41,6 +41,11 @@ defaults:
   # for Flash, which has no sandbox. PTC overrides to true at render time.
   sandbox_enabled: false
 
+  # Which agent the main prompt is for: "analyst" works in one workspace,
+  # "chief_of_staff" works from Home and hands workspace work to the analysts
+  # (adds components/chief_of_staff.md.j2).
+  role: analyst
+
   # Market watch (live price injection). Gates the watch_market row in
   # tool_guide. Agent render overrides with the config.yaml master switch.
   market_watch_enabled: true
@@ -167,15 +172,16 @@ envelope:
       of its own: the carrier adds that per call. A change row names in plain
       words what moved and who moved it, and carries the paragraph that says
       how to read it; no stamp, because the row's place in history already
-      says when. The harness blocks (<mcp-servers>, <skills>) get a paragraph
-      of their own: they diff like a file but name no file to go and read. A
-      kind with no words here keeps the labelled `**kind**` form.
-    kwargs: [update]
+      says when. A harness block (runtime_context/harness_blocks.py, passed
+      in as `harness`) gets a paragraph of its own: it diffs like a file but
+      names no file to go and read. A kind with no words here keeps the
+      labelled `**kind**` form.
+    kwargs: [update, harness]
 
   baseline_agentmd:
     template: envelope/baseline_agentmd.md.j2
     description: agent.md wrapped in <agentmd path=...>. Byte-deterministic.
-    kwargs: [path, content]
+    kwargs: [path, content, role]
 
   baseline_memory:
     template: envelope/baseline_memory.md.j2
@@ -210,4 +216,13 @@ envelope:
       The skills manifest wrapped in <skills>, verbatim: it arrives with its
       own heading and activation line. Empty content renders nothing.
       Byte-deterministic.
+    kwargs: [content]
+
+  baseline_activity:
+    template: envelope/baseline_activity.md.j2
+    description: >-
+      The Chief of Staff's view of what the user has been doing (recent
+      workspaces and threads, today's automation runs, holdings), wrapped in
+      <activity> under one line dating the copy. Empty content renders
+      nothing. Byte-deterministic.
     kwargs: [content]

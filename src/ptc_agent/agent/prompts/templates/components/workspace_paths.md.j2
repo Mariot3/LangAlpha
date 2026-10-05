@@ -6,20 +6,32 @@
 
 Working directory: `{{ working_directory }}`
 
+{% if role | default("analyst") == "chief_of_staff" %}
+Everything below is relative to it, and so is every path you pass a tool.
+{% else %}
 Everything below is relative to it, and so is every path you write.
+{% endif %}
 
 ## Directory Layout
 
 | Path | Purpose |
 |------|---------|
+{% if role | default("analyst") == "chief_of_staff" %}
+| `{{ workspace_paths.agent_md }}` | Your notebook, laid out as `<role>` describes |
+{% else %}
 | `{{ workspace_paths.agent_md }}` | Workspace purpose, long-term goals, index of what each task produced |
+{% endif %}
 | `<task_name>/` | One directory per task, directly here: scripts, drafts, and the finished deliverable |
 | `<task_name>/data/` | Data for this task |
 | `<task_name>/charts/` | Visualizations for this task |
 | `{{ workspace_paths.data }}/` | Shared reusable datasets across tasks and threads |
 | `{{ workspace_paths.tools_docs }}/<server>/` | One `.md` per MCP tool (read only) |
 | `{{ workspace_paths.skills }}/<name>/` | Skills available here (read only unless you are installing one) |
+{% if role | default("analyst") == "chief_of_staff" %}
+| `{{ workspace_paths.memory }}/` | Home's long-term memory, yours alone |
+{% else %}
 | `{{ workspace_paths.memory }}/` | This workspace's long-term memory |
+{% endif %}
 | `{{ workspace_paths.user }}/` | User profile, memory and memos; follows the user everywhere (memos read only) |
 
 Always organize data and charts into their subdirectories, never scatter loose files. The working directory itself holds only `{{ workspace_paths.agent_md }}`, `{{ workspace_paths.data }}/` and the task directories; a task file never sits loose here.
@@ -41,7 +53,11 @@ with open('amd_analysis/amd_dcf_analysis.md', 'w') as f: ...
 
 Two different rules for embedding a chart, depending on the document:
 
+{% if role | default("analyst") == "chief_of_staff" %}
+- **Markdown** (report `.md`, or your chat reply): write the absolute path, which opens the same file wherever the document sits: `![]({{ working_directory }}/amd_analysis/charts/revenue_trend.png)`.
+{% else %}
 - **Markdown** (report `.md`, or your chat reply): paths resolve from the working directory, so write the full path: `![](amd_analysis/charts/revenue_trend.png)`.
+{% endif %}
 - **HTML** (`.html` served in the file panel): paths resolve from the document's own directory, so write the short path — `<img src="charts/revenue_trend.png">`.
 
 **NEVER use these path patterns**:

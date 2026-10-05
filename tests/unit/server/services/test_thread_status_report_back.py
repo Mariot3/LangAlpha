@@ -355,3 +355,62 @@ async def test_status_live_slot_with_cancel_intent_reads_stopping():
     assert resp["status"] == "stopping"
     assert resp["run_id"] == "run-live"
     assert resp["can_reconnect"] is True
+
+
+def _task_slice(**over) -> dict:
+    return {
+        "thread_id": "cos-1",
+        "pending_report_back": False,
+        "report_back_run_id": None,
+        "recent_report_back_run_ids": [],
+        "active_tasks": [],
+        **over,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_ptc_thread_is_pending_on_an_analyst_hand_off():
+    # The Chief of Staff's thread is a PTC thread: its own subagents report
+    # back through the outbox, its analysts through the watch set.
+    cache = _FakeCache()
+    _seed(cache, "cos-1", ["analyst-1"], {"analyst-1": "rb-1"})
+
+    with (
+        patch("src.utils.cache.redis_cache.get_cache_client", return_value=cache),
+        patch(
+            "src.server.services.report_back.subagent.read_task_report_back_status",
+            AsyncMock(return_value=_task_slice(active_tasks=["task-1"])),
+        ),
+        patch(
+            "src.server.database.runs.lifecycle.get_run",
+            AsyncMock(return_value={"status": "in_progress"}),
+        ),
+    ):
+        resp = await status.read_report_back_slice("cos-1", "ptc")
+
+    assert resp["pending_report_back"] is True
+    assert resp["report_back_run_id"] == "rb-1"
+    assert resp["active_tasks"] == ["task-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_ptc_thread_lists_both_registries_drained_runs_in_thread_order():
+    cache = _FakeCache()
+    cache.client.lists[keys.flash_rb_done_key("cos-1")] = ["hand-off-2", "hand-off-1"]
+    seqs = {"hand-off-1": 1, "task-1": 2, "hand-off-2": 3}
+
+    with (
+        patch("src.utils.cache.redis_cache.get_cache_client", return_value=cache),
+        patch(
+            "src.server.services.report_back.subagent.read_task_report_back_status",
+            AsyncMock(return_value=_task_slice(recent_report_back_run_ids=["task-1"])),
+        ),
+        patch(
+            "src.server.database.runs.lifecycle.get_run_seqs",
+            AsyncMock(return_value=seqs),
+        ),
+    ):
+        resp = await status.read_report_back_slice("cos-1", "ptc")
+
+    assert resp["pending_report_back"] is False
+    assert resp["recent_report_back_run_ids"] == ["hand-off-2", "task-1", "hand-off-1"]

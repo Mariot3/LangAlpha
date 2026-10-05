@@ -9,6 +9,9 @@ Usage examples:
   # Flash mode
   python scripts/utils/render_prompt.py --mode flash
 
+  # The Chief of Staff (the agent in Home)
+  python scripts/utils/render_prompt.py --role chief_of_staff
+
   # PTC with plan mode + storage enabled
   python scripts/utils/render_prompt.py --plan-mode --storage
 
@@ -45,8 +48,11 @@ from ptc_agent.agent.prompts import (
     init_loader,
     resolve_prompt_guidance,
 )
+from ptc_agent.agent.prompts.formatter import workspace_path_vars
 from ptc_agent.agent.subagents import SubagentCompiler, SubagentRegistry
 from ptc_agent.agent.subagents.builtins import BUILTIN_SUBAGENTS
+from ptc_agent.core.paths import DEFAULT_SANDBOX_ROOT, WorkspaceLayout
+from src.server.database.workspace_names import HOME_FOLDER
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +70,12 @@ Yahoo Finance data — quotes, options, earnings, holders.
 - Module: `tools.yfinance`
 - Docs: `.agents/tools/docs/yfinance/`"""
 
-STUB_SUBAGENTS = [
-    {"name": defn.name, "description": defn.description, "tools": defn.tools}
-    for defn in BUILTIN_SUBAGENTS.values()
-]
+def stub_subagents(role: str) -> list[dict]:
+    """Every builtin subagent the role's build would compile, as the summary lists it."""
+    return [
+        {"name": defn.name, "description": defn.description, "tools": defn.tools}
+        for defn in SubagentRegistry().get_enabled(list(BUILTIN_SUBAGENTS), role=role)
+    ]
 
 STUB_USER_PROFILE = {
     "name": "Demo User",
@@ -102,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["ptc", "flash"],
         default="ptc",
         help="Agent mode: ptc (full sandbox agent) or flash (lightweight). Default: ptc",
+    )
+    p.add_argument(
+        "--role",
+        choices=["analyst", "chief_of_staff"],
+        default="analyst",
+        help="PTC only: the workspace's analyst, or the Chief of Staff in Home. Default: analyst",
     )
     p.add_argument(
         "--subagent",
@@ -228,7 +242,7 @@ def render(args: argparse.Namespace) -> str:
     loader = init_loader(session_start_time=now)
 
     tool_summary = args.tool_summary if args.tool_summary else STUB_TOOL_SUMMARY
-    subagent_summary = format_subagent_summary(STUB_SUBAGENTS)
+    subagent_summary = format_subagent_summary(stub_subagents(args.role))
     user_profile = None if args.no_user_profile else STUB_USER_PROFILE
     guidance_vars = guidance_template_vars(resolve_guidance(args))
 
@@ -275,12 +289,22 @@ def render(args: argparse.Namespace) -> str:
             **guidance_vars,
         )
 
+    # The Chief of Staff always works in Home's folder, so its paths name it.
+    layout_vars = (
+        workspace_path_vars(
+            WorkspaceLayout(DEFAULT_SANDBOX_ROOT, HOME_FOLDER), root=DEFAULT_SANDBOX_ROOT
+        )
+        if args.role == "chief_of_staff"
+        else {}
+    )
+
     # PTC system prompt
     return loader.get_system_prompt(
         tool_summary=tool_summary,
         subagent_summary=subagent_summary,
         user_profile=user_profile,
         plan_mode=args.plan_mode,
+        role=args.role,
         crawl_enabled=args.crawl,
         storage_enabled=args.storage,
         ask_user_enabled=not args.no_ask_user,
@@ -289,6 +313,7 @@ def render(args: argparse.Namespace) -> str:
         max_concurrent_task_units=args.max_concurrent_tasks,
         include_examples=True,
         include_anti_patterns=True,
+        **layout_vars,
         **guidance_vars,
     )
 

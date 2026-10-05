@@ -21,10 +21,7 @@ from langgraph.types import Command
 
 from ptc_agent.core.project_context import ProjectContext, run_with_project
 from src.server.app import setup
-from src.server.database.workspace import (
-    get_flash_workspace_id,
-    update_workspace_activity,
-)
+from src.server.database.workspace import update_workspace_activity
 from src.server.services.computer_disk import TURN_MEASURE_MIN_INTERVAL_SECONDS
 from src.server.services.runs.sse_producer import RunSSEProducer
 from src.server.models.chat import (
@@ -59,12 +56,12 @@ from src.server.utils.multimodal_context import (
     parse_multimodal_contexts,
 )
 
+from ptc_agent.agent.agent import AgentRole
 from ptc_agent.agent.graph import (
     build_ptc_graph_with_session,
     get_user_profile_for_prompt,
 )
 from ptc_agent.agent.middleware.credit_gate import run_with_credit_gate
-from src.tools.secretary.home import HOME_TOOLS
 
 from .request_prep import (
     DISPATCH_STARTED_MARKER,
@@ -179,6 +176,7 @@ async def astream_ptc_workflow(
     steerable: bool = True,
     run_metadata: dict | None = None,
     named_model: NamedModel | None = None,
+    role: AgentRole = "analyst",
 ):
     """Async generator that streams PTC agent workflow events.
 
@@ -193,7 +191,8 @@ async def astream_ptc_workflow(
     steer; see ``steer_allowed``. ``run_metadata`` is the caller's own START
     stamp on the run row, which the run's finalize hooks read.
     ``named_model`` is the model a client named for this thread, kept on it
-    once the turn is admitted; automations never pass one.
+    once the turn is admitted; automations never pass one. ``role`` is the
+    turn route's, so the flag decides it in one place.
     """
     start_time = time.time()
     handler = None
@@ -666,7 +665,7 @@ async def astream_ptc_workflow(
             turn_context=turn_context,
             project=project,
             tool_view=tool_view,
-            extra_tools=HOME_TOOLS if workspace_id == get_flash_workspace_id(user_id) else None,
+            role=role,
         )
 
         _mark_phase("graph_build")

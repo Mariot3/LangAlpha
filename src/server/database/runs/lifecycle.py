@@ -874,6 +874,28 @@ async def get_run_statuses(run_ids: List[str]) -> Dict[str, str]:
             }
 
 
+async def get_run_seqs(run_ids: List[str]) -> Dict[str, int]:
+    """run_id -> run_seq, for the ids that HAVE a row; orders runs a caller
+    gathered from more than one source."""
+    normalized = [nid for nid in (normalize_uuid(r) for r in run_ids) if nid]
+    if not normalized:
+        return {}
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT conversation_response_id, run_seq
+                FROM conversation_responses
+                WHERE conversation_response_id = ANY(%s)
+                """,
+                (normalized,),
+            )
+            rows = await cur.fetchall()
+            return {
+                str(r["conversation_response_id"]): int(r["run_seq"]) for r in rows
+            }
+
+
 async def find_run_by_request_key(request_key: str) -> Optional[Dict[str, Any]]:
     async with pool.get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:

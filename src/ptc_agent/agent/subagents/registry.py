@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import structlog
 
+from ptc_agent.agent.roles import ALL_ROLES, AgentRole
 from ptc_agent.agent.subagents.builtins import BUILTIN_SUBAGENTS
 from ptc_agent.agent.subagents.definition import SubagentDefinition
 from ptc_agent.config.agent import SubagentConfig
@@ -31,7 +32,8 @@ class SubagentRegistry:
 
         # 2. Load user definitions (override built-ins if same name)
         for name, cfg in (user_definitions or {}).items():
-            if name in self._definitions:
+            builtin = self._definitions.get(name)
+            if builtin is not None:
                 logger.info("user subagent overrides builtin", name=name)
 
             self._definitions[name] = SubagentDefinition(
@@ -49,6 +51,10 @@ class SubagentRegistry:
                 max_iterations=cfg.max_iterations,
                 sections=cfg.sections,
                 stateful=(cfg.mode == "ptc"),
+                # The YAML has no say over roles, so an override keeps the
+                # builtin's: reshaping an analyst-only subagent must not hand
+                # it to the Chief of Staff.
+                roles=builtin.roles if builtin is not None else ALL_ROLES,
                 source="user",
             )
 
@@ -56,8 +62,14 @@ class SubagentRegistry:
         """Get a definition by name."""
         return self._definitions.get(name)
 
-    def get_enabled(self, enabled_names: list[str]) -> list[SubagentDefinition]:
+    def get_enabled(
+        self, enabled_names: list[str], role: AgentRole | None = None
+    ) -> list[SubagentDefinition]:
         """Return definitions for enabled subagents, in order.
+
+        With a ``role``, a subagent that role is not listed for is left out
+        rather than refused: ``enabled`` is one list for every role, and the
+        role decides which of it applies.
 
         Raises:
             ValueError: If an enabled name is not found in the registry.
@@ -72,6 +84,8 @@ class SubagentRegistry:
                     f"Available: [{available}]"
                 )
                 raise ValueError(msg)
+            if role is not None and role not in defn.roles:
+                continue
             result.append(defn)
         return result
 

@@ -84,6 +84,10 @@ BUILTIN_SUBAGENTS: dict[str, SubagentDefinition] = {
         role_prompt_template="roles/equity_analyst.md.j2",
         tools=["execute_code", "filesystem", "bash", "finance", "web_search"],
         max_iterations=15,
+        # New analysis is the workspace's own: the Chief of Staff hands it to
+        # that workspace's analyst, so the workspace keeps the work and its
+        # history.
+        roles=frozenset({"analyst"}),
         stateful=True,
         sections={
             "workspace_paths": True,

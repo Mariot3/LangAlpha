@@ -293,6 +293,49 @@ async def get_threads_for_user(
         raise
 
 
+async def get_recent_threads_for_user(
+    user_id: str, *, exclude_thread_id: str | None = None, limit: int = 5
+) -> List[Dict[str, Any]]:
+    """The user's most recently active conversations, newest first.
+
+    Leaves out threads an automation started, which its runs already list, and
+    names an untitled thread by its first message, since a hand-off's thread
+    runs before its title is written. Each row carries the latest attempt's
+    ``latest_*`` columns for ``project_lifecycle``, read over the page alone.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                SELECT t.conversation_thread_id, t.workspace_id, t.updated_at,
+                       t.workspace_name,
+                       COALESCE(NULLIF(t.title, ''), (
+                           SELECT left(q.content, 120) FROM conversation_queries q
+                           WHERE q.conversation_thread_id = t.conversation_thread_id
+                           ORDER BY q.turn_index ASC LIMIT 1
+                       )) AS title,
+                       {_LATEST_ATTEMPT_LATERAL_COLS}
+                FROM (
+                    SELECT t.conversation_thread_id, t.workspace_id, t.title,
+                           t.updated_at, w.name AS workspace_name
+                    FROM conversation_threads t
+                    JOIN workspaces w ON t.workspace_id = w.workspace_id
+                    WHERE w.user_id = %s AND w.status != 'deleted'
+                      AND t.archived_at IS NULL
+                      AND t.conversation_thread_id IS DISTINCT FROM %s::uuid
+                      AND (t.metadata->'origin'->>'type')
+                          IS DISTINCT FROM 'automation'
+                    ORDER BY t.updated_at DESC, t.conversation_thread_id DESC
+                    LIMIT %s
+                ) t
+                {_LATEST_ATTEMPT_LATERAL}
+                ORDER BY t.updated_at DESC, t.conversation_thread_id DESC
+                """,
+                (user_id, exclude_thread_id, limit),
+            )
+            return [dict(row) for row in await cur.fetchall()]
+
+
 # Feed snapshot in one statement (v6 §2.2). `owned` is the pre-filter set —
 # every latest attempt the user owns — so `watermark` advances even when both
 # branches come back empty. Branch `live` is UNCAPPED, so absence there proves

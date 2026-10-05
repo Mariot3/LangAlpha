@@ -7,6 +7,7 @@ This module creates a PTC agent that:
 - Supports sub-agent delegation for specialized tasks
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -58,6 +59,7 @@ from ptc_agent.agent.middleware.direct_mcp import (
 )
 from ptc_agent.agent.middleware.order_governance import OrderLedger
 from ptc_agent.agent.context_stack import build_context_middleware
+from ptc_agent.agent.roles import AgentRole
 from ptc_agent.agent.filesystem_routes import (
     build_filesystem_backend,
     resolve_identity_gates,
@@ -169,6 +171,7 @@ class PTCAgent:
         legacy_layout: bool = False,
         files_mounted: bool = False,
         chart_annotation_enabled: bool = True,
+        role: AgentRole = "analyst",
     ) -> str:
         """Build the static system prompt (excludes time/profile for cacheability).
 
@@ -199,6 +202,7 @@ class PTCAgent:
             direct_tool_summary=direct_tool_summary,
             files_mounted=files_mounted,
             chart_annotation_enabled=chart_annotation_enabled,
+            role=role,
         )
 
     def _get_tool_summary(self, mcp_registry: MCPRegistry) -> str:
@@ -236,7 +240,8 @@ class PTCAgent:
         order_ledger: OrderLedger | None = None,
         turn_context: TurnContext | None = None,
         project: ProjectContext | None = None,
-        extra_tools: list[Any] | None = None,
+        role: AgentRole = "analyst",
+        harness_blocks: Mapping[str, str | None] | None = None,
     ) -> Any:
         """Create a deepagent with PTC pattern capabilities.
 
@@ -262,8 +267,13 @@ class PTCAgent:
             project: The workspace folder this turn runs in. Passed rather
                 than read from the ambient context because the build happens
                 before the run's own task binds it.
-            extra_tools: Tools only this turn's main agent gets, such as
-                Home's workspace tool; subagents never see them.
+            role: The Chief of Staff gets its role section and its
+                coordination tools, which subagents never see, and only the
+                subagents listed for its role (``SubagentDefinition.roles``).
+            harness_blocks: The baseline blocks this build's role adds, keyed
+                by kind (see ``HARNESS_BLOCKS``), each the text its read
+                returned before the build, or None when that read did not
+                answer, which the baseline takes as a hole to read again.
 
         Returns:
             Configured BackgroundSubagentOrchestrator wrapping the deepagent.
@@ -602,6 +612,7 @@ class PTCAgent:
                 enabled_names=subagent_names,
                 compiler=subagent_compiler,
                 event_capture_middleware=event_capture_middleware,
+                role=role,
             )
             if additional_subagents:
                 subagents.extend(additional_subagents)
@@ -637,6 +648,7 @@ class PTCAgent:
             workspace=workspace_layout,
             legacy_layout=bool(project is not None and project.layout_origin == 3),
             chart_annotation_enabled=chart_annotation,
+            role=role,
         )
         # Read once: the baseline freezes this value per epoch, and the
         # prompt is sent with the frozen one (FrozenPromptMiddleware).
@@ -751,8 +763,13 @@ class PTCAgent:
                 "mcp_servers": lambda _state: tool_summary,
                 "skills": lambda state: skill_loader_middleware.build_manifest(state)
                 or "",
+                **{
+                    kind: (lambda _state, text=text: text)
+                    for kind, text in (harness_blocks or {}).items()
+                },
             },
             user_data_counts=user_data_counts,
+            role=role,
         )
 
         # Compiled subagent graphs live on this middleware; the RunWorkflow
@@ -877,8 +894,12 @@ class PTCAgent:
         # Main agent only, added after the subagent snapshot was taken above:
         # directly bound MCP tools are the ones a policy has to see every
         # call, and a subagent runs no main-only middleware.
-        if direct_tools or extra_tools:
-            tools = [*tools, *direct_tools, *(extra_tools or [])]
+        if role == "chief_of_staff":
+            from src.tools.secretary.chief_of_staff import CHIEF_OF_STAFF_TOOLS
+
+            tools = [*tools, *CHIEF_OF_STAFF_TOOLS]
+        if direct_tools:
+            tools = [*tools, *direct_tools]
 
         agent: Any = create_agent(
             turn.client,

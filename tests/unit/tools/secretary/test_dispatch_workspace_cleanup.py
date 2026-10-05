@@ -120,7 +120,7 @@ async def test_precheck_rejection_skips_workspace_creation(cache):
     _fill_flash_cap(cache)
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -146,7 +146,7 @@ async def test_reserve_rejection_deletes_auto_created_workspace(cache):
     _fill_flash_cap(cache)
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -175,7 +175,7 @@ async def test_cleanup_failure_still_returns_the_cap_error(cache):
     _fill_flash_cap(cache)
     mgr = _manager(delete=AsyncMock(side_effect=RuntimeError("sandbox teardown failed")))
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -203,7 +203,7 @@ async def test_dispatch_error_status_deletes_auto_created_workspace(cache):
     just-created workspace is deleted, not leaked."""
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -229,14 +229,14 @@ async def test_dispatch_timeout_with_probe_down_keeps_workspace_and_reservation(
     mgr = _manager()
     _ledger_probe_raises(ledger)
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession", return_value=_FakeSession(post_exc=TimeoutError())
     ), patch(
-        "src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0
+        "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -321,7 +321,7 @@ async def test_success_status_with_lost_body_commits_and_reports_dispatched(cach
     the tool reports success."""
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -347,7 +347,7 @@ async def test_ambiguous_loss_with_admission_marker_reports_success(cache, ledge
     mgr = _manager()
     _attempt_with_our_gen(cache, ledger)
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -374,7 +374,7 @@ async def test_ambiguous_loss_with_no_marker_on_fresh_pair_retains(cache):
     the reservation and workspace are retained as unknown (TTL-bounded)."""
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -382,7 +382,7 @@ async def test_ambiguous_loss_with_no_marker_on_fresh_pair_retains(cache):
         "aiohttp.ClientSession",
         return_value=_FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
     ), patch(
-        "src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0
+        "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -404,7 +404,7 @@ async def test_foreign_marker_on_fresh_pair_is_not_success(cache, ledger):
     mgr = _manager()
     _attempt_with_gen(ledger, "someone-elses-gen")
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -412,7 +412,7 @@ async def test_foreign_marker_on_fresh_pair_is_not_success(cache, ledger):
         "aiohttp.ClientSession",
         return_value=_FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
     ), patch(
-        "src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0
+        "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -433,7 +433,7 @@ async def test_ambiguous_loss_with_probe_down_retains_unknown(cache, ledger):
     mgr = _manager()
     _ledger_probe_raises(ledger)
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -441,7 +441,7 @@ async def test_ambiguous_loss_with_probe_down_retains_unknown(cache, ledger):
         "aiohttp.ClientSession",
         return_value=_FakeSession(post_exc=aiohttp.ServerDisconnectedError()),
     ), patch(
-        "src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0
+        "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -465,7 +465,7 @@ async def test_cancellation_mid_exchange_retains_reservation(cache):
 
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -489,14 +489,14 @@ async def test_non_200_success_status_is_not_scheduling_proof(cache):
     stays unproven either way, so the fresh pair retains as unknown."""
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
     ), patch(
         "aiohttp.ClientSession", return_value=_FakeSession(_FakeResp(status=302))
     ), patch(
-        "src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0
+        "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -519,7 +519,7 @@ async def test_non_dict_200_body_reconciles_without_raising(cache, ledger):
     mgr = _manager()
     _ledger_probe_raises(ledger)
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -527,7 +527,7 @@ async def test_non_dict_200_body_reconciles_without_raising(cache, ledger):
         "aiohttp.ClientSession",
         return_value=_FakeSession(_FakeResp(status=200, body=[])),
     ), patch(
-        "src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0
+        "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -547,7 +547,7 @@ async def test_200_with_contradictory_body_never_rolls_back(cache):
     we can't explain, so the safe side is keep)."""
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -555,7 +555,7 @@ async def test_200_with_contradictory_body_never_rolls_back(cache):
         "aiohttp.ClientSession",
         return_value=_FakeSession(_FakeResp(status=200, body={"status": "nope"})),
     ), patch(
-        "src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0
+        "src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
@@ -577,7 +577,7 @@ async def test_cancel_during_post_rejection_cleanup_does_not_commit(cache):
 
     mgr = _manager(delete=AsyncMock(side_effect=asyncio.CancelledError()))
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -598,7 +598,7 @@ async def test_connection_never_established_rolls_back_reservation(cache):
     the reservation rolls back and the auto-created workspace is deleted."""
     mgr = _manager()
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -660,12 +660,12 @@ def _continuation_patches(post_exc: Exception) -> list:
     return [
         patch("src.server.database.conversation.threads_read.get_thread_owner_id", owner),
         patch("src.server.database.conversation.threads_read.get_thread_by_id", by_id),
-        patch("src.tools.secretary.tools._hitl_confirm", return_value=(True, {})),
+        patch("src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})),
         patch(
             "aiohttp.ClientSession",
             return_value=_FakeSession(post_exc=post_exc),
         ),
-        patch("src.tools.secretary.tools._DISPATCH_CONFIRM_GRACE_S", 0.0),
+        patch("src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0),
     ]
 
 
@@ -795,7 +795,7 @@ async def test_an_auto_created_name_lost_to_two_races_takes_the_next_free_one(ca
         {"workspace_id": NEW_WORKSPACE_ID},
     ])
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.server.services.workspace_manager.WorkspaceManager.get_instance",
         return_value=mgr,
@@ -824,7 +824,7 @@ async def test_an_unreadable_name_list_still_reaches_the_approval_card(cache):
     with patch(
         "src.server.database.workspace.get_workspace_name_keys",
         AsyncMock(side_effect=RuntimeError("pool closed")),
-    ), patch("src.tools.secretary.tools._hitl_confirm", confirm):
+    ), patch("src.tools.secretary.dispatch.hitl_confirm", confirm):
         await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
         )

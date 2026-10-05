@@ -577,6 +577,7 @@ class AutomationExecutor:
                 turn = astream_ptc_workflow(
                     **turn_args,
                     workspace_id=firing.workspace_id,
+                    role=firing.route.role,
                 )
 
             # Drain the async generator: no HTTP client to consume SSE

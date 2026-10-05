@@ -25,6 +25,9 @@ from ptc_agent.agent.middleware.runtime_context.changes import (
     sha256_text,
 )
 from ptc_agent.agent.middleware.runtime_context.durable import DurableUpdate
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_block_for,
+)
 from ptc_agent.agent.middleware.runtime_context.profile import (
     ProfileSnapshot,
     profile_diff_lines,
@@ -413,14 +416,13 @@ def _carried_row_kinds(obs: Observations) -> set[str]:
     return kinds
 
 
-#: The block a change row of each kind speaks for, as the retiring row names it.
+#: The block a change row of each non-harness kind speaks for, as the retiring
+#: row names it. The harness kinds name their block from ``HARNESS_BLOCKS``.
 _ROW_BLOCKS: dict[str, str] = {
     "agent_md_changed": "<agentmd>",
     "memo_changed": "the memo count",
     "profile_changed": "<user_profile> and <user_identity>",
     "workspace_changed": "<workspace>",
-    "mcp_servers_changed": "<mcp-servers>",
-    "skills_changed": "<skills>",
 }
 
 
@@ -429,6 +431,9 @@ def _row_block(kind: str) -> str:
     # one while the other read fails, so the exception has to name the tier.
     if kind.startswith("memory_changed:"):
         return f"<memory> for the {kind.split(':', 1)[1]} tier"
+    harness = harness_block_for(kind)
+    if harness is not None:
+        return harness.label
     return _ROW_BLOCKS.get(kind, kind)
 
 
@@ -645,7 +650,13 @@ def _file_row(
         # supersedes an earlier "changed" notice that is now wrong.
         text = f"{read.path} matches its frozen copy again."
     else:
-        text = render_diff(entry.text, read.content, read.path)
+        # A harness block has no file behind it for the model to open.
+        text = render_diff(
+            entry.text,
+            read.content,
+            read.path,
+            readable=harness_block_for(read.update_kind) is None,
+        )
     return DurableUpdate(
         kind=read.update_kind,
         schema_version=UPDATE_SCHEMA_VERSION,
