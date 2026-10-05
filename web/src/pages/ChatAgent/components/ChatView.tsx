@@ -1686,7 +1686,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         edge, so no status row may come between them, and the
                         parent's sibling gap must not either. */}
                     <div>
-                      <TodoDrawer todoData={cards['todo-list-card']?.todoData ?? null} />
+                      <TodoDrawer
+                        todoData={cards['todo-list-card']?.todoData ?? null}
+                        historyLoading={isLoadingHistory}
+                      />
                       <ChatInput
                         ref={chatInputRef}
                         onSend={handleSendWithAttachments}

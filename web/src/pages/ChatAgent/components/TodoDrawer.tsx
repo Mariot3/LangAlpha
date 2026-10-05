@@ -55,7 +55,7 @@ export function toAgentPlanItems(todos: TodoItem[]): AgentPlanItem[] {
   }));
 }
 
-function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
+function TodoDrawer({ todoData, historyLoading }: { todoData: TodoData | null; historyLoading: boolean }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const wasAllCompleted = useRef(false);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -64,6 +64,11 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
   useOnClickOutside(drawerRef, () => setIsExpanded(false), isExpanded);
 
   const todos = Array.isArray(todoData?.todos) ? todoData.todos : undefined;
+
+  // Todos that arrive with the thread's history appear with its transcript, as
+  // they do on a cached thread; only a list the agent writes later animates in.
+  const [restored, setRestored] = useState(historyLoading || !!todos?.length);
+  if (restored && !historyLoading && !todos?.length) setRestored(false);
   const total = todoData?.total || 0;
   const completed = todoData?.completed || 0;
 
@@ -101,7 +106,7 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
       // only the top corners rounded, and the bottom pb-4 tucked under its top
       // edge (the composer is the later sibling, so it paints over the tuck),
       // so the visible tab ends where its content does.
-      initial={{ opacity: 0, y: 4 }}
+      initial={restored ? false : { opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: EASING }}
     >
