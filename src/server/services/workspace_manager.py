@@ -23,6 +23,7 @@ from src.server.database.computer import (
     get_computers_by_status,
     update_computer_status,
 )
+from src.server.database.home_workspace import is_flash_row
 from src.server.database.workspace import (
     complete_workspace_folder_cleanup,
     create_workspace_on_computer,
@@ -220,6 +221,10 @@ class WorkspaceManager(ComputerManager):
             workspace = await self.workspace_row(workspace_id)
             if not workspace:
                 raise ValueError(f"Workspace {workspace_id} not found")
+            if is_flash_row(workspace):
+                # Here rather than only at the route: an agent's tool deletes
+                # through this method too.
+                raise ValueError("Cannot delete the flash workspace")
 
             logger.info(f"Deleting workspace {workspace_id}")
 

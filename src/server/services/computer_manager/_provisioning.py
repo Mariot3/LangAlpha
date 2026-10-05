@@ -34,10 +34,15 @@ from src.server.database.workspace import (
     get_workspace as db_get_workspace,
     get_workspace_dir_name as db_get_workspace_dir_name,
     get_workspace_identity as db_get_workspace_identity,
+    get_restore_owed_workspace_ids_for_computer,
     SandboxIdentityLostError,
     update_workspace_activity,
 )
-from src.server.database.workspace_folders import WorkspaceFolderMoving
+from src.server.database.workspace_folders import (
+    WorkspaceFolderMoving,
+    is_top_level,
+    workspace_folder_in_use,
+)
 from src.server.models.computer import ComputerStatus
 from src.server.services.persistence.file import (
     FilePersistenceService,
@@ -59,6 +64,11 @@ from src.server.services.computer_manager._types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Sibling folders one restore pass fills at once: a recreated sandbox is one
+# small machine, already busy with the turn that recreated it.
+_SIBLING_RESTORES_AT_ONCE = 3
+
 
 class ProvisioningMixin:
     async def _teardown_machine(self, binding: ComputerBinding) -> None:
@@ -861,6 +871,62 @@ class ProvisioningMixin:
             await make_dirs(dir_name)
         except Exception as e:
             logger.warning(f"Folder setup failed for {workspace_id}: {e}")
+
+    async def restore_sibling_folders(self, session: Any, workspace_id: str) -> None:
+        """Restore the other workspaces on this one's computer that a recreate left empty.
+
+        A recreate restores only the workspace that asked for it, and each
+        sibling rejoins on its own next open. Home's agent reads and edits its
+        siblings' folders before then, where an empty folder reads as no work
+        and an edit is overwritten when that open restores it. Only a sibling
+        still flagged is touched, only on the sandbox the caller holds, and a
+        failure is that sibling's alone: it restores on its own next open.
+        """
+        sandbox = getattr(session, "sandbox", None)
+        if sandbox is None:
+            return
+        try:
+            binding = await self.resolve_binding(workspace_id)
+            owed = await get_restore_owed_workspace_ids_for_computer(
+                binding.computer_id
+            )
+        except Exception as e:
+            logger.warning(f"Could not list sibling restores for {workspace_id}: {e}")
+            return
+        sandbox_id = self._session_sandbox_id(session)
+        gate = asyncio.Semaphore(_SIBLING_RESTORES_AT_ONCE)
+
+        async def restore(sibling_id: str) -> None:
+            async with gate:
+                try:
+                    # Under the hold a settle respects, as the sibling's own
+                    # attach is, so a folder moving now is left for that open.
+                    async with workspace_folder_in_use(sibling_id):
+                        dir_name = await db_get_workspace_dir_name(sibling_id)
+                        if not dir_name or not is_top_level(dir_name):
+                            return
+                        await self._ensure_workspace_dirs(sibling_id, sandbox, dir_name)
+                        await self._maybe_restore_files(
+                            replace(binding, workspace_id=sibling_id, dir_name=dir_name),
+                            sandbox,
+                            urgent=False,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not restore sibling {sibling_id} for {workspace_id}; "
+                        f"it restores on its own next open: {e}"
+                    )
+
+        # Not recorded as attached: that would skip the sibling's own attach,
+        # which also reconciles its skills and tool overlay.
+        await asyncio.gather(
+            *(
+                restore(sibling_id)
+                for sibling_id in owed
+                if sibling_id != workspace_id
+                and (sibling_id, sandbox_id) not in self._projects_attached
+            )
+        )
 
     async def _ensure_project_attached(
         self, binding: ComputerBinding, session: Any, *, user_id: str | None = None

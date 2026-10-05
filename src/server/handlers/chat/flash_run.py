@@ -20,10 +20,8 @@ from fastapi import HTTPException
 from langgraph.types import Command
 
 from src.server.app import setup
-from src.server.database.workspace import (
-    get_flash_workspace_id,
-    get_or_create_flash_workspace,
-)
+from src.server.database.home_workspace import get_flash_workspace_id
+from src.server.database.workspace import get_or_create_flash_workspace
 from src.server.services.runs.sse_producer import RunSSEProducer
 from src.server.models.chat import (
     ChatRequest,

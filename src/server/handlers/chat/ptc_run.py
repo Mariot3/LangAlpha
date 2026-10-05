@@ -557,6 +557,11 @@ async def astream_ptc_workflow(
 
         _mark_phase("session")
 
+        if role == "chief_of_staff":
+            # Home is often the workspace whose turn recreated the sandbox,
+            # and its agent reads and edits the other workspaces' folders.
+            await workspace_manager.restore_sibling_folders(session, workspace_id)
+
         # Fire-and-forget: update workspace activity (conditional SQL, skip if <60s)
         _fire_and_forget(
             update_workspace_activity(workspace_id),

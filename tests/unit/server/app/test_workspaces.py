@@ -261,6 +261,22 @@ async def test_get_flash_workspace_error(client):
     assert resp.status_code == 500
 
 
+@pytest.mark.asyncio
+async def test_a_flash_id_another_account_holds_is_forbidden(client):
+    """An account merge carries the merged account's flash row onto the account
+    it joins. Every app load asks for it, and no retry makes it the caller's."""
+    from src.server.database.workspace import FlashWorkspaceTaken
+
+    with patch(
+        "src.server.app.workspaces.get_or_create_flash_workspace",
+        new_callable=AsyncMock,
+        side_effect=FlashWorkspaceTaken("flash-ws", "test-user-123"),
+    ):
+        resp = await client.post("/api/v1/workspaces/flash")
+
+    assert resp.status_code == 403
+
+
 # ---------------------------------------------------------------------------
 # POST /api/v1/workspaces/reorder
 # ---------------------------------------------------------------------------

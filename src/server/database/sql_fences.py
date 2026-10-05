@@ -16,8 +16,9 @@ FENCE_BINDABLE = "status NOT IN ('deleted', 'stopping', 'stopped')"
 # Tombstones retain provider_ref; prevent a racing reaper from reviving a billed machine.
 FENCE_NOT_DELETED = "status <> 'deleted'"
 
-# A flash workspace has no computer, so a machine-scoped write must not reach
-# it and overwrite the 'flash' marker with the machine's own status.
+# A flash workspace has no computer until it is bound as the user's Home, and
+# then takes its computer's status like any workspace on it. Until then a
+# machine-scoped write must not reach it and overwrite the 'flash' marker.
 FENCE_LIVE_WORKSPACE = "status NOT IN ('deleted', 'flash')"
 
 # The worker running a spec change stamps heartbeat_at on its record every

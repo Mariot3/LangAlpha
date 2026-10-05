@@ -34,7 +34,7 @@ from src.server.app.status_stream import (
     sse_status_event,
     status_event_stream,
 )
-from src.server.database.workspace import WorkspaceBusyError
+from src.server.database.workspace import FlashWorkspaceTaken, WorkspaceBusyError
 from src.server.database.workspace_folders import WorkspaceFolderMoving
 from src.server.database.workspace_names import (
     WorkspaceNameInvalid,
@@ -226,6 +226,10 @@ async def get_flash_workspace(
     try:
         workspace = await get_or_create_flash_workspace(x_user_id)
         return _workspace_to_response(workspace)
+    except FlashWorkspaceTaken:
+        # The owner check's answer for a row another account holds; no retry
+        # makes this one the caller's.
+        raise HTTPException(status_code=403, detail="Forbidden") from None
     except Exception as e:
         logger.exception(f"Error ensuring flash workspace: {e}")
         raise HTTPException(status_code=500, detail="Failed to ensure flash workspace")

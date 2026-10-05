@@ -25,6 +25,13 @@ FOLDER_NAME_MAX_BYTES = 255
 _RESERVED_FOLDERS = frozenset(
     name.casefold() for name in (*COMPUTER_ROOT_ENTRIES, *LEGACY_ROOT_DIRS)
 )
+
+#: The folder of the user's Home, the agent that works across every workspace.
+HOME_FOLDER = "Home"
+# Names a new workspace may not take, though the folder is an ordinary one:
+# Home is placed under its own name, and a workspace already holding it keeps
+# Home on a placeholder until that workspace is renamed or deleted.
+_RESERVED_NAMES = frozenset({HOME_FOLDER.casefold()})
 # Characters that break a path, split a PATH-style list (PYTHONPATH joins
 # folders with ":"), or survive badly inside a double-quoted shell word.
 _UNSAFE = re.compile(r'[/\\:$`"\x00-\x1f\x7f]')
@@ -94,7 +101,11 @@ def checked_workspace_name(name: Optional[str]) -> str:
             f"A workspace name can be at most {WORKSPACE_NAME_MAX_CHARS} characters.",
             reason="too_long",
         )
-    workspace_folder_name(text)
+    folder = workspace_folder_name(text)
+    if folder.casefold() in _RESERVED_NAMES:
+        raise WorkspaceNameInvalid(
+            f'"{folder}" is reserved; choose another name.', reason="reserved", name=folder
+        )
     return text
 
 

@@ -52,12 +52,12 @@ async def _versions(pool, user_id) -> dict[str, int]:
 async def test_a_server_added_from_a_workspace_starts_off_in_a_later_one(seed_user, test_db_pool):
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
-    await servers.create_workspace_catalog_server(user_id, home, "notes", **_STDIO)
+    research = await _workspace(user_id, computer_id, "Research")
+    await servers.create_workspace_catalog_server(user_id, research, "notes", **_STDIO)
 
     later = await _workspace(user_id, computer_id, "Later")
 
-    assert "notes" not in await _off_in(test_db_pool, home)
+    assert "notes" not in await _off_in(test_db_pool, research)
     assert "notes" in await _off_in(test_db_pool, later)
     row = await servers.get_catalog_server(user_id, "notes")
     assert (row["enabled"], row["enabled_in_new_workspaces"]) == (True, False)
@@ -68,8 +68,8 @@ async def test_an_inert_flagged_server_is_still_off_once_switched_live(seed_user
     not start it in a workspace the user never added it to."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
-    await servers.create_workspace_catalog_server(user_id, home, "notes", **_STDIO)
+    research = await _workspace(user_id, computer_id, "Research")
+    await servers.create_workspace_catalog_server(user_id, research, "notes", **_STDIO)
     await servers.set_catalog_server_enabled(user_id, "notes", False)
 
     later = await _workspace(user_id, computer_id, "Later")
@@ -93,9 +93,9 @@ async def test_switching_the_default_back_on_reaches_later_workspaces_only(seed_
     """No existing workspace's set changes, so none of them re-resolves."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     other = await _workspace(user_id, computer_id, "Other")
-    await servers.create_workspace_catalog_server(user_id, home, "notes", **_STDIO)
+    await servers.create_workspace_catalog_server(user_id, research, "notes", **_STDIO)
     before = await _versions(test_db_pool, user_id)
 
     row = await servers.set_catalog_server_new_workspace_default(user_id, "notes", True)
@@ -111,18 +111,18 @@ async def test_switching_the_default_back_on_reaches_later_workspaces_only(seed_
 async def test_a_duplicate_keeps_its_sources_state_for_a_flagged_server(seed_user, test_db_pool):
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     other = await _workspace(user_id, computer_id, "Other")
-    await servers.create_workspace_catalog_server(user_id, home, "notes", **_STDIO)
+    await servers.create_workspace_catalog_server(user_id, research, "notes", **_STDIO)
 
-    copy_of_home = await workspaces.duplicate_workspace_on_computer(
-        home, user_id, "Home copy", computer_id
+    copy_of_research = await workspaces.duplicate_workspace_on_computer(
+        research, user_id, "Research copy", computer_id
     )
     copy_of_other = await workspaces.duplicate_workspace_on_computer(
         other, user_id, "Other copy", computer_id
     )
 
-    assert "notes" not in await _off_in(test_db_pool, str(copy_of_home["workspace_id"]))
+    assert "notes" not in await _off_in(test_db_pool, str(copy_of_research["workspace_id"]))
     assert "notes" in await _off_in(test_db_pool, str(copy_of_other["workspace_id"]))
 
 
@@ -132,26 +132,26 @@ async def test_a_duplicate_keeps_what_its_source_switched_off(seed_user, test_db
     left them on."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     other = await _workspace(user_id, computer_id, "Other")
     wiki = await servers.create_catalog_server(user_id, "wiki", enabled=True, **_STDIO)
     assert await servers.tombstone_user_server(
-        user_id, home, "wiki", wiki["user_mcp_server_id"]
+        user_id, research, "wiki", wiki["user_mcp_server_id"]
     )
     await servers.upsert_workspace_server(
-        home, "price_data", source="builtin", enabled=False, config=None
+        research, "price_data", source="builtin", enabled=False, config=None
     )
 
-    copy_of_home = await workspaces.duplicate_workspace_on_computer(
-        home, user_id, "Home copy", computer_id
+    copy_of_research = await workspaces.duplicate_workspace_on_computer(
+        research, user_id, "Research copy", computer_id
     )
     copy_of_other = await workspaces.duplicate_workspace_on_computer(
         other, user_id, "Other copy", computer_id
     )
 
-    copy_of_home = str(copy_of_home["workspace_id"])
-    assert await _off_in(test_db_pool, copy_of_home) == {"wiki"}
-    assert await _off_in(test_db_pool, copy_of_home, "builtin") == {"price_data"}
+    copy_of_research = str(copy_of_research["workspace_id"])
+    assert await _off_in(test_db_pool, copy_of_research) == {"wiki"}
+    assert await _off_in(test_db_pool, copy_of_research, "builtin") == {"price_data"}
     copy_of_other = str(copy_of_other["workspace_id"])
     assert await _off_in(test_db_pool, copy_of_other) == set()
     assert await _off_in(test_db_pool, copy_of_other, "builtin") == set()
@@ -162,8 +162,8 @@ async def test_the_flash_upsert_starts_the_selection_only_on_its_first_insert(se
     must stay on, so only the call that inserted the row may tombstone."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
-    await servers.create_workspace_catalog_server(user_id, home, "notes", **_STDIO)
+    research = await _workspace(user_id, computer_id, "Research")
+    await servers.create_workspace_catalog_server(user_id, research, "notes", **_STDIO)
 
     flash = await workspaces.get_or_create_flash_workspace(user_id)
     flash_id = str(flash["workspace_id"])
@@ -208,7 +208,7 @@ async def test_a_switch_racing_a_delete_finds_the_server_gone(seed_user, test_db
     lock the delete holds, then writes nothing."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     notes = await servers.create_catalog_server(user_id, "notes", enabled=True, **_STDIO)
 
     async with test_db_pool.connection() as holder:
@@ -220,14 +220,14 @@ async def test_a_switch_racing_a_delete_finds_the_server_gone(seed_user, test_db
             )
             switch = asyncio.create_task(
                 servers.tombstone_user_server(
-                    user_id, home, "notes", notes["user_mcp_server_id"]
+                    user_id, research, "notes", notes["user_mcp_server_id"]
                 )
             )
             await _until_waiting_on_user_lock(test_db_pool, user_id)
             assert not switch.done()
         assert await switch is False
 
-    assert await _off_in(test_db_pool, home) == set()
+    assert await _off_in(test_db_pool, research) == set()
 
 
 async def test_a_disable_leaves_a_replacement_on(seed_user, test_db_pool):
@@ -236,7 +236,7 @@ async def test_a_disable_leaves_a_replacement_on(seed_user, test_db_pool):
     switching that off would undo a placement its creator just made."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     read = await servers.create_catalog_server(user_id, "notes", enabled=True, **_STDIO)
 
     await servers.delete_catalog_server(user_id, "notes")
@@ -245,14 +245,14 @@ async def test_a_disable_leaves_a_replacement_on(seed_user, test_db_pool):
     )
 
     assert not await servers.tombstone_user_server(
-        user_id, home, "notes", read["user_mcp_server_id"]
+        user_id, research, "notes", read["user_mcp_server_id"]
     )
-    assert "notes" not in await _off_in(test_db_pool, home)
+    assert "notes" not in await _off_in(test_db_pool, research)
     # The switch the user makes on the server they now see still lands.
     assert await servers.tombstone_user_server(
-        user_id, home, "notes", replacement["user_mcp_server_id"]
+        user_id, research, "notes", replacement["user_mcp_server_id"]
     )
-    assert "notes" in await _off_in(test_db_pool, home)
+    assert "notes" in await _off_in(test_db_pool, research)
 
 
 async def test_a_delete_racing_a_switch_purges_its_tombstone(seed_user, test_db_pool):
@@ -260,7 +260,7 @@ async def test_a_delete_racing_a_switch_purges_its_tombstone(seed_user, test_db_
     purge runs after its tombstone commits and takes it too."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     await servers.create_catalog_server(user_id, "notes", enabled=True, **_STDIO)
 
     async with test_db_pool.connection() as holder:
@@ -269,7 +269,7 @@ async def test_a_delete_racing_a_switch_purges_its_tombstone(seed_user, test_db_
             await holder.execute(
                 "INSERT INTO workspace_mcp_servers (workspace_id, name, source, enabled) "
                 "VALUES (%s, 'notes', 'user', FALSE)",
-                (home,),
+                (research,),
             )
             delete = asyncio.create_task(
                 servers.delete_catalog_server(user_id, "notes")
@@ -278,7 +278,7 @@ async def test_a_delete_racing_a_switch_purges_its_tombstone(seed_user, test_db_
             assert not delete.done()
         assert await delete is True
 
-    assert await _off_in(test_db_pool, home) == set()
+    assert await _off_in(test_db_pool, research) == set()
 
 
 async def _tombstone_id(pool, workspace_id, name) -> str:
@@ -298,45 +298,45 @@ async def test_an_enable_leaves_a_replacements_tombstone_alone(seed_user, test_d
     creator switched it off."""
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     other = await _workspace(user_id, computer_id, "Other")
     await servers.create_workspace_catalog_server(user_id, other, "notes", **_STDIO)
-    read = await _tombstone_id(test_db_pool, home, "notes")
+    read = await _tombstone_id(test_db_pool, research, "notes")
 
     await servers.delete_catalog_server(user_id, "notes")
     await servers.create_workspace_catalog_server(user_id, other, "notes", **_STDIO)
 
-    assert await servers.untombstone_user_server(user_id, home, "notes", read) == "gone"
-    assert "notes" in await _off_in(test_db_pool, home)
+    assert await servers.untombstone_user_server(user_id, research, "notes", read) == "gone"
+    assert "notes" in await _off_in(test_db_pool, research)
 
 
 async def test_an_enable_drops_the_tombstone_it_read_once(seed_user, test_db_pool):
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     other = await _workspace(user_id, computer_id, "Other")
     await servers.create_workspace_catalog_server(user_id, other, "notes", **_STDIO)
-    read = await _tombstone_id(test_db_pool, home, "notes")
-    before = (await _versions(test_db_pool, user_id))[home]
+    read = await _tombstone_id(test_db_pool, research, "notes")
+    before = (await _versions(test_db_pool, user_id))[research]
 
-    assert await servers.untombstone_user_server(user_id, home, "notes", read) == "enabled"
+    assert await servers.untombstone_user_server(user_id, research, "notes", read) == "enabled"
     # A second click that classified the same tombstone finds the server on.
-    assert await servers.untombstone_user_server(user_id, home, "notes", read) == "enabled"
-    assert "notes" not in await _off_in(test_db_pool, home)
-    assert (await _versions(test_db_pool, user_id))[home] == before + 1
+    assert await servers.untombstone_user_server(user_id, research, "notes", read) == "enabled"
+    assert "notes" not in await _off_in(test_db_pool, research)
+    assert (await _versions(test_db_pool, user_id))[research] == before + 1
 
 
 async def test_an_enable_keeps_the_tombstone_while_the_account_is_off(seed_user, test_db_pool):
     user_id = seed_user["user_id"]
     computer_id = await _computer(user_id)
-    home = await _workspace(user_id, computer_id, "Home")
+    research = await _workspace(user_id, computer_id, "Research")
     other = await _workspace(user_id, computer_id, "Other")
     await servers.create_workspace_catalog_server(user_id, other, "notes", **_STDIO)
-    read = await _tombstone_id(test_db_pool, home, "notes")
+    read = await _tombstone_id(test_db_pool, research, "notes")
     await servers.set_catalog_server_enabled(user_id, "notes", False)
 
-    assert await servers.untombstone_user_server(user_id, home, "notes", read) == "account_off"
-    assert "notes" in await _off_in(test_db_pool, home)
+    assert await servers.untombstone_user_server(user_id, research, "notes", read) == "account_off"
+    assert "notes" in await _off_in(test_db_pool, research)
 
 
 async def _until_waiting_on_user_lock(pool, user_id, timeout=5.0) -> None:
