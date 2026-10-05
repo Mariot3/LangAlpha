@@ -1,8 +1,8 @@
 /**
- * The agent draws a chart in several `draw_chart_annotation` calls. Only the
- * LATEST draw per chart instance renders the rich preview card; earlier draws
- * fold into the activity timeline as ordinary tool-call rows so the user can
- * watch the chart get built up step by step.
+ * The agent draws a chart in several `draw_chart_annotation` calls. The
+ * freshest draw per chart instance feeds the single chart card pinned at the
+ * first draw; the others fold into the activity timeline as ordinary tool-call
+ * rows so the user can watch the chart get built up step by step.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
