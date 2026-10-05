@@ -1564,7 +1564,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
               <div className="w-full max-w-3xl sibling-space-y-3 relative pointer-events-auto [--composer-h:initial]">
                 {activeAgentId === 'main' ? (
                   <>
-                    <TodoDrawer todoData={cards['todo-list-card']?.todoData ?? null} />
                     {/* Watch chip + background-tasks notice share one line, chip
                         first. Both are presentational; either may be absent (the
                         chip self-hides when the watch list is empty). Matched pill
@@ -1683,24 +1682,30 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                     )}
                     <QueuedAutomationNotice threadId={feedThreadId} active={isActive} />
                     <SelectionChips chips={chartSelectionChips} />
-                    <ChatInput
-                      ref={chatInputRef}
-                      onSend={handleSendWithAttachments}
-                      hasExternalContext={chartSelectionChips.length > 0}
-                      disabled={isLoadingHistory || !workspaceId || !!pendingInterrupt}
-                      onStop={handleStopButton}
-                      isLoading={isLoading}
-                      isCompacting={!!isCompacting}
-                      placeholder={chatPlaceholder}
-                      files={workspaceFiles}
-                      tokenUsage={tokenUsage}
-                      onAction={handleAction}
-                      model={threadModel.model}
-                      onPickModel={pickThreadModel}
-                      threadModels={threadModels}
-                      mode={composerMode}
-                      selectedWorkspaceId={workspaceId}
-                    />
+                    {/* One row: the drawer is a tab tucked under the composer's top
+                        edge, so no status row may come between them, and the
+                        parent's sibling gap must not either. */}
+                    <div>
+                      <TodoDrawer todoData={cards['todo-list-card']?.todoData ?? null} />
+                      <ChatInput
+                        ref={chatInputRef}
+                        onSend={handleSendWithAttachments}
+                        hasExternalContext={chartSelectionChips.length > 0}
+                        disabled={isLoadingHistory || !workspaceId || !!pendingInterrupt}
+                        onStop={handleStopButton}
+                        isLoading={isLoading}
+                        isCompacting={!!isCompacting}
+                        placeholder={chatPlaceholder}
+                        files={workspaceFiles}
+                        tokenUsage={tokenUsage}
+                        onAction={handleAction}
+                        model={threadModel.model}
+                        onPickModel={pickThreadModel}
+                        threadModels={threadModels}
+                        mode={composerMode}
+                        selectedWorkspaceId={workspaceId}
+                      />
+                    </div>
                     {/* Floats above the composer instead of sitting in it: a
                         reconnect that painted before its backlog landed would
                         otherwise remove this row on catch-up and drop the whole

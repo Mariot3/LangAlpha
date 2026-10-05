@@ -12,7 +12,14 @@ be declared there (enforced by `web/src/styles/__tests__/tokenRefs.test.ts`).
   gradients anywhere (`--color-accent-gradient` is intentionally flat).
 - **Accent**: burnished amber — `#E9954A` (dark) / `#D07D33` (light). It is an
   **annotation color, not a brand fill** (see Accent discipline).
-- **Radius**: soft, `--radius: 0.5rem` everywhere; no per-component overrides.
+- **Radius**: soft, growing with the element. Pick from the scale, never a new value:
+  4px inline code · 6px thumbnails · 8px (`--radius`) the default for rows, tables
+  and most surfaces · 12px transcript file cards and the composer's send button ·
+  pills (half the height) for chips, tags and avatars.
+  - **One exception, the chat composer at 22px**: concentric with its 12px send
+    button, which sits 10px from the bottom edge (12 + 10). The todo tab tucked
+    behind it takes 16px, about 0.7× the composer. Change the composer's radius
+    and the send button's radius or inset together, or the corner pinches.
 - **Depth**: borders first, shadows second (`--shadow-card` is the only card
   shadow); never glows.
 

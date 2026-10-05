@@ -603,10 +603,12 @@ function ChatInput({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {/* Main Container */}
+      {/* Main Container. 22px is concentric with the 12px send button 10px in
+          from the bottom edge (DESIGN.md, Radius); the drag and recording
+          overlays repeat it. */}
       <div
         ref={attachChatContainer}
-        className={`chat-input-container owns-its-edge flex flex-col items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-(--color-border-input) bg-(--color-bg-card) ${isListening ? 'recording' : ''}`}
+        className={`chat-input-container owns-its-edge flex flex-col items-stretch transition-all duration-200 relative z-10 rounded-[22px] cursor-text border border-(--color-border-input) bg-(--color-bg-card) ${isListening ? 'recording' : ''}`}
         onClick={() => textareaRef.current?.focus()}
       >
         {isListening && (
@@ -951,7 +953,7 @@ function ChatInput({
       {/* Drag Overlay */}
       {
         isDragging && (
-          <div className="absolute inset-0 bg-(--color-accent-soft) border-2 border-dashed border-[hsl(var(--primary))] rounded-2xl z-50 flex flex-col items-center justify-center backdrop-blur-xs pointer-events-none">
+          <div className="absolute inset-0 bg-(--color-accent-soft) border-2 border-dashed border-[hsl(var(--primary))] rounded-[22px] z-50 flex flex-col items-center justify-center backdrop-blur-xs pointer-events-none">
             <Archive className="w-10 h-10 text-[hsl(var(--primary))] mb-2 animate-bounce" />
             <p className="text-[hsl(var(--primary))] font-medium">Drop files to upload</p>
           </div>

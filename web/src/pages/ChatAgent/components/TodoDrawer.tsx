@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from '@/lib/framer';
+import { useOnClickOutside } from '@/hooks/useOnClickOutside';
 import StepperList, { StepperTrack, EASING, type AgentPlanItem } from '@/components/ui/stepper-track';
 
 export interface TodoItem {
@@ -57,6 +58,10 @@ export function toAgentPlanItems(todos: TodoItem[]): AgentPlanItem[] {
 function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const wasAllCompleted = useRef(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  // The expanded list covers the transcript, so any press outside it closes it.
+  useOnClickOutside(drawerRef, () => setIsExpanded(false), isExpanded);
 
   const todos = Array.isArray(todoData?.todos) ? todoData.todos : undefined;
   const total = todoData?.total || 0;
@@ -90,7 +95,12 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
 
   return (
     <motion.div
-      className="w-full"
+      ref={drawerRef}
+      className="mx-4 rounded-t-2xl border border-b-0 border-(--color-border-input) bg-(--color-bg-card) px-3 pb-4 -mb-4"
+      // A tab of the composer, in its fill and hairline: inset from its edges,
+      // only the top corners rounded, and the bottom pb-4 tucked under its top
+      // edge (the composer is the later sibling, so it paints over the tuck),
+      // so the visible tab ends where its content does.
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: EASING }}
@@ -103,8 +113,7 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
         className="w-full flex items-center gap-2.5"
         style={{
           background: 'transparent',
-          padding: '8px 0',
-          borderBottom: '1px solid var(--color-border-muted)',
+          padding: '6px 0',
         }}
       >
         <StepperTrack items={planItems} />
@@ -132,7 +141,7 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
           <motion.div
             key={previewKey}
             className="space-y-0.5"
-            style={{ padding: '6px 0 2px' }}
+            style={{ padding: '0 0 6px' }}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
@@ -192,7 +201,7 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
               transition: { duration: 0.2, ease: EASING },
             }}
           >
-            <div style={{ maxHeight: 320, overflowY: 'auto', padding: '8px 0' }}>
+            <div style={{ maxHeight: 320, overflowY: 'auto', padding: '0 0 4px' }}>
               <StepperList items={planItems} />
             </div>
           </motion.div>
