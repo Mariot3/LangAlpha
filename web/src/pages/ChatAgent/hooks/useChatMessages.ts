@@ -769,11 +769,12 @@ export function useChatMessages(
    */
   /** History replay lives in session/history/replayHistory; the hook binds
    * the runtime and the cross-lane callbacks. */
-  const loadConversationHistory = (): Promise<boolean> =>
+  const loadConversationHistory = (beforeReveal?: (ok: boolean) => void): Promise<boolean> =>
     replayConversationHistory(runtime, {
       applyFallbackSuggestion,
       loadFeedback,
       projectSubagentHistory: (byTaskId) => projectSubagentHistory(runtime, byTaskId),
+      beforeReveal,
     });
 
   /** Recovery/ownership lifecycle lives in session/stream/lifecycle; the hook
@@ -904,7 +905,23 @@ export function useChatMessages(
         setIsShared(status.is_shared);
       }
 
-      const loadOk = await loadConversationHistory();
+      // A run that is over leaves its todos as its last write said: mark the
+      // unfinished ones stale in the commit that reveals the transcript, since
+      // a step later the drawer first showed a task in progress, then shrank.
+      // The tests are the branches' below: the run settles here only when no
+      // reconnect, paused interrupt, running subagent or re-fire follows. No
+      // blanket completion of inline subagent cards: each is born with its real
+      // status from the replayed task-artifact stamp, and one would clobber a
+      // legitimately 'cancelled' card.
+      const settleEndedRun = (ok: boolean) => {
+        if (cancelled || sessionEpochRef.current !== sessionEpochAtStart) return;
+        if (onlineRetryEpochRef.current !== onlineEpochAtStart && (!ok || status.status === 'error')) return;
+        if (status.can_reconnect || historyHasUnresolvedInterruptRef.current) return;
+        if ((status.active_tasks || []).some((t) => !isSettledTask(t))) return;
+        if (finalizePendingTodos) finalizePendingTodos();
+        setMessages((prev) => finalizeTodoListProcessesInMessages(prev));
+      };
+      const loadOk = await loadConversationHistory(settleEndedRun);
 
       if (cancelled || turnTookOver()) return;
 
@@ -1070,17 +1087,11 @@ export function useChatMessages(
         }
         attachSubagentMux(threadId, processEvent, snapshotAtMs);
         setHasActiveSubagents(true);
-      } else if (!status.can_reconnect) {
-        // Workflow is not active. Inline subagent cards are already born with
-        // their real status from the replayed task-artifact stamp
-        // (handleHistoryTaskArtifactStatus), so no blanket completion here —
-        // that would clobber a legitimately 'cancelled' card.
-        // Finalize any incomplete todos as stale (they weren't completed by the agent)
-        if (finalizePendingTodos) finalizePendingTodos();
-        // Also patch inline todoListProcesses in messages
-        setMessages((prev) => finalizeTodoListProcessesInMessages(prev));
-        // (Report-back watch is armed earlier, before the reconnect branch, so it
-        // covers the active-reconnect case too — see that block above.)
+      } else {
+        // Usually a no-op, the reveal having settled it. Again here because the
+        // feedback fetch after the reveal can settle the last running subagent
+        // or clear the interrupt, and then only this pass finds the run over.
+        settleEndedRun(loadOk);
       }
     };
 

@@ -65,10 +65,11 @@ function setScrollTop(top: number) {
   v.dispatchEvent(new Event('scroll'));
 }
 
-/** The transcript grew to `height`, as the content's ResizeObserver reports it. */
+/** The transcript grew to `height`, as the content's ResizeObserver reports it.
+ *  It watches the padded wrapper, whose bottom padding tracks the composer. */
 function grow(height: number) {
   contentH = height;
-  const el = content();
+  const el = content().parentElement!;
   const observer = observers.find((o) => o.targets.includes(el))!;
   act(() => observer.cb([{ contentRect: { height } } as ResizeObserverEntry], {} as ResizeObserver));
 }

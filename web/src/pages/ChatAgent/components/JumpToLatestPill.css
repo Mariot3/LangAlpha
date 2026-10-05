@@ -1,6 +1,6 @@
 .jump-to-latest-pill {
   position: absolute;
-  bottom: 16px;
+  bottom: calc(var(--composer-h, 0px) + 16px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;

@@ -97,6 +97,13 @@ import { SelectionChips } from '@/pages/MarketView/components/SelectionChips';
 import { useMessageActionBundles } from './chatView/useMessageActionBundles';
 
 
+// Clears the composer floating over the transcript's bottom edge (its height
+// is published as --composer-h), plus a small gap above it. The content
+// re-declares the variable so a change stops here: inherited, it restyled the
+// whole transcript on every frame the composer resized (1.3ms a change on a
+// three-turn thread, against 0.1ms, and growing with the thread).
+const TRANSCRIPT_BOTTOM_PAD = 'pb-[calc(var(--composer-h,0px)+0.5rem)] *:[--composer-h:initial]';
+
 function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName: initialWorkspaceName, isActive = true, onThreadResolved, warmingState = false }: ChatViewProps): React.ReactElement | null {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -1214,6 +1221,22 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     catchUp: reconnectIfStaleRun,
   });
 
+  const publishComposerHeight = useCallback((el: HTMLDivElement | null) => {
+    const column = el?.parentElement;
+    if (!el || !column) return;
+    // A cached thread view is display:none and measures 0. Keep the last real
+    // height so it comes back with the right padding: publishing 0 there let
+    // the reactivated view pin to the bottom with the last message under the
+    // composer, then jump once the real height landed.
+    const publish = () => {
+      if (el.offsetHeight) column.style.setProperty('--composer-h', `${el.offsetHeight}px`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Early return if workspaceId or threadId is missing
   if (!workspaceId || !threadId) {
     return (
@@ -1346,7 +1369,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           )}
 
           {/* Chat Window — full width; the mobile nav drawer overlays (never pushes) */}
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative">
             {/* Messages Area - Fixed height, scrollable */}
             {/* Subscribe inline subagent cards directly to live telemetry. The
                 resolver identity changes whenever a card or the subagent
@@ -1385,7 +1408,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
               })()}
               {activeAgentId === 'main' ? (
                 <ScrollArea ref={scrollAreaRef} className={`h-full w-full${!isMobile && !rightPanelType ? ' chat-scroll-hide-scrollbar' : ''}`}>
-                  <div className={`${isMobile ? 'px-3 py-3' : 'px-6 py-4'} flex justify-center`}>
+                  <div className={`${isMobile ? 'px-3 pt-3' : 'px-6 pt-4'} ${TRANSCRIPT_BOTTOM_PAD} flex justify-center`}>
                     <div className="w-full max-w-3xl overflow-x-hidden">
                       <MessageActionsProvider actions={messageActions}>
                         {/* Above the list's chunk boundary: one batched
@@ -1410,7 +1433,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 // Workflow run detail — a run has no transcript of its own;
                 // its progress console replaces the generic subagent layout.
                 <ScrollArea ref={subagentScrollAreaRef} className="h-full w-full">
-                  <div className={`${isMobile ? 'px-3 py-3' : 'px-6 py-4'} flex justify-center`}>
+                  <div className={`${isMobile ? 'px-3 pt-3' : 'px-6 pt-4'} ${TRANSCRIPT_BOTTOM_PAD} flex justify-center`}>
                     <div className="w-full max-w-3xl">
                       <WorkflowRunDetail
                         // Keyed per run: the detail owns local stop state, and
@@ -1430,7 +1453,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 </ScrollArea>
               ) : activeAgent ? (
                 <ScrollArea ref={subagentScrollAreaRef} className="h-full w-full">
-                  <div className={`${isMobile ? 'px-3 py-3' : 'px-6 py-4'} flex justify-center`}>
+                  <div className={`${isMobile ? 'px-3 pt-3' : 'px-6 pt-4'} ${TRANSCRIPT_BOTTOM_PAD} flex justify-center`}>
                     <div className="w-full max-w-3xl space-y-2.5">
                       {/* Task description as header */}
                       {activeAgent.description && (
@@ -1524,14 +1547,23 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             </SubagentTelemetryContext>
 
             {/* Input Area */}
-            <div className={`shrink-0 ${isMobile ? 'p-3' : 'p-4'} flex justify-center`}>
+            {/* Floats over the message list, which runs the full column height, so
+                the padding, corners and gaps around the composer are transparent
+                and message text shows through. The wrapper's height is published
+                as --composer-h for the list's bottom padding and the jump pill. */}
+            <div
+              ref={publishComposerHeight}
+              className={`absolute inset-x-0 bottom-0 z-10 pointer-events-none ${isMobile ? 'p-3' : 'p-4'} flex justify-center`}
+            >
               {/* sibling-space-y, not space-y: the reconnect notice below floats,
                   and as the last row it would otherwise hand the composer a
                   bottom margin; SelectionChips' own margin would win too. */}
-              <div className="w-full max-w-3xl sibling-space-y-3 relative">
+              {/* Re-declares --composer-h for the same reason the transcript
+                  content does (TRANSCRIPT_BOTTOM_PAD): nothing in the stack
+                  reads it. */}
+              <div className="w-full max-w-3xl sibling-space-y-3 relative pointer-events-auto [--composer-h:initial]">
                 {activeAgentId === 'main' ? (
                   <>
-                    <TodoDrawer todoData={cards['todo-list-card']?.todoData ?? null} />
                     {/* Watch chip + background-tasks notice share one line, chip
                         first. Both are presentational; either may be absent (the
                         chip self-hides when the watch list is empty). Matched pill
@@ -1650,24 +1682,33 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                     )}
                     <QueuedAutomationNotice threadId={feedThreadId} active={isActive} />
                     <SelectionChips chips={chartSelectionChips} />
-                    <ChatInput
-                      ref={chatInputRef}
-                      onSend={handleSendWithAttachments}
-                      hasExternalContext={chartSelectionChips.length > 0}
-                      disabled={isLoadingHistory || !workspaceId || !!pendingInterrupt}
-                      onStop={handleStopButton}
-                      isLoading={isLoading}
-                      isCompacting={!!isCompacting}
-                      placeholder={chatPlaceholder}
-                      files={workspaceFiles}
-                      tokenUsage={tokenUsage}
-                      onAction={handleAction}
-                      model={threadModel.model}
-                      onPickModel={pickThreadModel}
-                      threadModels={threadModels}
-                      mode={composerMode}
-                      selectedWorkspaceId={workspaceId}
-                    />
+                    {/* One row: the drawer is a tab tucked under the composer's top
+                        edge, so no status row may come between them, and the
+                        parent's sibling gap must not either. */}
+                    <div>
+                      <TodoDrawer
+                        todoData={cards['todo-list-card']?.todoData ?? null}
+                        historyLoading={isLoadingHistory}
+                      />
+                      <ChatInput
+                        ref={chatInputRef}
+                        onSend={handleSendWithAttachments}
+                        hasExternalContext={chartSelectionChips.length > 0}
+                        disabled={isLoadingHistory || !workspaceId || !!pendingInterrupt}
+                        onStop={handleStopButton}
+                        isLoading={isLoading}
+                        isCompacting={!!isCompacting}
+                        placeholder={chatPlaceholder}
+                        files={workspaceFiles}
+                        tokenUsage={tokenUsage}
+                        onAction={handleAction}
+                        model={threadModel.model}
+                        onPickModel={pickThreadModel}
+                        threadModels={threadModels}
+                        mode={composerMode}
+                        selectedWorkspaceId={workspaceId}
+                      />
+                    </div>
                     {/* Floats above the composer instead of sitting in it: a
                         reconnect that painted before its backlog landed would
                         otherwise remove this row on catch-up and drop the whole

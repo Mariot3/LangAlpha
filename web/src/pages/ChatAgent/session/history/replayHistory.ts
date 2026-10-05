@@ -51,6 +51,10 @@ export interface ReplayHistoryDeps {
   loadFeedback: (targetThreadId?: string) => Promise<void>;
   /** Subagent-lane projection, bound to the runtime by the composition root. */
   projectSubagentHistory: (byTaskId: Map<string, SubagentHistoryData>) => void;
+  /** Runs in the commit that ends the load, after the replay's last write, with
+   *  what the load will return. The caller settles here what only it can judge
+   *  (a run that is over), so the transcript never appears unsettled first. */
+  beforeReveal?: (ok: boolean) => void;
 }
 
 export async function loadConversationHistory(
@@ -63,6 +67,18 @@ export async function loadConversationHistory(
   if (!rt.workspaceId || !rt.threadId || rt.threadId === '__default__' || rt.historyLoadingRef.current) {
     return false;
   }
+
+  // The todo card shows only the last state, so it is written once, with the
+  // transcript and the caller's settle step. Written per event, it showed the
+  // replay's in-progress todos over the loading transcript, then shrank when
+  // a run that was over got its leftovers marked stale.
+  let lastTodoCard: Record<string, unknown> | null = null;
+  const reveal = (ok: boolean) => {
+    if (lastTodoCard) rt.updateTodoListCard?.(lastTodoCard);
+    deps.beforeReveal?.(ok);
+    rt.setIsLoadingHistory(false);
+    rt.historyLoadingRef.current = false;
+  };
 
   try {
     rt.historyLoadingRef.current = true;
@@ -570,16 +586,14 @@ export async function loadConversationHistory(
         if (artifactType === 'todo_update') {
           const payload = event.payload || {};
 
-          // Update floating todo card from history (last event wins, shows final state)
-          if (rt.updateTodoListCard) {
-            rt.updateTodoListCard({
-              todos: Array.isArray(payload.todos) ? payload.todos : [],
-              total: payload.total || 0,
-              completed: payload.completed || 0,
-              in_progress: payload.in_progress || 0,
-              pending: payload.pending || 0,
-            });
-          }
+          // Floating todo card: last event wins, written at the reveal
+          lastTodoCard = {
+            todos: Array.isArray(payload.todos) ? payload.todos : [],
+            total: payload.total || 0,
+            completed: payload.completed || 0,
+            in_progress: payload.in_progress || 0,
+            pending: payload.pending || 0,
+          };
 
           // Artifacts in history replay have turn_index - use it!
           if (hasPairIndex) {
@@ -1012,8 +1026,7 @@ export async function loadConversationHistory(
       }));
     }
 
-    rt.setIsLoadingHistory(false);
-    rt.historyLoadingRef.current = false;
+    reveal(true);
 
     // Fetch feedback state for the thread (best-effort)
     if (rt.threadId) {
@@ -1040,8 +1053,7 @@ export async function loadConversationHistory(
     // Set with the flag below, so the render that ends the load says whether
     // the transcript it left is the thread or what a failure stripped.
     rt.setHistoryLoadFailed(!isNotFound);
-    rt.setIsLoadingHistory(false);
-    rt.historyLoadingRef.current = false;
+    reveal(isNotFound);
     return isNotFound;
   }
 }

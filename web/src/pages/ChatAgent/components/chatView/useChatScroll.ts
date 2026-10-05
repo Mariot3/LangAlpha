@@ -48,8 +48,10 @@ function revealTop(c: HTMLElement, id: string): number | null {
   const view = c.getBoundingClientRect();
   const rect = deck.getBoundingClientRect();
   // clientHeight, not the rect's own bottom: a horizontal scrollbar is not
-  // viewport a card can be read in.
-  const needed = Math.max(0, rect.bottom + REVEAL_GAP_PX - (view.top + c.clientHeight));
+  // viewport a card can be read in, and neither is the band under the floating
+  // composer (--composer-h).
+  const composerH = parseFloat(getComputedStyle(c).getPropertyValue('--composer-h')) || 0;
+  const needed = Math.max(0, rect.bottom + REVEAL_GAP_PX - (view.top + c.clientHeight - composerH));
   const headroom = Math.max(0, rect.top - view.top);
   return c.scrollTop + Math.min(needed, headroom);
 }
@@ -536,7 +538,8 @@ export function useChatScroll({
     if (isMain) {
       let lastHeight = -1;
       ro = new ResizeObserver((entries) => {
-        const height = entries[0]?.contentRect.height ?? lastHeight;
+        const entry = entries[0];
+        const height = entry?.borderBoxSize?.[0]?.blockSize ?? entry?.contentRect.height ?? lastHeight;
         const grew = lastHeight >= 0 && height > lastHeight;
         const growth = grew ? height - lastHeight : 0;
         lastHeight = height;
@@ -572,7 +575,12 @@ export function useChatScroll({
           if (followTailRef.current) tailWindowRef.current?.arm();
         }
       });
-      ro.observe(getScrollContent(c));
+      // The padded wrapper's border box, not the content's: its bottom padding
+      // is the floating composer's height, and a taller composer (a todo tab
+      // arriving, the input wrapping) must re-pin and follow like content, or
+      // the last line ends up under it.
+      const content = getScrollContent(c);
+      ro.observe(content.parentElement ?? content, { box: 'border-box' });
     }
     // A hidden tab gets no rendering updates, so the observer above does not
     // fire and the view sits still while the transcript grows; the animations
