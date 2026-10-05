@@ -1,19 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-// Stub the OHLC fetch hook so the resting card's preview chart has bars without
-// hitting React Query / the network. Two ascending bars → an "up" green trend.
-vi.mock('@/pages/MarketView/hooks/useStockBars', () => ({
-  useStockBars: () => ({
-    bars: [
-      { time: 1_700_000_000, open: 100, high: 102, low: 99, close: 101 },
-      { time: 1_700_086_400, open: 101, high: 110, low: 100, close: 108 },
-    ],
-    isLoading: false,
-    isError: false,
-  }),
-}));
 
 import { WorkspaceProvider } from '../../../contexts/WorkspaceContext';
 import { ChartSurfaceContext, type ChartSurface } from '../../../contexts/ChartSurfaceContext';
@@ -39,11 +26,6 @@ const ARTIFACT = {
   ],
 };
 
-function LocationDisplay(): React.ReactElement {
-  const loc = useLocation();
-  return <div data-testid="loc">{loc.pathname + loc.search}</div>;
-}
-
 function renderCard(
   artifact: Record<string, unknown>,
   surface: Partial<ChartSurface> = {},
@@ -51,22 +33,16 @@ function renderCard(
   workspaceId: string | null = 'ws-ctx',
 ) {
   const value: ChartSurface = { chartPresent: false, ...surface };
+  // No QueryClientProvider on purpose: the card fetches nothing, so a data
+  // hook creeping back in would throw here.
   return render(
-    <MemoryRouter initialEntries={['/chat/t/thread-123']}>
-      <WorkspaceProvider workspaceId={workspaceId} downloadFile={null}>
-        <ChartSurfaceContext.Provider value={value}>
-          <MessageActionsProvider actions={onOpenChart ? { onOpenChart } : {}}>
-            <Routes>
-              <Route
-                path="/chat/t/:threadId"
-                element={<InlineChartAnnotationCard artifact={artifact} />}
-              />
-              <Route path="/market" element={<LocationDisplay />} />
-            </Routes>
-          </MessageActionsProvider>
-        </ChartSurfaceContext.Provider>
-      </WorkspaceProvider>
-    </MemoryRouter>,
+    <WorkspaceProvider workspaceId={workspaceId} downloadFile={null}>
+      <ChartSurfaceContext.Provider value={value}>
+        <MessageActionsProvider actions={onOpenChart ? { onOpenChart } : {}}>
+          <InlineChartAnnotationCard artifact={artifact} />
+        </MessageActionsProvider>
+      </ChartSurfaceContext.Provider>
+    </WorkspaceProvider>,
   );
 }
 
@@ -76,15 +52,24 @@ describe('InlineChartAnnotationCard', () => {
     chartAnnotationStore._resetForTesting();
   });
 
-  it('renders the spotlight preview card', () => {
+  it('renders as a turn file card', () => {
     renderCard(ARTIFACT);
 
-    expect(screen.getByText('NVDA')).toBeInTheDocument();
-    // The annotation count rides the card's accessible name; the floating legend
-    // names the real annotations (labelled price line + the rectangle's "Zone").
-    expect(screen.getByRole('button', { name: /2 annotations/ })).toBeInTheDocument();
-    expect(screen.getByText('Resistance')).toBeInTheDocument();
-    expect(screen.getByText('Open annotated chart')).toBeInTheDocument();
+    // One native button carries the card; the Open door beside it is inert.
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].tagName).toBe('BUTTON');
+    // The accessible name starts with the visible one and adds the count.
+    expect(buttons[0]).toHaveAccessibleName('NVDA 1D chart, 2 annotations. Open annotated chart.');
+
+    expect(screen.getByText('NVDA 1D chart')).toBeInTheDocument();
+    expect(screen.getByText('1D')).toBeInTheDocument();
+    // The meta names the real annotations: the labelled price line, and the
+    // unlabelled rectangle by its kind. It truncates, so the hover title has it whole.
+    const meta = screen.getByText(/^2 annotations · /);
+    expect(meta).toHaveTextContent('2 annotations · Resistance, Zone');
+    expect(buttons[0]).toHaveAttribute('title', '2 annotations · Resistance, Zone');
+    expect(screen.getByText('Open')).toBeInTheDocument();
   });
 
   it('opens the chart tab in the panel, scoped to symbol and timeframe', () => {
@@ -94,8 +79,6 @@ describe('InlineChartAnnotationCard', () => {
 
     // The artifact's workspace rides along: the tab draws that workspace's annotations, not the panel's.
     expect(onOpenChart).toHaveBeenCalledWith({ symbol: 'NVDA', timeframe: '1hour', workspaceId: 'ws-art' });
-    // Nothing navigated away: the chart is a tab beside the chat.
-    expect(screen.queryByTestId('loc')).not.toBeInTheDocument();
   });
 
   // Clearing the chart only hides the drawing; asking for it from the card
@@ -108,15 +91,16 @@ describe('InlineChartAnnotationCard', () => {
     expect(chartAnnotationStore.isDisplayCleared('ws-art', chartId)).toBe(false);
   });
 
-  // The spotlight card is a role="button" — it must be keyboard-operable, not
-  // just mouse-clickable. Enter and Space both open the chart.
-  it.each(['Enter', ' '])('opens the chart via the %s key (keyboard a11y)', (key) => {
+  // The stripe is a native <button>, so Tab reaches it and Enter and Space
+  // open the chart without a key handler of its own.
+  it.each([['Enter', '{Enter}'], ['Space', ' ']])('opens the chart from the keyboard (%s)', async (_name, key) => {
+    const user = userEvent.setup();
     const onOpenChart = vi.fn();
     renderCard(ARTIFACT, {}, onOpenChart);
-    const card = screen.getByRole('button');
-    expect(card).toHaveAttribute('tabindex', '0');
 
-    fireEvent.keyDown(card, { key });
+    await user.tab();
+    expect(screen.getByRole('button')).toHaveFocus();
+    await user.keyboard(key);
     expect(onOpenChart).toHaveBeenCalledWith({ symbol: 'NVDA', timeframe: '1day', workspaceId: 'ws-art' });
   });
 
@@ -126,11 +110,11 @@ describe('InlineChartAnnotationCard', () => {
     const onOpenChart = vi.fn();
     renderCard(ARTIFACT, {}, onOpenChart, null);
 
-    expect(screen.getByText('Open chart')).toBeInTheDocument();
-    expect(screen.queryByText('Open annotated chart')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'NVDA 1day, 2 annotations. Open chart.' })).toBeInTheDocument();
+    const button = screen.getByRole('button');
+    expect(button).toHaveAccessibleName('NVDA 1D chart, 2 annotations. Open chart.');
+    expect(button).not.toHaveAccessibleName(/annotated/);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(button);
     expect(onOpenChart).toHaveBeenCalledWith({ symbol: 'NVDA', timeframe: '1day', workspaceId: 'ws-art' });
   });
 
@@ -143,33 +127,13 @@ describe('InlineChartAnnotationCard', () => {
     expect(onOpenChart).toHaveBeenCalledWith({ symbol: 'NVDA', timeframe: '1day', workspaceId: 'ws-ctx' });
   });
 
-  it('falls back to MarketView, carrying symbol, ptc mode, workspace, thread, returnTo, when no panel can open it', async () => {
-    renderCard(ARTIFACT);
-    fireEvent.click(screen.getByRole('button'));
-
-    const loc = await screen.findByTestId('loc');
-    const url = loc.textContent || '';
-    expect(url.startsWith('/market?')).toBe(true);
-    const params = new URLSearchParams(url.slice(url.indexOf('?')));
-    expect(params.get('symbol')).toBe('NVDA');
-    expect(params.get('mode')).toBe('ptc');
-    expect(params.get('ws')).toBe('ws-art');
-    expect(params.get('thread')).toBe('thread-123');
-    expect(params.get('returnTo')).toBe('/chat/t/thread-123');
-  });
-
-  it('uses the artifact timeframe for the bubble and the MarketView URL', async () => {
+  it('uses the artifact timeframe for the tile and the name', () => {
     renderCard({ ...ARTIFACT, timeframe: '1hour' });
 
-    // The pill shows the short label; the full timeframe rides the accessible name.
+    // The tile and the name both carry the interval, as a file's do its extension.
     expect(screen.getByText('1H')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /1hour/ })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button'));
-    const loc = await screen.findByTestId('loc');
-    const url = loc.textContent || '';
-    const params = new URLSearchParams(url.slice(url.indexOf('?')));
-    expect(params.get('tf')).toBe('1hour');
+    expect(screen.getByText('NVDA 1H chart')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^NVDA 1H chart,/ })).toBeInTheDocument();
   });
 
   it('collapses to a chip (no chart) when a chart is present', () => {

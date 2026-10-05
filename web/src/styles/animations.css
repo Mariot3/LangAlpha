@@ -104,10 +104,9 @@
   animation: pop-out 140ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* --- Centred fixed surfaces: the dialog, and the chart annotation modal that
-       builds its own. The keyframe carries the centring translate itself,
-       because an animated `transform` replaces the one positioning the
-       element rather than composing with it. --- */
+/* --- Centred fixed surface: the dialog. The keyframe carries the centring
+       translate itself, because an animated `transform` replaces the one
+       positioning the element rather than composing with it. --- */
 @keyframes center-pop-in {
   from { opacity: 0; transform: translate(-50%, -48%) scale(0.95); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }

@@ -1,6 +1,6 @@
 /**
  * The spelling of a MarketView URL. `buildMarketViewUrl` writes it for the
- * chat's chart tab, the annotation card and the dashboard header;
+ * chat's chart tab and the dashboard header;
  * `readMarketViewRoute` reads it back for `MarketView.tsx` and
  * `MarketChatPanel.tsx`, so the two sides share one set of param names.
  * Older Dashboard call sites still spell `/market?symbol=` by hand.

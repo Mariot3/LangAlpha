@@ -222,10 +222,6 @@ export const queryKeys = {
     runs:       () => [...queryKeys.automations.all, 'runs'],
     waiting:    (threadId: string) => [...queryKeys.automations.all, 'waiting', threadId],
   },
-  marketData: {
-    all:  ['marketData'],
-    bars: (symbol: string, interval: string) => [...queryKeys.marketData.all, 'bars', symbol, interval],
-  },
   // Per-symbol quote cache — the unified snapshot layer (see lib/quotes/).
   // Key = uppercase legacy symbol spelling (indexes stripped of a leading '^').
   // Interim keying until Phase 4 re-keys on the canonical instrument_key.

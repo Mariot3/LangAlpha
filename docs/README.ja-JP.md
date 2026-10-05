@@ -215,7 +215,7 @@ agent は画像（PNG、JPG、GIF、WebP）と PDF をネイティブに読み�
 
 ### Agent によるチャート注釈
 
-agent に MarketView chart への注釈を依頼すると、canvas に直接描画します。price levels、trendlines、Fibonacci retracements、event badges、rectangles、text markers に対応します。Annotations は SSE 経由で live stream され、workspace および `symbol:timeframe` ペアごとに永続化されます（`NVDA:1day` の描画は `NVDA:1hour` とは別管理です）。再接続時には replay されます。MarketView 外で会話している場合、chat transcript には annotation legend と live chart への one-click link を持つ mini-preview card が表示されます。MarketView から message が送信されると chart-annotation skill が自動ロードされるため、agent は常に「この chart」がどの ticker と timeframe を指すか理解しています。
+アプリ内のどの chat からでも、agent に株価 chart への注釈を依頼すると、live chart に直接描画します。price levels、trendlines、Fibonacci retracements、event badges、rectangles、text markers に対応します。Annotations は SSE 経由で live stream され、workspace および `symbol:timeframe` ペアごとに永続化されます（`NVDA:1day` の描画は `NVDA:1hour` とは別管理です）。再接続時には replay されます。MarketView では目の前の chart に描画されます。それ以外の会話では、chat transcript に symbol、timeframe、annotations を示す chart card が表示され、chat の横の tab で同じ live chart を開けます。MarketView から送信された message には画面上の ticker と timeframe が含まれるため、agent は常に「この chart」がどの chart を指すか理解しています。
 
 ### 自動化
 
@@ -368,7 +368,7 @@ Web UI は単なる chat interface ではなく、完全な research workbench �
 - **Multi-format file viewer** — PDF（paginated、zoomable）、Excel、CSV、HTML preview、source code（diff mode 付き Monaco editor）を download なしで inline 表示できます。
 - **TradingView charting** — drawing tools、indicators、professional candlestick styling を備えた完全な TradingView Advanced Chart です。
 - **Live market data** — 1 秒 tick resolution（US equities）の real-time WebSocket price feed、extended hours visualization、複数 moving average overlays に対応します。
-- **Agent-drawn chart annotations** — agent は MarketView chart に price levels、trendlines、Fibonacci retracements、event badges を描画し、`symbol:timeframe` ごとに永続化します。chat 内でも preview されます。
+- **Agent-drawn chart annotations** — agent は株価の live chart に price levels、trendlines、Fibonacci retracements、event badges を描画し、`symbol:timeframe` ごとに永続化します。MarketView に直接表示されるほか、chat 内の chart card から開けます。
 - **Shareable conversations** — one-click sharing と granular permissions（file browsing と download access の切替）により、public URL で replay できます。
 - **Real-time subagent monitoring** — 各 background task の streaming output と tool calls を live に確認でき、mid-execution instructions も送れます。
 - **Source provenance panel** — 各 turn に、agent が access した external sources（web、SEC filings、market data、MCP tools、files）を favicons、content fingerprints、per-thread scope toggle とともに表示します。

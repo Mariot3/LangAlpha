@@ -63,7 +63,6 @@ export {
 export type { BarsDeltaResult, TimedBar } from './chartDataLoaders';
 
 export {
-  AUTO_FIT_BARS,
   BARS_PER_DAY,
   DELTA_POLL_CADENCE_MS,
   INITIAL_LOAD_DAYS,
