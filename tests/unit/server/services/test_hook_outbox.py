@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from src.server.contracts.status import TERMINAL_STATUSES
 from src.server.database.runs.outbox import (
     build_finalize_jobs,
     build_finalize_jobs_from_run_row,
@@ -57,12 +58,24 @@ def _types(jobs):
     return sorted(j.hook_type for j in jobs)
 
 
+_RELEASES_ITS_PAIR = {
+    "completed": "watch_clear",
+    "error": "watch_clear",
+    "cancelled": "watch_clear",
+    "interrupted": None,
+}
+
+
 class TestBuildFinalizeJobs:
     def test_completed_ptc_gets_burst_release_and_report_back(self):
         jobs = _jobs("completed")
         assert _types(jobs) == ["burst_release", "report_back", "user_feed"]
         rb = next(j for j in jobs if j.hook_type == "report_back")
-        assert rb.payload == {"ptc_thread_id": "ptc-1", "dispatch_gen": None}
+        assert rb.payload == {
+            "ptc_thread_id": "ptc-1",
+            "dispatch_gen": None,
+            "final_status": "completed",
+        }
         # No flash origin stamped -> falls back to the run's own thread.
         assert rb.ordering_key == "ptc-1"
         assert rb.idempotency_key == "run-1:report_back"
@@ -74,7 +87,8 @@ class TestBuildFinalizeJobs:
         for status, hook in [
             ("completed", "report_back"),
             ("interrupted", "needs_input_wake"),
-            ("error", "watch_clear"),
+            ("error", "report_back"),
+            ("cancelled", "report_back"),
         ]:
             jobs = _jobs(status, origin_flash_thread_id="flash-9")
             job = next(j for j in jobs if j.hook_type == hook)
@@ -88,50 +102,89 @@ class TestBuildFinalizeJobs:
         assert wake.ordering_key == "ptc-1"
 
     @pytest.mark.parametrize("status", ["error", "cancelled"])
-    def test_failed_run_gets_watch_clear_with_error_wake(self, status):
-        jobs = _jobs(status)
-        assert _types(jobs) == ["burst_release", "user_feed", "watch_clear"]
-        wc = next(j for j in jobs if j.hook_type == "watch_clear")
-        assert wc.payload["error_wake"] is True
-        assert wc.payload["ptc_thread_id"] == "ptc-1"
+    def test_a_stopped_or_failed_ptc_run_reports_back_how_it_ended(self, status):
+        """The watching thread promised the user a report; a stop or a
+        failure is delivered like a result, and the summary's own completion
+        releases the pair, so nothing tears it down here."""
+        jobs = _jobs(status, origin_dispatch_gen="gen-3")
+        assert _types(jobs) == ["burst_release", "report_back", "user_feed"]
+        rb = next(j for j in jobs if j.hook_type == "report_back")
+        assert rb.payload == {
+            "ptc_thread_id": "ptc-1",
+            "dispatch_gen": "gen-3",
+            "final_status": status,
+        }
 
-    def test_failed_report_back_flash_clears_via_origin_id(self):
-        """A report-back flash run resolves the watch by its origin PTC id,
-        but orders on its own (flash) thread id — the same chain as the
-        report_back job that dispatched it."""
-        jobs = _jobs(
-            "error",
-            thread_id="flash-1",
-            msg_type="flash",
-            report_back_ptc_thread_id="ptc-9",
-        )
-        wc = next(j for j in jobs if j.hook_type == "watch_clear")
-        assert wc.payload["ptc_thread_id"] == "ptc-9"
-        assert wc.ordering_key == "flash-1"
+    @pytest.mark.parametrize(
+        ("role", "owed"),
+        [
+            (
+                {},
+                {
+                    "completed": "report_back",
+                    "error": "report_back",
+                    "cancelled": "report_back",
+                    "interrupted": "needs_input_wake",
+                },
+            ),
+            (
+                {
+                    "thread_id": "flash-1",
+                    "msg_type": "flash",
+                    "report_back_ptc_thread_id": "ptc-9",
+                },
+                _RELEASES_ITS_PAIR,
+            ),
+            (
+                {
+                    "thread_id": "home-1",
+                    "msg_type": "ptc",
+                    "report_back_ptc_thread_id": "ptc-9",
+                },
+                _RELEASES_ITS_PAIR,
+            ),
+            (
+                {"thread_id": "flash-1", "msg_type": "flash"},
+                dict.fromkeys(TERMINAL_STATUSES),
+            ),
+        ],
+        ids=["dispatched_ptc", "summary_on_flash", "summary_on_home", "flash_turn"],
+    )
+    def test_the_runs_role_decides_what_it_owes(self, role, owed):
+        """A dispatched PTC run reports however it ends and wakes its watcher
+        when it asks the user something. A summary run is the report-back
+        itself, so it only releases its pair once over: if it owed another
+        report, a failing summary would report on itself. A Flash turn
+        outside a report-back owes neither, since no pair is keyed on it."""
+        assert set(owed) == set(TERMINAL_STATUSES)
+        for status, hook in owed.items():
+            expected = ["burst_release", "user_feed", *([hook] if hook else [])]
+            assert _types(_jobs(status, **role)) == sorted(expected), status
 
     @pytest.mark.parametrize("msg_type", ["flash", "ptc"])
-    def test_completed_report_back_summary_consumes_its_watch(self, msg_type):
-        """The summary may land on Flash or, with the all-workspaces agent, on
-        the full agent in Home: either way its completion releases the pair."""
+    @pytest.mark.parametrize("status", ["completed", "error", "cancelled"])
+    def test_a_summary_releases_its_pair_by_the_origin_id(self, msg_type, status):
+        """The summary may land on Flash or, with the all-workspaces agent,
+        on the full agent in Home. A stopped or failed one wakes the watcher
+        so the card reconciles; a completed one is the consumption clear."""
         jobs = _jobs(
-            "completed",
+            status,
             thread_id="flash-1",
             msg_type=msg_type,
             report_back_ptc_thread_id="ptc-9",
             origin_dispatch_gen="gen-3",
         )
-        wc = next(j for j in jobs if j.hook_type == "watch_clear")
-        assert wc.payload["ptc_thread_id"] == "ptc-9"
-        assert wc.payload["error_wake"] is False
-        assert wc.payload["dispatch_gen"] == "gen-3"
-
-    def test_completed_flash_never_reports_back(self):
-        jobs = _jobs("completed", thread_id="flash-1", msg_type="flash")
-        assert _types(jobs) == ["burst_release", "user_feed"]
-
-    def test_interrupted_flash_never_wakes(self):
-        jobs = _jobs("interrupted", thread_id="flash-1", msg_type="flash")
-        assert _types(jobs) == ["burst_release", "user_feed"]
+        (wc,) = [j for j in jobs if j.hook_type == "watch_clear"]
+        assert wc.payload == {
+            "ptc_thread_id": "ptc-9",
+            "user_id": "u-1",
+            "error_wake": status != "completed",
+            "dispatch_gen": "gen-3",
+        }
+        assert wc.idempotency_key == "run-1:watch_clear"
+        # Ordered on its own thread: the summary runs on the watching thread,
+        # the same chain as the report_back job that started it.
+        assert wc.ordering_key == "flash-1"
 
     def test_user_feed_rides_every_finalize_with_a_user(self):
         """run_settled is the at-least-once push behind the thread-lifecycle
@@ -176,7 +229,7 @@ class TestBuildFinalizeJobs:
         assert a == b == {
             "run-1:burst_release",
             "run-1:user_feed",
-            "run-1:watch_clear",
+            "run-1:report_back",
         }
 
     def test_from_run_row_rebuilds_from_start_stamped_metadata(self):
@@ -193,12 +246,12 @@ class TestBuildFinalizeJobs:
             }
         )
         jobs = factory("error")
-        assert _types(jobs) == ["burst_release", "user_feed", "watch_clear"]
-        wc = next(j for j in jobs if j.hook_type == "watch_clear")
-        assert wc.payload["ptc_thread_id"] == "ptc-7"
-        assert wc.payload["user_id"] == "u-7"
+        assert _types(jobs) == ["burst_release", "report_back", "user_feed"]
+        rb = next(j for j in jobs if j.hook_type == "report_back")
+        assert rb.payload["ptc_thread_id"] == "ptc-7"
+        assert rb.payload["final_status"] == "error"
         # START-stamped origin routes the chain to the watching flash thread.
-        assert wc.ordering_key == "flash-7"
+        assert rb.ordering_key == "flash-7"
 
     def test_an_automation_turn_settles_its_firing_on_every_terminal(self):
         """The firing ends as its run did, whichever worker finalized it. A
@@ -577,27 +630,78 @@ class TestExecWatchClear:
         assert "error" not in published
 
     @pytest.mark.asyncio
-    async def test_fenced_consumption_clear_stays_silent(self):
-        """Fenced (not cleared) = a newer incarnation owns the pair — the
+    async def test_fenced_consumption_clear_owned_by_its_fencer_stays_silent(self):
+        """Fenced by a generation the resolver finds admitted or live: the
         watcher is still legitimately pending, so no wake of any kind."""
         cache = _cache_with_origin({"flash_thread_id": "flash-1", "user_id": "u-1"})
         mock_clear = AsyncMock(return_value=ClearOutcome(False, "g-NEW"))
+        mock_resolve = AsyncMock(return_value=(False, None))
         with _guard(), patch(
             "src.utils.cache.redis_cache.get_cache_client", return_value=cache
         ), patch(
             f"{POINTER_MOD}.clear_flash_report_back",
             mock_clear,
+        ), patch(
+            f"{RESERVE_MOD}.resolve_orphaned_watch",
+            mock_resolve,
         ):
             await core._exec_watch_clear(
                 _job(
                     hook_type="watch_clear",
-                    payload={"ptc_thread_id": "ptc-1", "user_id": "u-1", "error_wake": False},
+                    payload={
+                        "ptc_thread_id": "ptc-1",
+                        "user_id": "u-1",
+                        "error_wake": False,
+                        "dispatch_gen": "g-OLD",
+                    },
                     ordering_key="flash-1",
                 )
             )
 
-        mock_clear.assert_awaited_once()
+        mock_resolve.assert_awaited_once_with(
+            cache, "ptc-1", "flash-1", "u-1", fencer_gen="g-NEW", job_gen="g-OLD"
+        )
         cache.client.publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fenced_consumption_clear_resolves_a_phantom_fencer(self):
+        """A consumption clear fenced by a never-admitted reservation has no
+        run left to drain the pair, so it resolves the phantom like a failure
+        clear would. The summary landed, so the wake says ``cleared``."""
+        cache = _cache_with_origin(
+            {"flash_thread_id": "flash-1", "user_id": "u-1", "dispatch_gen": "g-PHANTOM"},
+        )
+        mock_clear = AsyncMock(return_value=ClearOutcome(False, "g-PHANTOM"))
+        mock_resolve = AsyncMock(return_value=(True, "rb-1"))
+        with _guard(), patch(
+            "src.utils.cache.redis_cache.get_cache_client", return_value=cache
+        ), patch(
+            f"{POINTER_MOD}.clear_flash_report_back",
+            mock_clear,
+        ), patch(
+            f"{RESERVE_MOD}.resolve_orphaned_watch",
+            mock_resolve,
+        ):
+            await core._exec_watch_clear(
+                _job(
+                    hook_type="watch_clear",
+                    payload={
+                        "ptc_thread_id": "ptc-1",
+                        "user_id": "u-1",
+                        "error_wake": False,
+                        "dispatch_gen": "g-OLD",
+                    },
+                    ordering_key="flash-1",
+                )
+            )
+
+        mock_resolve.assert_awaited_once_with(
+            cache, "ptc-1", "flash-1", "u-1", fencer_gen="g-PHANTOM", job_gen="g-OLD"
+        )
+        cache.client.publish.assert_awaited_once()
+        published = cache.client.publish.await_args.args[1]
+        assert '"cleared": true' in published
+        assert "error" not in published
 
     @pytest.mark.asyncio
     async def test_noop_without_origin(self):

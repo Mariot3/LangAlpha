@@ -75,8 +75,9 @@ async def delegate_to_analyst(
         question: The task, written for the analyst, who does not see this conversation.
         workspace_id: The workspace whose analyst starts a new thread. Ignored with thread_id.
         thread_id: An analyst's thread to continue.
-        report_back: True to be told when the analyst finishes, so you can relay the
-            result; False when the user will read it in the workspace themselves.
+        report_back: True to be told when the analyst finishes, is stopped or fails, so
+            you can relay the outcome; False when the user will read it in the workspace
+            themselves.
 
     Returns:
         The analyst's thread, still running; its report_back field says whether a report-back is coming.

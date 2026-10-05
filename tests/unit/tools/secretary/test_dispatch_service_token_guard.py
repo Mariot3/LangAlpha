@@ -142,7 +142,7 @@ async def test_report_back_drops_when_service_token_unset(monkeypatch):
         MagicMock(side_effect=AssertionError("report-back HTTP must not run")),
     ):
         status, run_id = await rb_executor._post_report_back(
-            cache, FLASH_THREAD_ID, PTC_THREAD_ID, _ORIGIN
+            cache, FLASH_THREAD_ID, PTC_THREAD_ID, _ORIGIN, final_status="completed"
         )
 
     assert status == "drop"
@@ -183,6 +183,7 @@ async def test_report_back_oss_mode_posts_without_token(monkeypatch):
             flash_thread_id=FLASH_THREAD_ID,
             ptc_thread_id=PTC_THREAD_ID,
             origin=_ORIGIN,
+            final_status="completed",
         )
 
     assert outcome == ("dispatched", "rid-1")

@@ -140,42 +140,40 @@ async def _exec_watch_clear(job: dict) -> None:
             # teardowns past the admission window.
             refuse_if_pointer=bool(payload.get("refuse_if_pointer")),
         )
-        if flash_tid and payload.get("error_wake"):
-            # Wake watching clients so a cancelled/failed dispatch's card
-            # reconciles instead of spinning until TTL. A fenced clear
-            # suppresses the wake when the fencing generation legitimately
-            # owns the pair (admitted, or a live run's lineage); a fence
-            # held by a never-admitted reservation (lost-409 continuation)
-            # must not swallow the predecessor's only failure signal — the
-            # resolver decides atomically against the EXACT generation that
-            # fenced this clear, resolves the pending state durably BEFORE
-            # the wake (origin spared), and receipts the phantom so its
-            # late admission is refused. A dropped nudge then degrades to a
-            # status poll that reads the resolved state.
-            if result.cleared:
-                await wake.publish_wake(
-                    cache, flash_tid, error="background_workflow_failed"
-                )
-            elif result.fencer_gen:
-                resolved, _ = await reserve.resolve_orphaned_watch(
-                    cache,
-                    ptc_thread_id,
-                    flash_tid,
-                    payload.get("user_id") or origin.get("user_id"),
-                    fencer_gen=result.fencer_gen,
-                    job_gen=payload.get("dispatch_gen"),
-                )
-                if resolved:
-                    await wake.publish_wake(
-                        cache, flash_tid, error="background_workflow_failed"
-                    )
-        elif flash_tid and result.cleared:
+        if not flash_tid:
+            return
+        settled = result.cleared
+        if not settled and result.fencer_gen:
+            # Fenced by another generation. One that never got admitted (a
+            # lost-409 continuation) has no run to drain the pair, so either
+            # kind of clear would leave the watcher pending until the origin
+            # expires. The resolver judges the EXACT fencing generation and
+            # suppresses when it was admitted or a run is live on the thread;
+            # otherwise it resolves the pending state durably BEFORE the wake
+            # (origin spared) and receipts the phantom so its late admission
+            # is refused. A dropped nudge then degrades to a status poll.
+            settled, _ = await reserve.resolve_orphaned_watch(
+                cache,
+                ptc_thread_id,
+                flash_tid,
+                payload.get("user_id") or origin.get("user_id"),
+                fencer_gen=result.fencer_gen,
+                job_gen=payload.get("dispatch_gen"),
+            )
+        if not settled:
+            # Still owned, or nothing sound to resolve against: no wake.
+            return
+        if payload.get("error_wake"):
+            # A cancelled or failed dispatch: wake watching clients so its
+            # card reconciles instead of spinning until TTL.
+            await wake.publish_wake(
+                cache, flash_tid, error="background_workflow_failed"
+            )
+        else:
             # Consumption clear (summary consumed, pair drained): push the
-            # pending→idle transition so watchers drop the chip now. Without
-            # this the error path is the only clear that wakes, and the
-            # frontend's 60s status backstop becomes the de-facto clear
-            # signal. A fenced (not cleared) consumption clear means a newer
-            # incarnation owns the pair — still pending, no wake.
+            # pending to idle transition so watchers drop the chip now.
+            # Without it the frontend's 60s status backstop becomes the
+            # de-facto clear signal.
             await wake.publish_wake(cache, flash_tid, cleared=True)
 
 

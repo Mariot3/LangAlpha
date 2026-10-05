@@ -78,7 +78,7 @@ def _patch_session(steps):
     return session, patch("aiohttp.ClientSession", MagicMock(return_value=session))
 
 
-async def _run(steps, **kwargs):
+async def _run(steps, final_status="completed", **kwargs):
     """Drive _post_report_back over ``steps`` with sleeps stubbed out."""
     session, sess_patch = _patch_session(steps)
     with sess_patch, patch("asyncio.sleep", new=AsyncMock()):
@@ -87,6 +87,7 @@ async def _run(steps, **kwargs):
             flash_thread_id="flash-1",
             ptc_thread_id="ptc-1",
             origin=_ORIGIN,
+            final_status=final_status,
             **kwargs,
         )
     return outcome, session
@@ -251,6 +252,7 @@ async def test_busy_wait_cap_exhausted_returns_cap():
             flash_thread_id="flash-1",
             ptc_thread_id="ptc-1",
             origin=_ORIGIN,
+            final_status="completed",
         )
     assert outcome == ("cap", None)
     assert session.post_calls == 1
@@ -266,3 +268,39 @@ async def test_busy_wait_cap_exhausted_returns_cap():
 @pytest.fixture(autouse=True)
 def _internal_service_token(monkeypatch):
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-internal-service-token")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("final_status", "says", "never_says"),
+    [
+        ("completed", "has completed", "before it finished"),
+        ("cancelled", "was stopped before it finished", "has completed"),
+        ("error", "failed before it finished", "has completed"),
+    ],
+)
+async def test_the_summary_turn_is_told_how_the_run_ended(final_status, says, never_says):
+    """A stopped or failed analyst reports back too, and its summary turn
+    must never be told the work completed."""
+    _, session = await _run(
+        [_FakeResp(200, json_data={"run_id": "rid-1"})], final_status=final_status
+    )
+    message = session.last_json["messages"][0]["content"]
+    assert says in message
+    assert never_says not in message
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_ending_raises_instead_of_reading_as_completed():
+    """Raising nacks the job, and a dead one's compensation tears the pair
+    down: better than a summary telling the user the work completed."""
+    session, sess_patch = _patch_session([_FakeResp(200, json_data={"run_id": "rid-1"})])
+    with sess_patch, pytest.raises(KeyError):
+        await executor._post_report_back(
+            cache=None,
+            flash_thread_id="flash-1",
+            ptc_thread_id="ptc-1",
+            origin=_ORIGIN,
+            final_status="interrupted",
+        )
+    assert session.post_calls == 0

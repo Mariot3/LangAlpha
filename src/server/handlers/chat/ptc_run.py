@@ -86,6 +86,7 @@ from .request_prep import (
     user_skill_commands,
 )
 from src.server.services.credit_gate_port import build_run_credit_gate
+from src.server.services.report_back.flash import carry
 from src.server.services.runs.admission import (
     RunScope,
     begin_run,
@@ -397,6 +398,7 @@ async def astream_ptc_workflow(
         # while re-marking the tracker with None would make a live admitted
         # run read as unadmitted to the fenced-teardown probe.
         origin_meta = await _resolve_origin_meta(request, thread_id)
+        carried = await carry.carried_pair(request, thread_id)
         run_handle = await begin_run(
             request,
             thread_id=thread_id,
@@ -411,7 +413,7 @@ async def astream_ptc_workflow(
             query_metadata=query_metadata,
             fork=fork,
             is_checkpoint_replay=is_checkpoint_replay,
-            extra_run_metadata={**origin_meta, **(run_metadata or {})},
+            extra_run_metadata={**origin_meta, **carried, **(run_metadata or {})},
         )
         scope.attach_run(run_handle)
         if not is_checkpoint_replay:

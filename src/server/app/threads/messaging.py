@@ -1051,6 +1051,9 @@ async def get_dispatches_liveness(
                 "status": status,
                 "run_id": str(row["conversation_response_id"]) if live else None,
                 "can_reconnect": live,
+                # A card opened mid-run times the run from here, not from
+                # when the card mounted.
+                "run_started_at": row["run_started_at"] if live else None,
             }
         )
 

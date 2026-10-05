@@ -15,7 +15,7 @@ import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -545,6 +545,21 @@ async def test_execute_dispatches_with_deterministic_request_key_and_holds_open(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "told"),
+    [({"final_status": "cancelled"}, "cancelled"), ({}, "completed")],
+)
+async def test_execute_tells_the_summary_how_the_run_ended(payload, told):
+    """Jobs enqueued before the field existed carry no status, and only
+    completed runs were enqueued then."""
+    cache = _FakeCache()
+    _seed_dispatched(cache, "flash-1", ["ptc-1"])
+    h = _ExecHarness(cache, run_statuses=("completed",))
+    await h.run(_job("ptc-1", **payload))
+    assert h.post.await_args.kwargs["final_status"] == told
+
+
+@pytest.mark.asyncio
 async def test_execute_drop_clears_member_so_chain_advances():
     cache = _FakeCache()
     flash, ptc = "flash-1", "ptc-1"
@@ -556,6 +571,76 @@ async def test_execute_drop_clears_member_so_chain_advances():
     assert not cache.client.sets.get(keys.flash_watch_key(flash))
     assert f"ptc_origin:{ptc}" not in cache.kv
     h.get_run.assert_not_called()  # no run to await
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("final_status", "woken"),
+    [("cancelled", True), ("error", True), ("completed", False)],
+)
+async def test_a_dropped_stop_or_failure_summary_still_wakes_the_card(final_status, woken):
+    """With no summary to tell the user, the failure wake is what reconciles
+    the card, as it did before stops and failures got a summary."""
+    cache = _FakeCache()
+    flash, ptc = "flash-1", "ptc-1"
+    _seed_dispatched(cache, flash, [ptc])
+
+    h = _ExecHarness(cache, post_result=("cap", None))
+    with patch.object(executor.wake, "publish_wake", AsyncMock()) as publish:
+        await h.run(_job(ptc, final_status=final_status))
+
+    assert not cache.client.sets.get(keys.flash_watch_key(flash))
+    if woken:
+        publish.assert_awaited_once_with(cache, flash, error="background_workflow_failed")
+    else:
+        publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_report_back_overtaken_by_a_newer_run_leaves_it_the_pair():
+    """The summary names only the thread and reads its latest turns, so once
+    a newer run starts there (the user's retry, the Chief of Staff handing it
+    more work while this report waited for the watcher) this one is no longer
+    posted. The newer run carries the same pair and reports when it ends, so
+    nothing is torn down and nothing is woken."""
+    cache = _FakeCache()
+    flash, ptc = "flash-1", "ptc-1"
+    _seed_dispatched(cache, flash, [ptc])
+    # The watcher is busy at the first POST; the newer run starts meanwhile.
+    busy = MagicMock(status=409)
+    busy.__aenter__.return_value = busy
+    busy.json = AsyncMock(return_value={"detail": "busy"})
+    session = MagicMock()
+    session.__aenter__.return_value = session
+    session.post.return_value = busy
+    latest = AsyncMock(
+        side_effect=[
+            {"conversation_response_id": uuid.UUID(int=1)},
+            {"conversation_response_id": uuid.UUID(int=2)},
+        ]
+    )
+
+    h = _ExecHarness(cache)
+    h.post = executor._post_report_back  # the real defer loop, not a stub
+    with (
+        patch("aiohttp.ClientSession", MagicMock(return_value=session)),
+        patch("asyncio.sleep", AsyncMock()),
+        patch("src.server.database.runs.lifecycle.get_latest_attempt", latest),
+        patch(
+            "src.server.database.runs.lifecycle.find_run_by_request_key",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(executor.wake, "publish_wake", AsyncMock()) as publish,
+    ):
+        job = {**_job(ptc, final_status="cancelled"), "run_id": str(uuid.UUID(int=1))}
+        await h.run(job)
+
+    assert session.post.call_count == 1
+    assert ptc in cache.client.sets[keys.flash_watch_key(flash)]
+    assert f"ptc_origin:{ptc}" in cache.kv
+    publish.assert_not_called()
+    h.merge_payload.assert_not_called()
+    h.get_run.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1456,6 +1541,63 @@ async def test_refresh_reservation_phantom_resolution_spares_predecessor_deliver
     assert restored["admitted_gen"] == "g-2"
     assert ptc in cache.client.sets[keys.flash_watch_key(flash)]
     assert ptc in cache.client.sets[keys.flash_user_pending_key(user)]
+
+
+@pytest.mark.asyncio
+async def test_a_summarys_clear_fenced_by_a_phantom_continuation_still_drains_the_pair():
+    """Lifecycle repro through the REAL reserve, teardown and resolver: G1
+    was admitted and its summary ran, and meanwhile a continuation reserved
+    G2 and lost its 409, so no run will ever back G2. The summary's
+    consumption clear for G1 is fenced by G2, and nothing else would drain
+    the pair before the origin expires: the clear itself must resolve it."""
+    cache = _FakeCache()
+    flash, ptc, user = "flash-1", "ptc-1", "u-1"
+    _seed_dispatched(cache, flash, [ptc], user)
+    cache.kv[keys.ptc_origin_key(ptc)].update(
+        dispatch_gen="g-1", admitted_gen="g-1"
+    )
+    cache.kv[keys.flash_rb_run_key(flash, ptc)] = {
+        "run_id": "rb-1",
+        "request_key": "rk-1",
+        "dispatch_gen": "g-1",
+    }
+
+    @asynccontextmanager
+    async def _owned(job_id, attempts):
+        yield True
+
+    with (
+        patch("src.utils.cache.redis_cache.get_cache_client", return_value=cache),
+        patch("src.server.database.runs.outbox.fenced_job_guard", _owned),
+    ):
+        async with reserve.reserve(flash, ptc, "ws-1", "fws-1", user) as slot:
+            assert slot.error is None
+            g2 = slot.dispatch_gen
+            slot.commit()  # the ambiguous POST retains the reservation
+
+        await core._exec_watch_clear(
+            {
+                "hook_outbox_id": "job-wc",
+                "hook_type": "watch_clear",
+                "payload": {
+                    "ptc_thread_id": ptc,
+                    "user_id": user,
+                    "error_wake": False,
+                    "dispatch_gen": "g-1",
+                },
+                "run_id": "rb-1",
+                "attempts": 1,
+                "ordering_key": flash,
+            }
+        )
+
+    assert ptc not in cache.client.sets.get(keys.flash_watch_key(flash), set())
+    assert ptc not in cache.client.sets.get(keys.flash_user_pending_key(user), set())
+    assert g2 in cache.client.sets[keys.ptc_rb_resolved_key(ptc)]
+    assert cache.client.lists[keys.flash_rb_done_key(flash)] == ["rb-1"]
+    ((_, wake_msg),) = cache.client.published
+    assert '"cleared": true' in wake_msg
+    assert "error" not in wake_msg
 
 
 @pytest.mark.asyncio

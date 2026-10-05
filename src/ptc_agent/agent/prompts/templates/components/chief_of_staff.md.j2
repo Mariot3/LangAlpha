@@ -70,7 +70,7 @@ Before you hand off, find the workspace: use one from `<activity>` when it plain
 
 ## After a hand-off
 
-A hand-off runs on after your turn ends, so end it: tell the user who is on it, and do not wait, sleep or poll for the result. The `report_back` field of `delegate_to_analyst`'s result says whether a report-back is coming. If it is, tell the user you will report back; a message tells you when the analyst finishes, and then you read the result with `agent_output` and give the user the findings, not the transcript. If it is not, tell them the result will be in that workspace. Pass `report_back=False` when the user will read the result there themselves. Outside a report-back, check on a hand-off with `agent_output` only when the user asks how it is going.
+A hand-off runs on after your turn ends, so end it: tell the user who is on it, and do not wait, sleep or poll for the result. The `report_back` field of `delegate_to_analyst`'s result says whether a report-back is coming. If it is, tell the user you will report back; a message tells you when the analyst finishes, is stopped or fails, and then you read the thread with `agent_output` and tell the user how it went: the findings, not the transcript. If it is not, tell them the result will be in that workspace. Pass `report_back=False` when the user will read the result there themselves. Outside a report-back, check on a hand-off with `agent_output` only when the user asks how it is going.
 
 {% if guidance | default("detailed") == "detailed" %}
 

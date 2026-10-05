@@ -8,7 +8,7 @@ makes it testable as data.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict
 
 from src.server.contracts.status import to_public
 
@@ -37,6 +37,9 @@ class BurstReleasePayload(TypedDict):
 class ReportBackPayload(TypedDict):
     ptc_thread_id: str
     dispatch_gen: Optional[str]
+    # completed, error or cancelled. Absent on rows enqueued before the field
+    # existed, when only completed runs were enqueued.
+    final_status: NotRequired[str]
 
 
 class NeedsInputWakePayload(TypedDict):
@@ -101,8 +104,6 @@ def build_finalize_jobs(
 
     def _jobs(final_status: str) -> List[HookJob]:
         jobs: List[HookJob] = []
-        is_ptc = msg_type == "ptc"
-        rb_ptc = report_back_ptc_thread_id or thread_id
         okey = origin_flash_thread_id or thread_id
 
         if user_id:
@@ -162,50 +163,58 @@ def build_finalize_jobs(
                 )
             )
 
-        if final_status == "completed" and is_ptc:
-            jobs.append(
-                HookJob(
-                    hook_type="report_back",
-                    idempotency_key=f"{run_id}:report_back",
-                    payload=ReportBackPayload(
-                        ptc_thread_id=thread_id,
-                        dispatch_gen=origin_dispatch_gen,
-                    ),
-                    ordering_key=okey,
+        if report_back_ptc_thread_id:
+            # A report-back summary run is the delivery itself, never a run
+            # that owes one: once it ends it only releases its pair, and a
+            # failed or stopped one wakes the watcher so the card reconciles.
+            # An interrupted summary is waiting on the user, not over: the
+            # next turn on its thread takes the pair over and owes the
+            # release instead (see ``carried_pair``). It may run on either
+            # agent: Home answers it when the user has the all-workspaces
+            # agent.
+            if final_status != "interrupted":
+                jobs.append(
+                    HookJob(
+                        hook_type="watch_clear",
+                        idempotency_key=f"{run_id}:watch_clear",
+                        payload=WatchClearPayload(
+                            ptc_thread_id=report_back_ptc_thread_id,
+                            user_id=user_id,
+                            error_wake=final_status != "completed",
+                            dispatch_gen=origin_dispatch_gen,
+                        ),
+                        ordering_key=okey,
+                    )
                 )
-            )
-        elif final_status == "interrupted" and is_ptc:
-            jobs.append(
-                HookJob(
-                    hook_type="needs_input_wake",
-                    idempotency_key=f"{run_id}:needs_input_wake",
-                    payload=NeedsInputWakePayload(ptc_thread_id=thread_id),
-                    ordering_key=okey,
+        elif msg_type == "ptc":
+            if final_status == "interrupted":
+                jobs.append(
+                    HookJob(
+                        hook_type="needs_input_wake",
+                        idempotency_key=f"{run_id}:needs_input_wake",
+                        payload=NeedsInputWakePayload(ptc_thread_id=thread_id),
+                        ordering_key=okey,
+                    )
                 )
-            )
-
-        if final_status in ("error", "cancelled") or (
-            final_status == "completed" and report_back_ptc_thread_id
-        ):
-            # error/cancelled: tear down any watch this run held open (a
-            # dispatched PTC directly, a report-back summary run via its
-            # origin id). completed WITH an origin id: consumption clear —
-            # the report-back summary landed, release the watch. The summary
-            # may run on either agent: Home answers it when the user has the
-            # all-workspaces agent.
-            jobs.append(
-                HookJob(
-                    hook_type="watch_clear",
-                    idempotency_key=f"{run_id}:watch_clear",
-                    payload=WatchClearPayload(
-                        ptc_thread_id=rb_ptc,
-                        user_id=user_id,
-                        error_wake=final_status in ("error", "cancelled"),
-                        dispatch_gen=origin_dispatch_gen,
-                    ),
-                    ordering_key=okey,
+            else:
+                # A stop or a failure is reported like a result: the watching
+                # thread told the user a report was coming, and a card alone
+                # would leave that promise to be found by scrolling.
+                jobs.append(
+                    HookJob(
+                        hook_type="report_back",
+                        idempotency_key=f"{run_id}:report_back",
+                        payload=ReportBackPayload(
+                            ptc_thread_id=thread_id,
+                            dispatch_gen=origin_dispatch_gen,
+                            final_status=final_status,
+                        ),
+                        ordering_key=okey,
+                    )
                 )
-            )
+        # Any other run is a Flash turn outside a report-back and owes
+        # neither: a pair is keyed on the dispatched PTC thread, never on a
+        # Flash one.
         return jobs
 
     return _jobs

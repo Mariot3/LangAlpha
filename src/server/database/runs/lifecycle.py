@@ -831,7 +831,8 @@ async def get_latest_attempts_for_threads(
                 SELECT DISTINCT ON (cr.conversation_thread_id)
                     cr.conversation_thread_id, cr.conversation_response_id,
                     cr.status, cr.cancel_requested_at,
-                    cr.interrupt_reason, cr.run_seq
+                    cr.interrupt_reason, cr.run_seq,
+                    cr.created_at AS run_started_at
                 FROM conversation_responses cr
                 JOIN conversation_threads ct
                     ON ct.conversation_thread_id = cr.conversation_thread_id

@@ -20,12 +20,16 @@ CALLER = "test-user-123"  # create_test_app's bypassed user id
 LEDGER = "src.server.database.runs.lifecycle.get_latest_attempts_for_threads"
 
 
+STARTED = datetime(2026, 1, 5, 14, 30, tzinfo=timezone.utc)
+
+
 def _row(tid, status, *, run_id=None, cancel_requested_at=None):
     return {
         "conversation_thread_id": tid,
         "conversation_response_id": run_id or str(uuid.uuid4()),
         "status": status,
         "cancel_requested_at": cancel_requested_at,
+        "run_started_at": STARTED,
     }
 
 
@@ -52,6 +56,7 @@ async def test_live_run_maps_to_running_with_reconnect(threads_client):
                 "status": "running",
                 "run_id": "r-1",
                 "can_reconnect": True,
+                "run_started_at": STARTED.isoformat(),
             }
         ]
     }
@@ -82,6 +87,7 @@ async def test_cancel_requested_maps_to_stopping_still_reconnectable(threads_cli
             "status": "stopping",
             "run_id": "r-1",
             "can_reconnect": True,
+            "run_started_at": STARTED.isoformat(),
         }
     ]
 
@@ -112,6 +118,7 @@ async def test_terminal_attempt_maps_to_public_vocabulary(
                 "status": expected_status,
                 "run_id": None,
                 "can_reconnect": False,
+                "run_started_at": None,
             }
         ]
     }
