@@ -21,6 +21,7 @@ def build_flash_graph(
     direct_mcp: Any | None = None,
     order_ledger: Any | None = None,
     turn_context: TurnContext | None = None,
+    chart_annotation: bool = True,
 ) -> Any:
     """Build flash agent graph without sandbox.
 
@@ -39,6 +40,8 @@ def build_flash_graph(
             When set, the agent is forced to return structured data matching this schema.
         turn_context: What this turn knows about itself, for the turn anchor
             row. None on a context-free build, which has no turn.
+        chart_annotation: False for a build with no workspace to draw in,
+            where every chart annotation call would fail.
 
     Returns:
         Compiled LangGraph agent
@@ -56,4 +59,5 @@ def build_flash_graph(
         direct_mcp=direct_mcp,
         order_ledger=order_ledger,
         turn_context=turn_context,
+        chart_annotation=chart_annotation,
     )

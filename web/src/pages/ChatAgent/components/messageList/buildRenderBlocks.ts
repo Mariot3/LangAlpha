@@ -199,7 +199,7 @@ export function buildRenderBlocks(
       });
 
       // One card per chart instance, pinned at the first draw and fed the
-      // latest cumulative artifact (so it grows in place); every other draw
+      // freshest cumulative artifact (so it grows in place); every other draw
       // folds into the timeline as an ordinary row.
       const chartCardPlan = planChartAnnotationCards(filtered, toolCallProcesses);
 
@@ -321,17 +321,17 @@ export function buildRenderBlocks(
               // (see its partition guard) from re-promoting it into a card.
               pendingItems.push(toolActivity(proc, seg.toolCallId!, 'completed', { _annotationStep: true }));
             } else if (isChartAnnotation && plan) {
-              // The anchor (first) draw: pin the card here but feed it the LATEST
-              // cumulative artifact so it grows in place. Key is the chart
-              // instance, not the tool-call id, so the element persists across
-              // draws (no remount) and its legend can animate the new annotations.
-              const latestProc = (toolCallProcesses[plan.latestCallId] as typeof proc) ?? proc;
+              // The anchor (first) draw: pin the card here but feed it the
+              // freshest cumulative artifact so it grows in place. Key is the
+              // chart instance, not the tool-call id, so the element persists
+              // across draws (no remount).
+              const freshestProc = (toolCallProcesses[plan.freshestCallId] as typeof proc) ?? proc;
               flushActivity();
               blocks.push({
                 type: 'compact_artifact',
                 key: `chart-${chartInstanceKey(artifactResult as Record<string, unknown>)}`,
-                toolCallId: plan.latestCallId,
-                proc: latestProc,
+                toolCallId: plan.freshestCallId,
+                proc: freshestProc,
               });
             } else {
               flushActivity();
@@ -396,7 +396,7 @@ export function buildRenderBlocks(
       }
 
       // Per chart instance, only the anchor (first) draw became a
-      // `compact_artifact` block — fed the latest cumulative proc via
+      // `compact_artifact` block — fed the freshest cumulative proc via
       // `chartCardPlan` (see `planChartAnnotationCards` above); every later draw
       // was forced to an ordinary `_annotationStep` row, so no post-pass dedup
       // is needed.

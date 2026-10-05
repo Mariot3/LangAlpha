@@ -113,7 +113,7 @@ The initiating-coverage skill builds on the research and the reverse DCF workboo
 
 ### 📈 Chart with the agent
 
-Live market charts the agent can read and draw on: support and resistance, trendlines, Fibonacci levels and event markers, saved per symbol and timeframe.
+Live market charts the agent can read and draw on from any chat: support and resistance, trendlines, Fibonacci levels and event markers, saved per symbol and timeframe. Outside Market View, the drawing arrives as a chart card that opens the same chart beside the conversation.
 
 > *"Chart CBRS since its IPO and mark what moved it: earnings, deals, analyst calls and lock-ups."*
 
@@ -269,7 +269,7 @@ Beyond data, the agent works with these tools:
 | --- | --- |
 | Code and files | Run Python and shell commands, long jobs in the background; read, write, edit and search files; share a preview link to an app it serves from the sandbox |
 | Web | Search, fetch a page, and with Firecrawl crawl or map a whole site |
-| Output | Render an interactive widget in the chat, and draw annotations on your Market View chart |
+| Output | Render an interactive widget in the chat, and draw annotations on a stock's live chart |
 | Coordination | Dispatch [subagents and workflows](#subagents-and-teams-of-agents), keep a todo list, ask you a structured question, and in plan mode submit a plan for your approval |
 | Your connections | Brokerage and remote MCP servers over OAuth or header auth, and Agent Plugins |
 | Messaging | On LangAlpha.ai, message you on a connected channel, with files attached |
@@ -334,7 +334,7 @@ Keys and OAuth tokens are encrypted at rest with pgcrypto.
 
 Skills follow the [Agent Skills](https://agentskills.io/specification) specification and plugins the [Agent Plugins 1.0.0](https://agent-plugins.org) format. The built-in MCP servers and skills ship as plugin bundles in [`plugins/`](plugins/), the same format you upload or install from a git URL on the Plugins page. On top of the standards, LangAlpha adds:
 
-- **Skills load on demand.** The prompt carries one manifest line per skill, and the full skill loads by slash command or when the agent reads its `SKILL.md`. Tools a skill brings, such as chart annotation, stay hidden until it loads.
+- **Skills load on demand.** The prompt carries one manifest line per skill, and the full skill loads by slash command or when the agent reads its `SKILL.md`. Tools a skill brings, such as the automation tools, stay hidden until it loads.
 - **Your skills, your commands.** Upload a skill as a zip and give it a slash command of your choosing, or have the agent install one from GitHub into a workspace.
 - **One extension block for plugins.** `mcp.json` stays closed to the format's own fields. Everything LangAlpha adds sits in `plugin.json` under `extensions["ai.langalpha"]`, the format's one extension point: a `description` and an `instruction` per server, which reach the prompt; a `tool_exposure_mode` of `summary` or `detailed`, for how much of each tool the agent sees up front; and `secrets`, naming each credential a server needs and where it binds. Strip the block and the package still installs in any Agent Plugins host. Details in [`plugins/README.md`](plugins/README.md).
 - **Third-party servers run isolated.** A server whose code LangAlpha does not own launches through pinned `uvx` or `npx`, never from the app's own environment, so an SDK upgrade on one side cannot break the other.

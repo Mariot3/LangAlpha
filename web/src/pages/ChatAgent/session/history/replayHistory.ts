@@ -576,11 +576,10 @@ export async function loadConversationHistory(
       //
       // NOTE: `chart_annotation` artifacts are intentionally NOT replayed here
       // (only the live stream applies them to the annotation store). On reload,
-      // MarketView's `useChartAnnotationSync` REST fetch is the authoritative
-      // source that repopulates the store from Postgres, and the inline card
-      // renders from the replayed `tool_call_result.artifact`. If a live chart
-      // surface is ever added to the standalone chat page, add a
-      // `chart_annotation` branch here so reloads stay consistent.
+      // every live chart (MarketView's, and the chat's chart tab through
+      // `MarketChartSurface`) repopulates the store from Postgres with
+      // `useChartAnnotationSync`, and the inline card renders from the
+      // replayed `tool_call_result.artifact`.
       if (eventType === 'artifact') {
         const artifactType = event.artifact_type;
         if (artifactType === 'todo_update') {

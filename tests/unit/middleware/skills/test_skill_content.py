@@ -67,14 +67,14 @@ def test_fresh_skill_appends_tool_descriptions_block():
         patch(f"{MOD}.load_skill_content", return_value="SKILL BODY"),
         patch(
             f"{MOD}.build_tool_descriptions",
-            return_value="- draw_chart_annotation: draw on the chart",
+            return_value="- create_automation: schedule a recurring task",
         ),
     ):
-        result = build_skill_content([_ctx("chart-annotation")])
+        result = build_skill_content([_ctx("automation")])
 
     assert result is not None
     assert "**Available tools:**" in result.content
-    assert "- draw_chart_annotation: draw on the chart" in result.content
+    assert "- create_automation: schedule a recurring task" in result.content
     assert "without needing to call LoadSkill" in result.content
 
 

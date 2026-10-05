@@ -233,7 +233,8 @@ async def _run_flash_agent(prompt: str, user_id: str | None = None) -> str:
     if config.llm is None:
         raise ValueError("No LLM configured — set a model in agent_config.yaml or select one in Settings")
 
-    graph = build_flash_graph(config=config)
+    # A scheduled job has no workspace for a chart drawing to land in.
+    graph = build_flash_graph(config=config, chart_annotation=False)
     input_state = {"messages": [HumanMessage(content=prompt)]}
     result = await graph.ainvoke(input_state)
 

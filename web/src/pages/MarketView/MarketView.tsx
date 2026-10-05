@@ -303,7 +303,7 @@ function MarketViewInner() {
   const [chatReturnPath, setChatReturnPath] = useState<string | null>(null);
 
   // Handle URL parameters (symbol + returnTo from chat context, and ws + mode
-  // when expanding a chart-annotation preview from ChatAgent). Preserve
+  // when opening a chart-annotation card from ChatAgent). Preserve
   // `?thread` so MarketChatPanel can pick it up to resume the right
   // conversation in the same workspace. On the first render the state above is
   // already seeded from the same route, so this re-applies identical values;
@@ -460,11 +460,10 @@ function MarketViewInner() {
 
   const handleSendMessage = useCallback(async (message: string, planMode: boolean, attachments: AttachmentItem[] = [], _slashCommands: string[] = [], { model, reasoningEffort }: { model?: string; reasoningEffort?: string } = {}) => {
     // Build additional_context from chart image + file attachments.
-    // Always preload the chart-annotation skill so the drawing tools are
-    // available from turn 1 (the agent can also self-load it elsewhere, but
-    // injecting here guarantees turn-1 availability on the chart surface).
-    // Tell it which ticker + timeframe "the chart" is so it edits the instance
-    // the user is actually viewing (chart_id = SYMBOL:timeframe).
+    // The drawing tools are always bound; the chart-annotation skill rides
+    // every send for its drawing guide and to tell the agent which ticker +
+    // timeframe "the chart" is, so it edits the instance the user is actually
+    // viewing (chart_id = SYMBOL:timeframe).
     const sym = (selectedStock || '').toUpperCase();
     const tf = normalizeTimeframe(selectedInterval);
     const contexts: unknown[] = [
@@ -540,8 +539,8 @@ function MarketViewInner() {
             initialMessage: outgoingMessage,
             planMode: planMode || false,
             additionalContext: imageContext,
-            // PTC side needs the same skill activated so the chart tools
-            // are available without the LLM having to call LoadSkill.
+            // Carry the chart-annotation skill over so the PTC agent starts
+            // with the drawing guide (the tools themselves are always bound).
             skills: ['chart-annotation'],
             ...(selectionSnapshots.length > 0 ? { chartSelections: selectionSnapshots } : {}),
             ...(attachmentMeta ? { attachmentMeta } : {}),

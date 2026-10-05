@@ -250,8 +250,8 @@ def _builtin_info(
     return SkillInfo(
         name=skill.name,
         description=skill.description,
-        tool_count=len(skill.get_tool_names()),
-        tools=skill.get_tool_names(),
+        tool_count=len(skill.listed_tool_names()),
+        tools=skill.listed_tool_names(),
         command=overrides.get(skill.name) or skill.command,
         enabled=enabled,
         disabled_scope=disabled_scope,

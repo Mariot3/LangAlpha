@@ -196,7 +196,9 @@ class SubagentCompiler:
         The tool guide is shared, the tool sets are not: report-builder binds
         neither finance nor web, no subagent binds show_widget, and the yaml
         default for market_watch (true) would advertise a tool ``agent.py`` has
-        already gated out of this user's finance set.
+        already gated out of this user's finance set. The chart annotation
+        tools are off unconditionally: ``agent.py`` binds them on the main
+        agent only, so no tool set can carry them here.
         """
         bound = set(defn.tools)
         market_watch = (
@@ -207,6 +209,7 @@ class SubagentCompiler:
         return {
             "market_watch_enabled": market_watch,
             "show_widget_enabled": "show_widget" in bound,
+            "chart_annotation_enabled": False,
             "finance_enabled": "finance" in bound,
             "web_enabled": "web_search" in bound,
         }

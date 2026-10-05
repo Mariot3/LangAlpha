@@ -3,12 +3,11 @@
  * plus the candlestick / MA / volume / RSI chart — wired with its own
  * market-data websocket, REST data and annotation sync.
  *
- * Drop it anywhere outside the MarketView page (e.g. the chat transcript's
- * chart-annotation modal) to show the *same* chart the user sees on MarketView,
- * including the agent's drawn annotations. It mirrors the data wiring of
- * ``MarketView``'s desktop left panel; it's read-only (no chat capture, no
- * watchlist), but interval switching and the company-overview panel work in
- * place. Provide its own ``MarketDataWSProvider`` so it can live on any page.
+ * Drop it anywhere outside the MarketView page (e.g. the chat's chart tab) to
+ * show the *same* chart the user sees on MarketView, including the agent's
+ * drawn annotations. It mirrors the data wiring of ``MarketView``'s desktop
+ * left panel; it's read-only (no chat capture, no watchlist), but interval
+ * switching and the company-overview panel work in place. Provide its own ``MarketDataWSProvider`` so it can live on any page.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';

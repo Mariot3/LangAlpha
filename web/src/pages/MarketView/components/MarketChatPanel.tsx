@@ -333,7 +333,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const agentMode = mode === 'fast' ? 'flash' : 'ptc';
 
   // MarketView always has the live chart beside the chat, so inline
-  // chart-annotation previews collapse to a confirmation chip. Tell the chip
+  // chart-annotation cards collapse to a confirmation chip. Tell the chip
   // which instance is on screen + how to switch the chart, so a chip for a
   // different ticker/timeframe can jump the chart to it.
   const chartSurface = useMemo<ChartSurface>(
@@ -501,10 +501,10 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
       slashCommands: SlashCommandLike[] = [],
       modelOptions: ModelOptionsLike = {},
     ) => {
-      // Always activate the chart-annotation skill so the agent can draw on
-      // the live chart from turn 1, and tell it which ticker + timeframe "the
-      // chart" is (chart_id = SYMBOL:timeframe — drawing on the wrong timeframe
-      // won't show on the view the user is looking at).
+      // The drawing tools are always bound; inject the chart-annotation skill
+      // every send for its drawing guide and to tell the agent which ticker +
+      // timeframe "the chart" is (chart_id = SYMBOL:timeframe — drawing on the
+      // wrong timeframe won't show on the view the user is looking at).
       const sym = symbol ? symbol.toUpperCase() : '';
       const tf = normalizeTimeframe(interval);
       const contexts: Record<string, unknown>[] = [
