@@ -67,6 +67,7 @@ from src.tools.market_data.tool import (
     get_quote,
     screen_stocks,
 )
+from src.tools.chart_annotation import CHART_ANNOTATION_TOOLS
 
 logger = structlog.get_logger(__name__)
 
@@ -131,7 +132,7 @@ class FlashAgent:
             model=model,
         )
 
-    def _build_tools(self) -> list[Any]:
+    def _build_tools(self, chart_annotation: bool = True) -> list[Any]:
         """Build the tool list for Flash agent.
 
         Returns:
@@ -168,6 +169,11 @@ class FlashAgent:
 
         tools.extend(SECRETARY_TOOLS)
 
+        # Not gated on loading the chart-annotation skill (that is only the
+        # drawing guide), but off with it.
+        if chart_annotation:
+            tools.extend(CHART_ANNOTATION_TOOLS)
+
         return tools
 
     def _build_system_prompt(
@@ -175,6 +181,7 @@ class FlashAgent:
         tools: list[Any],
         guidance: str,
         direct_tool_summary: str = "",
+        chart_annotation_enabled: bool = True,
     ) -> str:
         """Build the static system prompt (excludes time/profile for cacheability).
 
@@ -188,6 +195,7 @@ class FlashAgent:
             tools=tools,
             direct_tool_summary=direct_tool_summary,
             ask_user_enabled=True,
+            chart_annotation_enabled=chart_annotation_enabled,
             **guidance_template_vars(guidance),
         )
 
@@ -203,6 +211,7 @@ class FlashAgent:
         direct_mcp: DirectToolSet | None = None,
         order_ledger: OrderLedger | None = None,
         turn_context: TurnContext | None = None,
+        chart_annotation: bool = True,
     ) -> Any:
         """Create a Flash agent with minimal middleware stack.
 
@@ -224,6 +233,7 @@ class FlashAgent:
                 one ran, the surface it arrived on and that surface's delivery
                 rules, the zone its clock is stamped in), for the turn anchor
                 row. None for a context-free build.
+            chart_annotation: False for a build with no workspace to draw in.
 
         Returns:
             Configured LangGraph agent
@@ -233,8 +243,26 @@ class FlashAgent:
         # Freeze current time for this request (refreshes on each new query)
         request_time = datetime.now(tz=UTC)
 
+        # Same per-user registry assembly as the PTC build: feature gates,
+        # builtin disables, user skills. Flash previously took the bare
+        # system-gated registry, so a per-user feature opt-out that hid a
+        # skill in PTC left it visible here. Built before the tools because
+        # the chart-annotation skill's switch also turns its tools off.
+        skill_registry = build_effective_skill_registry(
+            "flash",
+            feature_resolver=self.config.feature_enabled,
+            disabled_skills=self.config.disabled_skills,
+            user_skills=self.config.user_skills,
+            user_skill_dir=self.config.user_skill_dir,
+            workspace_skill_dir=self.config.workspace_skill_dir,
+        )
+        chart_annotation = chart_annotation and "chart-annotation" in skill_registry
+        if not chart_annotation:
+            # No tools to guide: keep the guide out of the manifest and LoadSkill.
+            skill_registry.pop("chart-annotation", None)
+
         # Build tools
-        tools = self._build_tools()
+        tools = self._build_tools(chart_annotation=chart_annotation)
         direct_tools = list(direct_mcp.tools) if direct_mcp is not None else []
 
         # Build system prompt (the volatile stamp rides the tail envelope)
@@ -242,6 +270,7 @@ class FlashAgent:
             tools,
             turn.guidance,
             direct_tool_summary=direct_tool_summary(direct_tools),
+            chart_annotation_enabled=chart_annotation,
         )
 
         # Leak detector wired into provenance so web/market/SEC snippets are
@@ -267,19 +296,6 @@ class FlashAgent:
         ]
 
         # Add dynamic skill loader middleware (Flash mode: inline SKILL.md).
-        # Same per-user registry assembly as the PTC build: feature gates,
-        # builtin disables, user skills. Flash previously took the bare
-        # system-gated registry, so a per-user feature opt-out that hid a
-        # skill in PTC left it visible here.
-        skill_registry = build_effective_skill_registry(
-            "flash",
-            feature_resolver=self.config.feature_enabled,
-            disabled_skills=self.config.disabled_skills,
-            user_skills=self.config.user_skills,
-            user_skill_dir=self.config.user_skill_dir,
-            workspace_skill_dir=self.config.workspace_skill_dir,
-        )
-
         skill_loader_middleware = SkillsMiddleware(
             skill_registry=skill_registry,
             mode="flash",

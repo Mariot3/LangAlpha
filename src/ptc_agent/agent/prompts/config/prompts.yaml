@@ -51,6 +51,10 @@ defaults:
   show_widget_enabled: true
   finance_enabled: true
   web_enabled: true
+  # Gates the draw_chart_annotation line (PTC visualizations, Flash tool list).
+  # The agent builds pass false when the chart-annotation skill is off, and
+  # the subagent compiler always does: only the main agent binds the tools.
+  chart_annotation_enabled: true
 
 # System prompt template metadata (for documentation)
 system:

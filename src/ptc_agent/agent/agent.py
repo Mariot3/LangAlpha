@@ -117,6 +117,7 @@ from src.tools.market_data.tool import (
     screen_stocks,
 )
 from src.tools.market_watch import watch_market
+from src.tools.chart_annotation import CHART_ANNOTATION_TOOLS
 from ptc_agent.config import AgentConfig
 from ptc_agent.core.mcp_registry import MCPRegistry
 from ptc_agent.core.sandbox import PTCSandbox
@@ -167,6 +168,7 @@ class PTCAgent:
         workspace: WorkspaceLayout | None = None,
         legacy_layout: bool = False,
         files_mounted: bool = False,
+        chart_annotation_enabled: bool = True,
     ) -> str:
         """Build the static system prompt (excludes time/profile for cacheability).
 
@@ -196,6 +198,7 @@ class PTCAgent:
             crawl_enabled=crawl_enabled,
             direct_tool_summary=direct_tool_summary,
             files_mounted=files_mounted,
+            chart_annotation_enabled=chart_annotation_enabled,
         )
 
     def _get_tool_summary(self, mcp_registry: MCPRegistry) -> str:
@@ -462,15 +465,24 @@ class PTCAgent:
         # any build that registers no tool for it to gate.
         if not gates.workflow_tool:
             skill_registry.pop("run-workflow", None)
+        # The chart-annotation skill no longer gates its tools, but its switch
+        # still does: a user who turned it off, or the plugin that ships it,
+        # gets neither the tools nor the prompt line naming them.
+        chart_annotation = "chart-annotation" in skill_registry
+        # Subagents never bind the annotation tools (see where they are
+        # appended), so their manifest must not offer the guide to them.
+        subagent_skill_registry = {
+            name: skill
+            for name, skill in skill_registry.items()
+            if name != "chart-annotation"
+        }
 
         # One per stack rather than one shared instance, because the two stacks
-        # differ in a single answer: where the manifest goes. The main agent
-        # has a baseline to freeze it into; a subagent does not, so its copy
-        # keeps appending the manifest per call. Everything else about them,
-        # the registry included, is the same object.
+        # differ in where the manifest goes, and in the one skill above. The
+        # main agent has a baseline to freeze it into; a subagent does not, so
+        # its copy keeps appending the manifest per call.
         skills_middleware = partial(
             SkillsMiddleware,
-            skill_registry=skill_registry,
             mode="ptc",
             backend=backend,
             sources=skill_sources,
@@ -480,8 +492,12 @@ class PTCAgent:
             ],
             disabled_skills=self.config.disabled_skills,
         )
-        skill_loader_middleware = skills_middleware(inject_manifest=False)
-        subagent_skill_middleware = skills_middleware(inject_manifest=True)
+        skill_loader_middleware = skills_middleware(
+            skill_registry=skill_registry, inject_manifest=False
+        )
+        subagent_skill_middleware = skills_middleware(
+            skill_registry=subagent_skill_registry, inject_manifest=True
+        )
         tools.extend(skill_loader_middleware.tools)
         tools.extend(skill_loader_middleware.get_all_skill_tools())
 
@@ -547,7 +563,17 @@ class PTCAgent:
         }
         # The compiler gets its own registry: same per-user gates, but
         # mode-unfiltered — subagent definitions may be flash-mode and preload
-        # flash-only skills the ptc-filtered registry above excludes.
+        # flash-only skills the ptc-filtered registry above excludes. It drops
+        # the chart guide for the same reason the subagent manifest does.
+        compiler_skill_registry = build_effective_skill_registry(
+            None,
+            feature_resolver=self.config.feature_enabled,
+            disabled_skills=self.config.disabled_skills,
+            user_skills=self.config.user_skills,
+            user_skill_dir=self.config.user_skill_dir,
+            workspace_skill_dir=self.config.workspace_skill_dir,
+        )
+        compiler_skill_registry.pop("chart-annotation", None)
         subagent_compiler = SubagentCompiler(
             sandbox=sandbox,
             mcp_registry=mcp_registry,
@@ -557,14 +583,7 @@ class PTCAgent:
             current_time=current_time,
             thread_id=short_thread_id,
             config=self.config,
-            skill_registry=build_effective_skill_registry(
-                None,
-                feature_resolver=self.config.feature_enabled,
-                disabled_skills=self.config.disabled_skills,
-                user_skills=self.config.user_skills,
-                user_skill_dir=self.config.user_skill_dir,
-                workspace_skill_dir=self.config.workspace_skill_dir,
-            ),
+            skill_registry=compiler_skill_registry,
             skill_dirs=[
                 d for d, _ in self.config.skills.local_skill_dirs_with_sandbox()
             ],
@@ -614,6 +633,7 @@ class PTCAgent:
             direct_tool_summary=direct_tool_summary(direct_tools),
             workspace=workspace_layout,
             legacy_layout=bool(project is not None and project.layout_origin == 3),
+            chart_annotation_enabled=chart_annotation,
         )
         # Read once: the baseline freezes this value per epoch, and the
         # prompt is sent with the frozen one (FrozenPromptMiddleware).
@@ -780,6 +800,13 @@ class PTCAgent:
                 prebuilt_workflows=get_prebuilt_workflows(),
             )
             tools.append(run_workflow_tool)
+
+        # Chart annotations, main agent only: appended after the subagent
+        # snapshot above, which the default general-purpose subagent is built
+        # from. A drawing is part of the reply the user sees, and a subagent
+        # answers the main agent, not the user.
+        if chart_annotation:
+            tools.extend(CHART_ANNOTATION_TOOLS)
 
         # Main agent middleware (includes SubAgentMiddleware + main_only)
         # Ordering matters for prompt caching:

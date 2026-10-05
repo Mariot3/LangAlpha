@@ -988,11 +988,10 @@ class TestSkillRegistryVisibility:
         from ptc_agent.agent.middleware.skills.registry import SKILL_REGISTRY
 
         skill = SKILL_REGISTRY["chart-annotation"]
-        # Discoverable in both modes so the agent can self-load it on demand
-        # (including from the standalone chat page, where it renders a card).
+        # The drawing guide, discoverable in both modes. The tools themselves
+        # are bound on every main-agent build, so the skill gates none.
         assert skill.exposure == "both"
-        tool_names = skill.get_tool_names()
-        assert set(tool_names) == {"draw_chart_annotation", "manage_chart_annotations"}
+        assert skill.get_tool_names() == []
 
     def test_appears_in_default_listing(self):
         """chart-annotation must be in the manifest the LLM sees in every mode.

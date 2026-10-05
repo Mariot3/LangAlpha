@@ -1,6 +1,6 @@
 """LangChain tools for drawing and managing chart annotations.
 
-These tools belong to the ``chart-annotation`` skill. A chart instance is
+The ``chart-annotation`` skill is their usage guide. A chart instance is
 identified by ``chart_id = "{SYMBOL}:{timeframe}"`` and scoped to the agent's
 workspace; drawing again with the same symbol + timeframe edits that chart.
 Annotations persist in Postgres (durable, no TTL).
@@ -166,7 +166,13 @@ async def draw_chart_annotation(
     config: RunnableConfig,
     timeframe: Timeframe = "1day",
 ) -> tuple[str, dict]:
-    """Draw on the user's stock chart.
+    """Draw a level, trendline, zone or dated event onto a stock's interactive
+    price chart. On the web and market_view surfaces the user sees it live on
+    MarketView, or as a chart card in the chat that opens the full chart, so
+    there draw it instead of plotting a chart yourself. Other surfaces (a
+    messaging channel, an automation's output) show neither: state the levels
+    in your reply, and render an image if the user needs a picture. Not for a
+    chart that must live in a report or file; render that with code.
 
     Pick the variant that matches the intent:
 

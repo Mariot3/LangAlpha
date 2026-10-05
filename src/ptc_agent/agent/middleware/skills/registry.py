@@ -13,7 +13,6 @@ from typing import Any, Callable, Literal
 from src.config.features import is_feature_enabled_system
 from src.config.settings import get_workflow_orchestration_config
 from src.tools.automation import AUTOMATION_TOOLS
-from src.tools.chart_annotation import CHART_ANNOTATION_TOOLS
 from src.tools.onboarding import ONBOARDING_TOOLS
 from src.tools.user_profile import USER_PROFILE_TOOLS
 
@@ -33,6 +32,10 @@ class SkillDefinition:
             for per-thread factory tools that can't be instantiated at import
             time (e.g. RunWorkflow). The tool object is registered by the agent
             factory; the skill only controls its visibility.
+        switched_tools: Names of tools the agent binds without loading this
+            skill but drops when the skill is switched off. Never hidden
+            behind LoadSkill; listed with the skill so the Plugins page shows
+            what its switch removes.
         skill_md_path: Where the agent reaches SKILL.md, not where the repo
             keeps it. A sandbox-relative suffix, matched against the reads
             the agent makes under ``.agents/skills/``, which the sync
@@ -56,6 +59,7 @@ class SkillDefinition:
     description: str
     tools: list[Any]
     tool_names: tuple[str, ...] = ()
+    switched_tools: tuple[str, ...] = ()
     skill_md_path: str | None = None
     exposure: Literal["ptc", "flash", "both", "hidden"] = "ptc"
     command: str | None = None
@@ -71,6 +75,10 @@ class SkillDefinition:
     def get_tool_names(self) -> list[str]:
         """Get list of tool names in this skill (including externally-registered ones)."""
         return [getattr(t, "name", str(t)) for t in self.tools] + list(self.tool_names)
+
+    def listed_tool_names(self) -> list[str]:
+        """Every tool this skill's switch governs, for listings."""
+        return self.get_tool_names() + list(self.switched_tools)
 
     def format_tool_descriptions(self, max_desc_len: int = 200) -> str:
         """Format tool descriptions for display.
@@ -157,17 +165,20 @@ SKILL_REGISTRY: dict[str, SkillDefinition] = {
         # frontmatter drives the sandbox/Flash skill manifest), so they must
         # not drift.
         description=(
-            "Draw price lines, trendlines, zones, and event markers directly on a "
-            "stock's price chart. Reach for it whenever you'd otherwise describe a "
-            "level, pattern, or event in prose. Renders live on MarketView and as a "
-            "clickable preview card in any other chat."
+            "Extra guidance for draw_chart_annotation, which works without "
+            "loading this. Covers choosing between similar variants, aligning "
+            "times to bars, several charts in one turn, and answering a chart "
+            "selection the user sends."
         ),
-        tools=CHART_ANNOTATION_TOOLS,
+        tools=[],
+        switched_tools=("draw_chart_annotation", "manage_chart_annotations"),
         skill_md_path="skills/chart-annotation/SKILL.md",
-        # Discoverable in both modes so the agent can self-load it whenever the
-        # user asks to annotate, including from the standalone chat page, where
-        # the result renders as a preview card. MarketView also injects it
-        # proactively (with the active symbol) for turn-1 availability.
+        # Guidance-only: every chat in the app can open the chart a drawing
+        # lands on (MarketView's, or the chart tab a chat card opens), so the
+        # main agent (PTC and Flash) binds both annotation tools without
+        # loading this, and drops them when this skill is switched off.
+        # MarketView still injects it each turn, because its per-turn
+        # instruction carries the active chart's symbol and timeframe.
         exposure="both",
         command="chart-annotation",
     ),
@@ -733,8 +744,8 @@ def list_skills(mode: SkillMode | None = None) -> list[dict[str, Any]]:
         {
             "name": skill.name,
             "description": skill.description,
-            "tool_count": len(skill.get_tool_names()),
-            "tools": skill.get_tool_names(),
+            "tool_count": len(skill.listed_tool_names()),
+            "tools": skill.listed_tool_names(),
             "command": skill.command,
         }
         for skill in SKILL_REGISTRY.values()

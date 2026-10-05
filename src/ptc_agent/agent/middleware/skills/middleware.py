@@ -286,16 +286,16 @@ class SkillsMiddleware(AgentMiddleware):
 
         @tool("LoadSkill")
         def load_skill(skill_name: str) -> str:
-            """Load special tools from a skill.
-            This is designed to access some specialized tools that is currently hidden
-            but will be available to you after loading the skill. You should call them
-            as tool calls instead of using execute_code tool.
+            """Load a skill from Available Skills: its instructions, plus the tools its entry lists.
+
+            A skill whose entry lists no tools only adds instructions; any tool
+            you can already see works without it.
 
             Args:
-                skill_name: Name of the skill to load
+                skill_name: The skill's name exactly as listed.
 
             Returns:
-                The tool will be available for you to call *directly*
+                The skill's instructions inline, which can be long.
             """
             # Placeholder - middleware intercepts and handles state updates
             return f"Loading skill: {skill_name}"
@@ -447,7 +447,10 @@ class SkillsMiddleware(AgentMiddleware):
                 "To activate, read `.agents/skills/{name}/SKILL.md`."
             )
         else:
-            lines.append("Call `LoadSkill` with the skill name to activate its tools.")
+            lines.append(
+                "Call `LoadSkill` with a skill's name to load its instructions, "
+                "and its tools when the entry lists them."
+            )
         lines.append("")
 
         platform_lines: list[str] = []
@@ -523,6 +526,10 @@ class SkillsMiddleware(AgentMiddleware):
     async def _build_skill_result(self, skill: SkillDefinition) -> str:
         """Build the result message for a loaded skill.
 
+        A guidance-only skill (no tools of its own, e.g. chart-annotation or
+        any user skill) gets no tools block: an empty one followed by "use
+        these tools" reads as a promise that something was just unlocked.
+
         Args:
             skill: The skill definition
 
@@ -530,9 +537,11 @@ class SkillsMiddleware(AgentMiddleware):
             Formatted instructions string
         """
         tools_text = skill.format_tool_descriptions()
+        sections = [f"# Skill Loaded: {skill.name}", skill.description]
+        if tools_text:
+            sections.append(f"**Available tools:**\n{tools_text}")
 
-        # Build SKILL.md section based on mode
-        skill_md_section = ""
+        # SKILL.md section based on mode
         if skill.skill_md_path:
             if self._mode != "ptc":
                 # Flash mode: embed content directly (no filesystem access)
@@ -544,22 +553,21 @@ class SkillsMiddleware(AgentMiddleware):
                     registry=self.skill_registry,
                 )
                 if content:
-                    skill_md_section = f"\n\n**Skill Documentation:**\n{content}"
+                    sections.append(f"**Skill Documentation:**\n{content}")
             else:
                 # PTC mode: point to sandbox path (agent has filesystem)
-                skill_md_section = (
-                    f"\n\n**IMPORTANT**: Read the skill documentation for detailed usage examples:\n"
+                sections.append(
+                    f"**IMPORTANT**: Read the skill documentation for detailed usage examples:\n"
                     f"  Path: `{skill.skill_md_path}`\n"
-                    f"  Use the file read tool to read this file before using the skill tools."
+                    f"  Use the file read tool to read this file before acting on the skill."
                 )
 
-        return (
-            f"# Skill Loaded: {skill.name}\n\n"
-            f"{skill.description}\n\n"
-            f"**Available tools:**\n{tools_text}"
-            f"{skill_md_section}\n\n"
-            f"You can now use these tools to help the user."
+        sections.append(
+            "You can now use these tools to help the user."
+            if tools_text
+            else "Follow this skill's guidance to help the user."
         )
+        return "\n\n".join(sections)
 
     def wrap_tool_call(
         self,
