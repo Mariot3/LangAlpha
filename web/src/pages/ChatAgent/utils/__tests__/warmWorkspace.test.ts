@@ -328,6 +328,8 @@ describe('warmWorkspace', () => {
     await warmWorkspace('flash-1', qc);
     expect(mockPost).not.toHaveBeenCalled();
 
+    // The start binds Home, so the row is read again, and the server keeps its marker.
+    mockGet.mockResolvedValueOnce({ data: { workspace_id: 'flash-1', computer_id: 'comp-1', status: 'flash' } });
     await warmWorkspace('flash-1', qc, { home: true });
     expect(mockPost).toHaveBeenCalledWith('/api/v1/workspaces/flash-1/start?lazy=true');
     // The row keeps its marker; the computer's status is not the row's.
@@ -358,6 +360,33 @@ describe('warmWorkspace', () => {
       ['home-1', 'flash'],
       ['ws-2', 'starting'],
     ]);
+  });
+
+  it('reads Home again after the start that first bound it', async () => {
+    const qc = makeClient();
+    mockPost.mockResolvedValueOnce({ data: { workspace_id: 'home-1', status: 'starting' } });
+    // Every cached copy of Home was read before the start put it on a computer.
+    const unbound = { workspace_id: 'home-1', computer_id: null, dir_name: null, status: 'flash' };
+    qc.setQueryData(queryKeys.workspaces.flash(), unbound);
+    qc.setQueryData(queryKeys.workspaces.detail('home-1'), unbound);
+    qc.setQueryData(queryKeys.workspaces.list({ limit: 100 }), {
+      workspaces: [{ workspace_id: 'ws-2', computer_id: 'comp-1', status: 'stopped' }],
+    });
+    mockGet.mockResolvedValueOnce({
+      data: { workspace_id: 'home-1', computer_id: 'comp-1', dir_name: 'Home', status: 'flash' },
+    });
+
+    await warmWorkspace('home-1', qc, { home: true });
+
+    expect(mockGet).toHaveBeenCalledWith('/api/v1/workspaces/home-1');
+    const list = qc.getQueryData(queryKeys.workspaces.list({ limit: 100 })) as {
+      workspaces: { workspace_id: string; status: string }[];
+    };
+    expect(list.workspaces.map((w) => [w.workspace_id, w.status])).toEqual([['ws-2', 'starting']]);
+    // The detail every placement reader goes through now names the folder.
+    expect(qc.getQueryData(queryKeys.workspaces.detail('home-1'))).toMatchObject({
+      computer_id: 'comp-1', dir_name: 'Home', status: 'flash',
+    });
   });
 });
 

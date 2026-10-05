@@ -115,13 +115,18 @@ export function patchComputerStatusInCaches(
   for (const id of workspaceIds) patchWorkspaceStatusInCaches(queryClient, id, status);
 }
 
-/** The computer Home is bound to, from whichever cache holds its row; null
- * until the first start binds it. */
-function homeComputerId(queryClient: QueryClient, workspaceId: string): string | null {
-  const row = queryClient.getQueryData<Workspace>(queryKeys.workspaces.flash())
-    ?? queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey)
-    ?? cachedWorkspaceLists(queryClient).find((w) => w.workspace_id === workspaceId);
-  return row?.workspace_id === workspaceId ? (row.computer_id ?? null) : null;
+/** The computer Home is bound to, called once a start has bound it. A row
+ * cached before Home's first start names no computer, and the start's reply
+ * does not either, so the detail is read again then; that fresh read is also
+ * what puts Home's folder in front of every reader of the detail. */
+async function homeComputerId(queryClient: QueryClient, workspaceId: string): Promise<string | null> {
+  const cached = [
+    queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey),
+    ...cachedWorkspaceLists(queryClient),
+  ].find((w) => w?.workspace_id === workspaceId && w.computer_id)?.computer_id;
+  if (cached) return cached;
+  const row = await queryClient.fetchQuery({ ...workspaceDetailQuery(workspaceId), staleTime: 0 });
+  return row?.computer_id ?? null;
 }
 
 /** What the caches believe a machine is doing: its own row, else a workspace
@@ -180,8 +185,8 @@ export function warmWorkspace(
     // Home's row keeps its 'flash' marker; the start moves its computer, which
     // the workspaces beside it on that machine show, so patch the machine.
     const p = startWorkspace(workspaceId, { lazy: true })
-      .then((resp) => {
-        const computerId = homeComputerId(queryClient, workspaceId);
+      .then(async (resp) => {
+        const computerId = await homeComputerId(queryClient, workspaceId);
         if (computerId && cachedComputerStatus(queryClient, computerId) === 'stopped') {
           patchComputerStatusInCaches(queryClient, computerId, resp.status);
         }

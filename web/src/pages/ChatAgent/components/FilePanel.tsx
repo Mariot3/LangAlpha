@@ -16,7 +16,8 @@ import {
   readWorkspaceFile, readWorkspaceFileFull, writeWorkspaceFile, downloadWorkspaceFileAsArrayBuffer,
   triggerFileDownload, resolveWorkspaceFile,
 } from '../utils/api';
-import { linkCandidates } from '../utils/fileRefResolver';
+import { folderLinkTarget, linkCandidates } from '../utils/fileRefResolver';
+import { useWorkspaceFolders } from '../contexts/WorkspaceContext';
 import { classifyAgentPath, parseAgentPath } from '../utils/agentPaths';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useLatestRef } from '@/hooks/useLatestRef';
@@ -128,10 +129,12 @@ interface FilePanelProps {
   /** The panel shows Home's own files: the flash row under the all-workspaces
    *  agent, which has files once it is bound to the user's computer. */
   isHome?: boolean;
-  /** Set while a Home panel shows a sibling's files in place of its own: the
-   *  panel names that workspace and offers the way back, asking first about
-   *  unsaved edits as its own close does. */
+  /** Set while a Home or analyst panel shows a sibling's files in place of
+   *  its own: the panel names that workspace and offers the way back, asking
+   *  first about unsaved edits as its own close does. */
   onReturnHome?: (() => void) | null;
+  /** What the way back is labelled with; Home when unset. */
+  returnLabel?: string | null;
 }
 
 function FilePanel({
@@ -166,6 +169,7 @@ function FilePanel({
   canShare = false,
   isHome = false,
   onReturnHome = null,
+  returnLabel = null,
 }: FilePanelProps): React.ReactElement {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -197,6 +201,7 @@ function FilePanel({
 
   const { data: wsData } = useWorkspace(workspaceId);
   const isFlashWorkspace = wsData?.status === 'flash';
+  const folders = useWorkspaceFolders();
   // The reader's memory and memo stores open here as tabs. A share reads
   // through an adapter with no workspace id: it browses someone else's files
   // and has no stores to show.
@@ -539,8 +544,18 @@ function FilePanel({
     else closeTabNow(id);
   }, [tabHasUnsavedChanges, askDiscard, closeTabNow]);
 
-  const handleViewerLink = useStableHandler((path: string, linkWorkspaceId?: string, location?: FileLocation, opts?: { rooted?: boolean; pin?: boolean }) => {
-    const rooted = !!opts?.rooted;
+  const handleViewerLink = useStableHandler((href: string, linkWorkspaceId?: string, location?: FileLocation, opts?: { rooted?: boolean; pin?: boolean }) => {
+    // A relative link can climb into a workspace's folder, read from the
+    // working directory or joined onto this file's directory, and a path out
+    // of the workspace can only mean that. A sibling's folder opens there;
+    // this workspace's own names a spot from its root, as a rooted link does.
+    const folder = linkWorkspaceId || opts?.rooted ? null : folderLinkTarget(href, selectedFile, folders);
+    if (folder?.workspaceId) {
+      onOpenFile?.(folder.path, folder.workspaceId, location);
+      return;
+    }
+    const path = folder?.path ?? href;
+    const rooted = !!opts?.rooted || !!folder;
     const otherWorkspace = !!linkWorkspaceId && linkWorkspaceId !== workspaceId;
     const kind = classifyAgentPath(path).kind;
     const directory = parseAgentPath(path).directory;
@@ -627,7 +642,7 @@ function FilePanel({
       />
 
       {onReturnHome && (
-        <SiblingCrumbs workspaceName={wsData?.name ?? ''} onReturnHome={() => guardLeave(onReturnHome)} />
+        <SiblingCrumbs workspaceName={wsData?.name ?? ''} onReturnHome={() => guardLeave(onReturnHome)} returnLabel={returnLabel} />
       )}
 
       {activeTab.kind === 'preview' && (

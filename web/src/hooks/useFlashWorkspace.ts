@@ -24,6 +24,9 @@ export function flashWorkspaceQuery(queryClient: QueryClient) {
       if (first) void queryClient.invalidateQueries({ queryKey: queryKeys.mcp.catalog() });
       return workspace;
     },
+    // Only its id never changes. Home's computer and folder arrive with its
+    // first start or turn, which re-read them into the detail query; read
+    // them there.
     staleTime: Infinity,
   });
 }

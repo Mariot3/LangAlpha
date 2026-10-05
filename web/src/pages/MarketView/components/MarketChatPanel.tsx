@@ -17,6 +17,7 @@ import { MessageActionsProvider, type MessageActions } from '../../ChatAgent/com
 import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTelemetryContext';
 import { ChartSurfaceContext, type ChartSurface } from '../../ChatAgent/contexts/ChartSurfaceContext';
 import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
+import { computerFolders } from '../../ChatAgent/utils/agentPaths';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { useThreadModel } from '../../ChatAgent/hooks/useThreadModel';
 import { ThreadModelNotices } from '../../ChatAgent/components/chatView/ThreadModelNotices';
@@ -156,11 +157,11 @@ function MarketChatScope(props: MarketChatPanelProps): React.ReactElement {
   // The folder the workspace lives in on a shared computer, and any a rename
   // moved it out of, which the turn file deck needs to tell the workspace's
   // own notes file from a deliverable. Read through the detail query, which a
-  // turn re-reads once the folder has settled; the page's list never does.
-  const { data: ptcWorkspace } = useWorkspace(mode === 'fast' ? null : selectedWorkspaceId);
-  const activeWorkspace = mode === 'fast' ? flashWs : ptcWorkspace;
-  const workspaceDirName = activeWorkspace?.dir_name;
-  const previousDirNames = activeWorkspace?.previous_dir_names;
+  // turn re-reads once the folder has settled. The page's list never does, nor
+  // does the flash row, which can predate the turn that gave Home its folder.
+  const { data: activeWorkspace } = useWorkspace(activeWorkspaceId);
+  // No sibling list: this page opens no files, so a sibling's has nowhere to go.
+  const folders = useMemo(() => computerFolders(activeWorkspace, null), [activeWorkspace]);
 
   // Initial thread resolution. URL `?thread=` wins, then localStorage keyed by
   // (workspace, symbol), then a new chat. This state determines which thread
@@ -244,13 +245,11 @@ function MarketChatScope(props: MarketChatPanelProps): React.ReactElement {
   if (!activeWorkspaceId) return <PanelLoading />;
 
   return (
-    <WorkspaceProvider workspaceId={activeWorkspaceId} downloadFile={null}>
+    <WorkspaceProvider workspaceId={activeWorkspaceId} downloadFile={null} folders={folders}>
       <ChatBody
         key={`${activeWorkspaceId}:${activeThreadInit}`}
         {...props}
         activeWorkspaceId={activeWorkspaceId}
-        workspaceDirName={workspaceDirName}
-        previousDirNames={previousDirNames}
         initialThreadId={activeThreadInit.split('#')[0]}
         ptcWorkspaces={workspaces}
         onSelectThread={handleSelectThread}
@@ -262,8 +261,6 @@ function MarketChatScope(props: MarketChatPanelProps): React.ReactElement {
 
 interface ChatBodyProps extends MarketChatPanelProps {
   activeWorkspaceId: string;
-  workspaceDirName?: string | null;
-  previousDirNames?: readonly string[] | null;
   initialThreadId: string;
   ptcWorkspaces: Workspace[];
   onSelectThread: (threadId: string) => void;
@@ -278,8 +275,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     onModeChange,
     ptcWorkspaces,
     selectedWorkspaceId,
-    workspaceDirName,
-    previousDirNames,
     onWorkspaceChange,
     chartImage,
     chartImageDesc,
@@ -873,8 +868,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
                       isLoadingHistory={isLoadingHistory}
                       feedbackByTurn={feedbackByTurn}
                       flashContext={flashContext}
-                      workspaceDirName={workspaceDirName}
-                      previousDirNames={previousDirNames}
                     />
                   </DispatchStatusProvider>
                 </MessageActionsProvider>

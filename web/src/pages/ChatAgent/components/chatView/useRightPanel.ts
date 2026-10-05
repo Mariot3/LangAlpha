@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { appendPathSuffix, getPreviewUrl } from '../../utils/api';
-import { computeAgentArtifactRouting, type AgentArtifactRouting } from '../../utils/agentPaths';
+import type { ComputerFolders } from '../../utils/agentPaths';
 import { collectRecentWritePaths, collectWriteLog } from '../../utils/fileRefResolver';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useLatestRef } from '@/hooks/useLatestRef';
@@ -11,36 +11,18 @@ import { clampPanelWidth as clampPanelWidthUtil } from '@/lib/panelUtils';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
 import { CHART_SURFACE_MIN_WIDTH } from '@/pages/MarketView/components/chartSurfaceLayout';
 import type { FileTab } from '../filePanel/useFileTabs';
-import { isOneShotKind, stampTarget, type ChartTabSpec, type PanelTarget, type PlanTabSpec, type UnsequencedTarget } from '../filePanel/types';
-import type { OpenFileHandler } from '../../utils/fileLocation';
-import type { RouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
+import type { ChartTabSpec, PlanTabSpec, UnsequencedTarget } from '../filePanel/types';
 import type { PreviewData } from '../../hooks/utils/types';
 import type { PlanData } from './types';
 import { NO_TRANSCRIPTS, useToolCallLookup, type TranscriptMessage } from './toolCallLookup';
 import { useTranscriptReader } from '../filePanel/transcriptStore';
 import { DEFAULT_PANEL_WIDTH, PLAN_TAB_WIDTH, detailPanelWidth } from '../filePanel/detailWidth';
+import { usePanelAsks, usePanelLinkOpen } from './usePanelLinks';
+
+export { nextPanelOverride } from './usePanelLinks';
 
 // A running app or a live chart opens wide, so its toolbar has room.
 const PREVIEW_MAX_RATIO = 0.92;
-
-/**
- * The workspace override the file panel holds after a routed open; null shows
- * the view's own workspace. Home has files of its own and names a sibling's
- * only through a `__wsref__` link, so an open that names no other workspace
- * returns to Home's. Flash has none, so its panel stays on the sibling it last
- * showed.
- */
-export function nextPanelOverride(
-  routing: Pick<AgentArtifactRouting, 'clearWorkspaceId' | 'setWorkspaceId'>,
-  current: string | null,
-  homeWorkspaceId: string | null,
-): string | null {
-  if (routing.clearWorkspaceId) return null;
-  if (homeWorkspaceId) {
-    return routing.setWorkspaceId && routing.setWorkspaceId !== homeWorkspaceId ? routing.setWorkspaceId : null;
-  }
-  return routing.setWorkspaceId ?? current;
-}
 
 /** Right-panel controller (carved out of ChatView, 5.9c): panel type/width,
  * target routing, tool-call/plan detail, multi-port preview resolution,
@@ -48,8 +30,7 @@ export function nextPanelOverride(
 export function useRightPanel({
   isMobile,
   workspaceId,
-  workspaceDirName,
-  previousDirNames,
+  folders = null,
   threadId,
   isActive,
   containerRef,
@@ -63,20 +44,22 @@ export function useRightPanel({
 }: {
   isMobile: boolean;
   workspaceId: string;
-  workspaceDirName?: string | null;
-  /** Folders a rename moved the workspace out of, which older turns' paths still name. */
-  previousDirNames?: readonly string[] | null;
+  /** The workspace's folder, those a rename moved it out of, which older
+   *  turns' paths still name, and the other workspaces on its computer. */
+  folders?: ComputerFolders | null;
   /** The conversation a MarketView page opened from here resumes. */
   threadId?: string | null;
   isActive: boolean;
   containerRef: React.RefObject<HTMLDivElement | null>;
   setFilePanelWorkspaceId: Dispatch<SetStateAction<string | null>>;
-  /** The cross-workspace override; only Flash's and Home's panels show it. */
+  /** The cross-workspace override the panel shows (usePanelFiles). */
   filePanelWorkspaceId?: string | null;
   /** Flash or Home: the view dispatches work into other workspaces, whose
    *  files its links open in the panel (resolveChatMode). */
   dispatches?: boolean;
-  /** The view is the Chief of Staff's Home, whose panel shows its own files unless a link names a sibling's. */
+  /** The view is the Chief of Staff's Home. Like PTC, its panel shows its own
+   *  files unless a link names a sibling's; Flash, the other view that
+   *  dispatches, has none. */
   isHome?: boolean;
   messages: readonly TranscriptMessage[];
   /** Each subagent's own messages, so a tool row clicked in its transcript resolves too. */
@@ -86,30 +69,20 @@ export function useRightPanel({
 }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const ownFiles = isHome || !dispatches;
 
   // Guards one-shot consumption of the ?file= deep link (report share / copy link).
   const fileDeepLinkConsumedRef = useRef(false);
 
-  // Single source of truth for what the file panel is pointed at. Exactly one
-  // target is ever set (file/preview/chart/tool/plan/sources/memory/memo/
-  // status); the panel opens or focuses the tab that owns `.kind`. Each
-  // self-clears once consumed (the handled callbacks): on arrival for most
-  // kinds, once the entry is selected for memory and memo.
-  const [panelTarget, setPanelTarget] = useState<PanelTarget | null>(null);
-  // Counts every ask, so the same folder, port or symbol asked for twice
-  // arrives twice. See `PanelTarget`.
-  const targetSeqRef = useRef(0);
-  // Stable handlers: these land in useEffect deps in MemoryPanel/MemoPanel/
-  // FilePanel. Inline arrows would create a new identity on every ChatView
-  // render, re-triggering those effects on every streaming chunk (the
-  // `targetKey == null` guard makes them no-ops, but the wakeup is wasted).
-  // Each clears the target only if it is still the ask that was consumed. An
-  // ask lands between the consumer's commit and its callback (the panel's
-  // effect runs after render, the store bodies after a fetch), and a clear
-  // by kind alone would drop that newer ask unread.
-  const handleTargetHandled = useCallback((seq?: number) => setPanelTarget((pt) => (isOneShotKind(pt?.kind) && pt?.seq === seq ? null : pt)), []);
-  const handleTargetMemoryHandled = useCallback((seq?: number) => setPanelTarget((pt) => (pt?.kind === 'memory' && pt.seq === seq ? null : pt)), []);
-  const handleTargetMemoHandled = useCallback((seq?: number) => setPanelTarget((pt) => (pt?.kind === 'memo' && pt.seq === seq ? null : pt)), []);
+  const {
+    panelTarget,
+    askPanel,
+    handleTargetHandled,
+    handleTargetMemoryHandled,
+    handleTargetMemoHandled,
+    handleFilesLeaveGuardChange,
+    leaveFiles,
+  } = usePanelAsks();
 
   const isDraggingRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -129,19 +102,6 @@ export function useRightPanel({
   // shows a tool result or a running app as a tab of the file view.
   const [rightPanelType, setRightPanelType] = useState<'file' | 'detail' | 'preview' | null>(null);
 
-  // The file panel holds its drafts in memory, and closing the panel unmounts
-  // it. The exits this hook owns go through the panel's own leave guard, the
-  // one its close button uses, so they ask in the same dialog and judge the
-  // draft as typed rather than as last rendered. A ref, not state: nothing
-  // here renders on it. No guard means no panel, and so no draft to lose.
-  const filesLeaveGuardRef = useRef<RouteLeaveGuard | null>(null);
-  const handleFilesLeaveGuardChange = useCallback((guard: RouteLeaveGuard | null) => {
-    filesLeaveGuardRef.current = guard;
-  }, []);
-  const leaveFiles = useCallback<RouteLeaveGuard>((go) => {
-    const guard = filesLeaveGuardRef.current;
-    if (guard) guard(go); else go();
-  }, []);
   const [rightPanelWidth, setRightPanelWidth] = useState(750);
   // What the file panel has in front, reported by the panel as it changes. A
   // chart is the one tab with a width of its own: below the surface's floor
@@ -351,58 +311,21 @@ export function useRightPanel({
    * asked for.
    */
   const landInFilePanel = useCallback((target: UnsequencedTarget, opts?: { maxRatio?: number; width?: number }) => {
-    setPanelTarget(stampTarget(target, ++targetSeqRef.current));
+    askPanel(target);
     growPanelWidth(opts?.width ?? DEFAULT_PANEL_WIDTH, opts?.maxRatio);
     setRightPanelType('file');
     pushPanelHistory();
-  }, [growPanelWidth, pushPanelHistory]);
+  }, [askPanel, growPanelWidth, pushPanelHistory]);
 
-  /**
-   * Routes a click on a tool-call artifact to the panel tab that owns its
-   * domain. The pure decision is computed by computeAgentArtifactRouting;
-   * the result becomes the one panel target, which replaces whatever ask
-   * was pending.
-   */
-  const handleOpenFileFromChat = useCallback<OpenFileHandler>((rawPath, targetWorkspaceId, location, opts) => {
-    const r = computeAgentArtifactRouting(
-      rawPath,
-      targetWorkspaceId,
-      workspaceDirName,
-      previousDirNames,
-    );
-    if (r.setWorkspaceId && !isValidUuid(r.setWorkspaceId)) {
-      console.warn('[ChatView] ignoring artifact ref with invalid workspace id', r.setWorkspaceId);
-      return;
-    }
-
-    // The routing result carries exactly one non-null target field; map it to
-    // the matching panel kind. `targetMemoKey` may legitimately be '' (memo
-    // index → LIST view), so test for null rather than truthiness.
-    let target: UnsequencedTarget;
-    if (r.targetMemoryKey != null && r.targetMemoryTier != null) {
-      target = { kind: 'memory', key: r.targetMemoryKey, tier: r.targetMemoryTier };
-    } else if (r.targetMemoKey != null) {
-      target = { kind: 'memo', key: r.targetMemoKey };
-    } else if (r.targetDirectory != null) {
-      // `''` is the workspace root, which the router returns for `/home/workspace/`
-      // and `./`. Folding it to null said "no directory was asked for", and with a
-      // file open neither panel effect ran, so the link read as dead.
-      target = { kind: 'file', dir: r.targetDirectory };
-    } else {
-      target = { kind: 'file', path: r.targetFile, location: location ?? null, pin: !!opts?.pin };
-    }
-    // Another workspace's strip replaces this one's, drafts included. Only a
-    // change in the workspace the panel shows does that; clearing an unset
-    // override, or PTC's panel, which never shows it, keeps the strip.
-    const shown = (override: string | null) => (dispatches && override) || workspaceId;
-    const nextOverride = nextPanelOverride(r, filePanelWorkspaceId, isHome ? workspaceId : null);
-    const switching = shown(nextOverride) !== shown(filePanelWorkspaceId);
-    const go = () => {
-      if (nextOverride !== filePanelWorkspaceId) setFilePanelWorkspaceId(nextOverride);
-      landInFilePanel(target);
-    };
-    if (switching) leaveFiles(go); else go();
-  }, [landInFilePanel, setFilePanelWorkspaceId, workspaceDirName, previousDirNames, leaveFiles, dispatches, isHome, workspaceId, filePanelWorkspaceId]);
+  const handleOpenFileFromChat = usePanelLinkOpen({
+    workspaceId,
+    folders,
+    override: filePanelWorkspaceId,
+    setOverride: setFilePanelWorkspaceId,
+    ownFiles,
+    land: landInFilePanel,
+    leave: leaveFiles,
+  });
 
   // A turn's sources open as a tab of the file view, one per turn; the tab
   // reads its live records through `transcript`.
@@ -423,10 +346,14 @@ export function useRightPanel({
 
   // The file panel reads the transcript through a subscription instead: a
   // tool or sources tab follows its records, and the changed-file dot the
-  // write log, without the panel rendering on every streamed chunk.
+  // write log, without the panel rendering on every streamed chunk. Only the
+  // workspace's own folders place what it wrote, so a refreshed list of its
+  // siblings does not remake the log.
+  const dirName = folders?.dirName;
+  const previousDirNames = folders?.previousDirNames;
   const collectWrites = useCallback(
-    (msgs: readonly TranscriptMessage[]) => collectWriteLog(msgs, workspaceDirName, previousDirNames),
-    [workspaceDirName, previousDirNames],
+    (msgs: readonly TranscriptMessage[]) => collectWriteLog(msgs, dirName, previousDirNames),
+    [dirName, previousDirNames],
   );
   const transcript = useTranscriptReader(messages, subagentTranscripts, collectWrites);
 
@@ -439,7 +366,7 @@ export function useRightPanel({
   // needs this thread's Write/Edit paths when it resolves a reference, and a
   // memo over `messages` would rebuild on every streamed chunk.
   const getRecentWritePaths = useStableHandler(
-    () => collectRecentWritePaths(messages, workspaceDirName, previousDirNames),
+    () => collectRecentWritePaths(messages, dirName, previousDirNames),
   );
 
   // One-shot ?file= deep link: opens the file panel targeting that file. Gated
@@ -707,15 +634,15 @@ export function useRightPanel({
         popPanelHistory();
       });
     } else {
-      // The header's toggle is Home's own files; a sibling shown before the
-      // panel closed was reached through a link, and the closed panel holds no
-      // draft to lose.
-      if (isHome && filePanelWorkspaceId) setFilePanelWorkspaceId(null);
+      // The header's toggle is the view's own files; a sibling shown before
+      // the panel closed was reached through a link, and the closed panel
+      // holds no draft to lose.
+      if (ownFiles && filePanelWorkspaceId) setFilePanelWorkspaceId(null);
       applyPanelWidth(DEFAULT_PANEL_WIDTH);
       setRightPanelType('file');
       pushPanelHistory();
     }
-  }, [rightPanelType, applyPanelWidth, pushPanelHistory, popPanelHistory, leaveFiles, isHome, filePanelWorkspaceId, setFilePanelWorkspaceId]);
+  }, [rightPanelType, applyPanelWidth, pushPanelHistory, popPanelHistory, leaveFiles, ownFiles, filePanelWorkspaceId, setFilePanelWorkspaceId]);
 
   return {
     activeTabKind,

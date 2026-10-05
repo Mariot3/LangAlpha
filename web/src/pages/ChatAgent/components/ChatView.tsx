@@ -29,6 +29,7 @@ import { mergeWarmingDisplay } from '../utils/warmWorkspace';
 import { useChatMessages } from '../hooks/useChatMessages';
 import { useThreadModel } from '../hooks/useThreadModel';
 import { useForeignRunCatchUp } from '../hooks/useForeignRunCatchUp';
+import { useComputerFolders } from '../hooks/useComputerFolders';
 import { QueuedAutomationNotice } from './QueuedAutomationNotice';
 import { saveChatSession, getChatSession, clearChatSession } from '../hooks/utils/chatSessionRestore';
 import type { PreviewData } from '../hooks/utils/types';
@@ -234,7 +235,13 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     refreshOwn: refreshOwnFiles,
     mentionFiles,
     panelAccess: filePanelAccess,
-  } = usePanelFiles({ isHome, isFlashMode, workspaceId, includeSystem: showSystemFiles });
+  } = usePanelFiles({ isHome, isFlashMode, workspaceId, workspaceName, includeSystem: showSystemFiles });
+  // A path names a sibling by its folder from the workspace it was written
+  // in: the chat's for the transcript, the panel's for the files it shows.
+  const chatFolders = useComputerFolders(workspaceId);
+  const panelWorkspaceId = effectiveFileWorkspaceId || workspaceId;
+  const otherPanelFolders = useComputerFolders(panelWorkspaceId === workspaceId ? null : panelWorkspaceId);
+  const panelFolders = panelWorkspaceId === workspaceId ? chatFolders : otherPanelFolders;
 
   // When the agent writes to a memory- or memo-tier path, invalidate the
   // matching queries so the Memory / Memo tab reflects the new content
@@ -245,8 +252,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     const filePath = fileArtifactPath(event?.payload as FileOperationArtifactPayload | undefined);
     if (!filePath) return;
     const info = classifyAgentPath(filePath);
-    // Home's agent writes Home's memory, whichever workspace the panel shows.
-    const memoryWorkspaceId = isHome ? workspaceId : effectiveFileWorkspaceId;
+    // PTC and Home write their own memory, whichever workspace the panel shows.
+    const memoryWorkspaceId = isFlashMode ? effectiveFileWorkspaceId : workspaceId;
     if (info.kind === 'memory') {
       if (info.tier === 'user') {
         queryClient.invalidateQueries({ queryKey: queryKeys.memory.user() });
@@ -258,7 +265,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     } else if (info.kind === 'memo') {
       queryClient.invalidateQueries({ queryKey: queryKeys.memo.all });
     }
-  }, [refreshOwnFiles, queryClient, isHome, workspaceId, effectiveFileWorkspaceId]);
+  }, [refreshOwnFiles, queryClient, isFlashMode, workspaceId, effectiveFileWorkspaceId]);
 
   // Stable ref-based callback for opening preview URLs from SSE events.
   // Defined here so it can be passed to useChatMessages; assigned after
@@ -822,8 +829,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   } = useRightPanel({
     isMobile,
     workspaceId,
-    workspaceDirName: workspaceRecord?.dir_name,
-    previousDirNames: workspaceRecord?.previous_dir_names,
+    folders: chatFolders,
     threadId: panelThreadId,
     isActive,
     containerRef,
@@ -1260,7 +1266,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   }
 
   return (
-    <WorkspaceProvider workspaceId={workspaceId} downloadFile={null}>
+    <WorkspaceProvider workspaceId={workspaceId} downloadFile={null} folders={chatFolders}>
     {/* `h-full`, never `h-screen`: this fills the shell's content column, which
         is the viewport only when nothing else is in it. Pinning it to 100vh
         pushes it out of its own box the moment anything is (the offline
@@ -1432,8 +1438,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                             isLoadingHistory={isLoadingHistory}
                             feedbackByTurn={feedbackByTurn}
                             flashContext={flashContext}
-                            workspaceDirName={workspaceRecord?.dir_name}
-                            previousDirNames={workspaceRecord?.previous_dir_names}
                           />
                         </DispatchStatusProvider>
                       </MessageActionsProvider>
@@ -1513,8 +1517,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                                 messages={activeAgent.messages as MessageRecord[]}
                                 isSubagentView={true}
                                 isLoading={subagentTurnLive}
-                                workspaceDirName={workspaceRecord?.dir_name}
-                                previousDirNames={workspaceRecord?.previous_dir_names}
                               />
                             </DispatchStatusProvider>
                           </MessageActionsProvider>
@@ -1823,7 +1825,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           >
             <div className="shrink-0 h-full" style={{ width: '100%' }}>
               <Suspense fallback={null}>
-                <WorkspaceProvider workspaceId={effectiveFileWorkspaceId || workspaceId} downloadFile={null}>
+                <WorkspaceProvider workspaceId={panelWorkspaceId} downloadFile={null} folders={panelFolders}>
                 <FilePanel
                   workspaceId={effectiveFileWorkspaceId || workspaceId}
                   threadId={panelThreadId}
@@ -1885,7 +1887,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
               <div data-panel-inner className="shrink-0 h-full" style={{ width: rightPanelWidth }}>
                 <Suspense fallback={null}>
                   {rightPanelType === 'file' ? (
-                    <WorkspaceProvider workspaceId={effectiveFileWorkspaceId || workspaceId} downloadFile={null}>
+                    <WorkspaceProvider workspaceId={panelWorkspaceId} downloadFile={null} folders={panelFolders}>
                     <FilePanel
                       workspaceId={effectiveFileWorkspaceId || workspaceId}
                       threadId={panelThreadId}

@@ -10,7 +10,14 @@
  */
 
 import { SYSTEM_DIR_PREFIXES } from '../components/filePanel/fileMeta';
-import { normalizeAgentPath, parseAgentPath, workspaceScopedPath, type AgentPathParts } from './agentPaths';
+import {
+  normalizeAgentPath,
+  parseAgentPath,
+  siblingWorkspacePath,
+  workspaceScopedPath,
+  type AgentPathParts,
+  type ComputerFolders,
+} from './agentPaths';
 
 /** The tools whose path argument names a file the agent created or changed. */
 export const WRITE_TOOLS = new Set(['Write', 'Edit']);
@@ -40,6 +47,33 @@ export function linkCandidates(href: string, fromFile: string | null): string[] 
   if (!dir || dir === '/') return [direct];
   const joined = normalizeAgentPath(`${dir}/${href}`);
   return joined === direct ? [direct] : [joined, direct];
+}
+
+/**
+ * Where a link inside an open file lands when it climbs into a workspace's
+ * folder, by either reading `linkCandidates` offers. Read from the working
+ * directory, `../NVDA/x.md` climbs into NVDA's folder; read from `reports/`,
+ * it takes `../../NVDA/x.md`. A sibling's folder names that workspace, and
+ * this workspace's own reads from its root, with no `workspaceId`. At most one
+ * reading climbs exactly out of the workspace, since the joined one starts as
+ * many levels deeper as the file sits.
+ */
+export function folderLinkTarget(
+  href: string,
+  fromFile: string | null,
+  folders: ComputerFolders | null | undefined,
+): { path: string; workspaceId?: string } | null {
+  if (!folders) return null;
+  const parts = parseAgentPath(href);
+  // A candidate is a canonical string, which has lost the sandbox root.
+  const readings = parts.absolute ? [parts] : linkCandidates(href, fromFile).map((c) => parseAgentPath(c));
+  for (const reading of readings) {
+    const sibling = siblingWorkspacePath(reading, folders);
+    if (sibling) return sibling;
+    const own = workspaceScopedPath(reading, folders.dirName, folders.previousDirNames);
+    if (own !== reading.path) return { path: own || './' };
+  }
+  return null;
 }
 
 /**

@@ -3,10 +3,12 @@ import { describe, it, expect } from 'vitest';
 import {
   collectRecentWritePaths,
   downloadTarget,
+  folderLinkTarget,
   linkCandidates,
   resolveExact,
   type TurnMessage,
 } from '../fileRefResolver';
+import type { ComputerFolders } from '../agentPaths';
 
 describe('linkCandidates', () => {
   it('reads a link against the linking file first, then from the root', () => {
@@ -33,6 +35,43 @@ describe('linkCandidates', () => {
 
   it('does not rebase an absolute link', () => {
     expect(linkCandidates('/home/workspace/data/x.csv', 'results/report.md')).toEqual(['data/x.csv']);
+  });
+});
+
+/**
+ * A link inside an open file that climbs into a workspace's folder, read from
+ * the working directory or from the file's own directory, whichever reading
+ * climbs exactly out of the workspace.
+ */
+describe('folderLinkTarget', () => {
+  const home: ComputerFolders = {
+    dirName: 'Home',
+    previousDirNames: ['home-old'],
+    siblings: [{ workspaceId: 'ws-nvda', dirName: 'NVDA' }],
+  };
+
+  it('reads this workspace\'s own folder from its root', () => {
+    expect(folderLinkTarget('../Home/notes.md', 'summary.md', home)).toEqual({ path: 'notes.md' });
+    // From `reports/`, the joined reading is a nested `Home/`; the one from the
+    // working directory is the one that climbs out.
+    expect(folderLinkTarget('../Home/notes.md', 'reports/summary.md', home)).toEqual({ path: 'notes.md' });
+    expect(folderLinkTarget('../../Home/notes.md', 'reports/summary.md', home)).toEqual({ path: 'notes.md' });
+    expect(folderLinkTarget('../HOME-OLD/notes.md', null, home)).toEqual({ path: 'notes.md' });
+    expect(folderLinkTarget('/home/workspace/Home/notes.md', 'reports/summary.md', home)).toEqual({ path: 'notes.md' });
+    expect(folderLinkTarget('../Home/', null, home)).toEqual({ path: './' });
+  });
+
+  it('opens a sibling\'s folder in that workspace', () => {
+    expect(folderLinkTarget('../NVDA/x.md', null, home)).toEqual({ workspaceId: 'ws-nvda', path: 'x.md' });
+    expect(folderLinkTarget('/home/workspace/NVDA/x.md', 'reports/summary.md', home)).toEqual({ workspaceId: 'ws-nvda', path: 'x.md' });
+    expect(folderLinkTarget('../../NVDA/x.md', 'reports/summary.md', home)).toEqual({ workspaceId: 'ws-nvda', path: 'x.md' });
+  });
+
+  it('leaves a link that climbs into no workspace folder to the usual reading', () => {
+    expect(folderLinkTarget('../data/x.csv', 'results/report.md', home)).toBeNull();
+    expect(folderLinkTarget('notes.md', 'reports/summary.md', home)).toBeNull();
+    expect(folderLinkTarget('../../../Home/notes.md', 'reports/summary.md', home)).toBeNull();
+    expect(folderLinkTarget('../Home/notes.md', null, null)).toBeNull();
   });
 });
 

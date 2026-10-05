@@ -11,7 +11,8 @@ import SyntaxHighlighter, { oneDark, oneLight } from './SyntaxHighlighter';
 import { Copy, Check } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import WorkspaceImage from './WorkspaceImage';
-import { isFilePath, isImagePath, normalizeFilePath, parseWsPath } from '../utils/filePaths';
+import { isFilePath, isImagePath, normalizeFilePath, parseSiblingHref, parseWsPath } from '../utils/filePaths';
+import { useWorkspaceFolders } from '../contexts/WorkspaceContext';
 import { parseAgentPath } from '../utils/agentPaths';
 import { normalizeFileRefs } from '../utils/normalizeFileRefs';
 import { splitFileLocation, type OpenFileHandler } from '../utils/fileLocation';
@@ -768,6 +769,7 @@ interface MarkdownProps {
 
 function Markdown({ content, variant = 'panel', className = '', style, onOpenFile, onAnchorLink, codeTheme, streaming = false }: MarkdownProps): React.ReactElement {
   const config = VARIANTS[variant];
+  const folders = useWorkspaceFolders();
   // Every pass below rewrites prose before the markdown parser sees it, so each
   // one has to say how much of the string it may touch. Inside code, markdown
   // stops interpreting escapes and raw HTML — a rewrite that lands there is
@@ -865,11 +867,19 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
         if (onOpenFile) {
           const wsRef = parseWsPath(href);
           const { path, location } = splitFileLocation(href!);
+          // A sibling's folder names that workspace as a `__wsref__` does, so
+          // the link opens there with the path inside it.
+          const sibling = parseSiblingHref(path, folders);
+          // A rooted path through this workspace's own folder is a path in it,
+          // and stripping the root alone would leave the folder as a
+          // subdirectory. A relative one keeps its climb, which the handler
+          // reads against the file it was written in.
+          const rooted = parseAgentPath(path).absolute;
           return (
             <a
               className="underline hover:opacity-80 transition-opacity cursor-pointer"
               style={{ color: 'var(--color-accent-primary)' }}
-              onClick={(e: React.MouseEvent) => { e.preventDefault(); onOpenFile(normalizeFilePath(path), wsRef?.workspaceId, location ?? undefined, { rooted: parseAgentPath(path).absolute || !!wsRef }); }}
+              onClick={(e: React.MouseEvent) => { e.preventDefault(); onOpenFile(sibling?.path ?? normalizeFilePath(path, rooted ? folders : null), wsRef?.workspaceId ?? sibling?.workspaceId, location ?? undefined, { rooted: rooted || !!wsRef || !!sibling }); }}
               {...props}
             >{children}</a>
           );
@@ -882,7 +892,7 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
       return <DefaultA node={_node} href={href} {...props}>{children}</DefaultA>;
     };
     return { ...result, a: fileAwareA };
-  }, [onOpenFile, onAnchorLink, variant, config.components, codeTheme]);
+  }, [onOpenFile, onAnchorLink, variant, config.components, codeTheme, folders]);
 
   // Rendered markdown is always long-form reading content — every call site
   // (transcript, detail panels, memos, plans) gets the content face here.

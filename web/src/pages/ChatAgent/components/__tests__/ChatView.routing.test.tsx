@@ -148,21 +148,21 @@ describe('computeAgentArtifactRouting — per-kind routing', () => {
       computeAgentArtifactRouting(
         '/home/workspace/acme-a1b2/results/',
         undefined,
-        'acme-a1b2',
+        { dirName: 'acme-a1b2', siblings: [] },
       ),
     ).toMatchObject({ targetFile: null, targetDirectory: 'results' });
     expect(
       computeAgentArtifactRouting(
         '/home/workspace/acme-a1b2/results/report.md',
         undefined,
-        'acme-a1b2',
+        { dirName: 'acme-a1b2', siblings: [] },
       ),
     ).toMatchObject({ targetFile: 'results/report.md' });
     expect(
       computeAgentArtifactRouting(
         '/home/workspace/acme-a1b2/.agents/workspace/memory/notes.md',
         undefined,
-        'acme-a1b2',
+        { dirName: 'acme-a1b2', siblings: [] },
       ),
     ).toMatchObject({ targetMemoryKey: 'notes.md', targetMemoryTier: 'workspace' });
   });

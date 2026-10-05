@@ -9,6 +9,12 @@
 import { describe, it, expect } from 'vitest';
 import { collectTurnFiles, turnFilesByTurn } from '../turnFiles';
 import type { ToolCallLike } from '../fileRefResolver';
+import type { ComputerFolders } from '../agentPaths';
+
+/** The viewed workspace's folders, and the other workspaces on its computer. */
+function own(dirName: string, previousDirNames?: string[], siblings: ComputerFolders['siblings'] = []): ComputerFolders {
+  return { dirName, previousDirNames, siblings };
+}
 
 function assistant(text: string, toolCallProcesses: Record<string, ToolCallLike> = {}) {
   return { role: 'assistant', contentSegments: [{ type: 'text', content: text }], toolCallProcesses };
@@ -145,7 +151,7 @@ describe('collectTurnFiles', () => {
         b: write(1, 'agent.md'),
         c: write(2, '/home/workspace/alpha/agent.md'),
       }),
-    ], 'alpha');
+    ], own('alpha'));
     expect(files.map((f) => f.path)).toEqual(['weekly/report.md']);
   });
 
@@ -167,14 +173,14 @@ describe('collectTurnFiles', () => {
         b: write(1, '/tmp/agent.md'),
         c: write(2, '/home/workspace/alpha/agent.md'),
       }),
-    ], 'alpha');
+    ], own('alpha'));
     expect(files.map((f) => f.path)).toEqual(['docs/agent.md', '/tmp/agent.md']);
   });
 
   it('keeps a project-folder agent.md until the folder name is known', () => {
     const turn = [assistant('Wrote it.', { a: write(0, '/home/workspace/alpha/agent.md') })];
     expect(collectTurnFiles(turn).map((f) => f.path)).toEqual(['alpha/agent.md']);
-    expect(collectTurnFiles(turn, 'alpha')).toEqual([]);
+    expect(collectTurnFiles(turn, own('alpha'))).toEqual([]);
   });
 
   it('leaves out the notes file a turn wrote before the workspace was renamed', () => {
@@ -184,7 +190,7 @@ describe('collectTurnFiles', () => {
         b: write(1, '/home/workspace/Research/agent.md'),
         c: write(2, '/home/workspace/docs/agent.md'),
       }),
-    ], 'Research', ['research-ab12']);
+    ], own('Research', ['research-ab12']));
     expect(files.map((f) => f.path)).toEqual(['weekly/report.md', 'docs/agent.md']);
   });
 
@@ -196,8 +202,41 @@ describe('collectTurnFiles', () => {
         a: write(0, 'weekly/report.md'),
         b: write(1, '/home/workspace/research-ab12/data/prices.csv'),
       }),
-    ], 'Research', ['research-ab12']);
+    ], own('Research', ['research-ab12']));
     expect(files.map((f) => f.path)).toEqual(['weekly/report.md', 'data/prices.csv']);
+  });
+
+  it('reads a path through the workspace\'s own folder from its root', () => {
+    // From the working directory `../Home/x` is `x`. Read as written it climbs
+    // out of the workspace, so the reply's link earned no card and its chart
+    // never counted as embedded.
+    const turn = [
+      assistant(
+        'See [the comparison](../Home/e2e_probe_comparison/probe_notes_comparison.md), [my notes](../Home/agent.md) and ![chart](../Home/charts/a.png).',
+        {
+          a: write(0, 'e2e_probe_comparison/probe_notes_comparison.md'),
+          b: write(1, 'charts/a.png'),
+          c: write(2, '../Home/data/prices.csv'),
+        },
+      ),
+    ];
+    expect(collectTurnFiles(turn).map((f) => f.path))
+      .toEqual(['e2e_probe_comparison/probe_notes_comparison.md', 'charts/a.png']);
+    expect(collectTurnFiles(turn, own('Home'))).toEqual([
+      { path: 'e2e_probe_comparison/probe_notes_comparison.md' },
+      { path: 'data/prices.csv' },
+    ]);
+  });
+
+  it.each([
+    ['climbed into', '../Home/report.md', '../NVDA/report.md'],
+    ['rooted', '/home/workspace/Home/report.md', '/home/workspace/NVDA/report.md'],
+  ])('tells the workspace\'s own folder from a sibling\'s, %s', (_how, ours, theirs) => {
+    const files = collectTurnFiles(
+      [assistant(`Compare [ours](${ours}) with [theirs](${theirs}).`)],
+      own('Home', [], [{ workspaceId: 'ws-nvda', dirName: 'NVDA' }]),
+    );
+    expect(files).toEqual([{ path: 'report.md' }, { path: 'report.md', workspaceId: 'ws-nvda' }]);
   });
 
   it('leaves out system paths, section links and folders', () => {
@@ -320,7 +359,7 @@ describe('turnFilesByTurn', () => {
     const settled = assistant('Done.', { a: write(0, '/home/workspace/alpha/agent.md') });
     const projected = [turn(settled as Record<string, unknown>, 0)];
     expect(turnFilesByTurn(projected).get(0)?.map((f) => f.path)).toEqual(['alpha/agent.md']);
-    expect(turnFilesByTurn(projected, 'alpha').get(0)).toBeUndefined();
+    expect(turnFilesByTurn(projected, own('alpha')).get(0)).toBeUndefined();
   });
 
   it('rebuilds when a rename moves the folder, and not for a copy of the same names', () => {
@@ -330,15 +369,15 @@ describe('turnFilesByTurn', () => {
     const projected = [turn(settled as Record<string, unknown>, 0)];
     const paths = (files?: { path: string }[]) => files?.map((f) => f.path);
 
-    const before = turnFilesByTurn(projected, 'alpha', []).get(0);
+    const before = turnFilesByTurn(projected, own('alpha', [])).get(0);
     expect(paths(before)).toEqual(['results/report.md']);
     // Renamed to Beta: the old folder is only in the previous names now.
-    const renamed = turnFilesByTurn(projected, 'Beta', ['alpha']).get(0);
+    const renamed = turnFilesByTurn(projected, own('Beta', ['alpha'])).get(0);
     expect(paths(renamed)).toEqual(['results/report.md']);
     // A refetch hands over a new array with the same names; the cards keep their identity.
-    expect(turnFilesByTurn(projected, 'Beta', ['alpha']).get(0)).toBe(renamed);
+    expect(turnFilesByTurn(projected, own('Beta', ['alpha'])).get(0)).toBe(renamed);
     // Before the record carries the old folder, its notes file reads as a deliverable.
-    expect(paths(turnFilesByTurn(projected, 'Beta').get(0))).toEqual(['results/report.md', 'alpha/agent.md']);
+    expect(paths(turnFilesByTurn(projected, own('Beta')).get(0))).toEqual(['results/report.md', 'alpha/agent.md']);
   });
 
   it('claims nothing for a turn still streaming', () => {

@@ -54,6 +54,7 @@ const api = vi.hoisted(() => ({
 const ml = vi.hoisted(() => ({
   props: null as Record<string, unknown> | null,
   actions: null as Record<string, unknown> | null,
+  folders: null as { dirName?: string | null; previousDirNames?: readonly string[] | null } | null,
 }));
 const ci = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 
@@ -112,9 +113,11 @@ vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
 // the stand-in reads the provided value from inside the provider.
 vi.mock('@/pages/ChatAgent/components/MessageList', async () => {
   const { useMessageActions } = await import('@/pages/ChatAgent/components/messageList/MessageActionsContext');
+  const { useWorkspaceFolders } = await import('@/pages/ChatAgent/contexts/WorkspaceContext');
   function MessageListStub(props: Record<string, unknown>) {
     ml.props = props;
     ml.actions = useMessageActions() as unknown as Record<string, unknown>;
+    ml.folders = useWorkspaceFolders();
     // Bubbles carry the markers a turn-end landing looks for.
     const messages = (props.messages ?? []) as Array<{ id: string; role: string }>;
     return (
@@ -279,6 +282,7 @@ describe('MarketChatPanel', () => {
     h.allWorkspaces = false;
     ml.props = null;
     ml.actions = null;
+    ml.folders = null;
     ci.props = null;
     localStorage.clear();
   });
@@ -535,9 +539,9 @@ describe('MarketChatPanel', () => {
     renderPanel({
       workspaces: [{ workspace_id: 'ws-1', name: 'Old Name', dir_name: 'Old Name', previous_dir_names: [] }],
     });
-    await vi.waitFor(() => expect(ml.props?.workspaceDirName).toBe('New Name'));
+    await vi.waitFor(() => expect(ml.folders?.dirName).toBe('New Name'));
     expect(api.getWorkspace).toHaveBeenCalledWith('ws-1');
-    expect(ml.props?.previousDirNames).toEqual(['Old Name']);
+    expect(ml.folders?.previousDirNames).toEqual(['Old Name']);
   });
 
   it('provides every HITL handler through MessageActionsContext so plan/question cards work', () => {
@@ -744,6 +748,14 @@ describe('MarketChatPanel', () => {
       expect(args[0]).toBe('flash-ws');
       // The agent mode the chat engine sends with.
       expect(args[8]).toBe('ptc');
+    });
+
+    it("reads Home's folder from the workspace detail, which a turn re-reads once Home is bound", async () => {
+      // The flash row (mocked above) was read before Home had a folder.
+      api.getWorkspace.mockResolvedValueOnce({ workspace_id: 'flash-ws', dir_name: 'Home', previous_dir_names: [] });
+      renderPanel({ mode: 'fast' });
+      await vi.waitFor(() => expect(ml.folders?.dirName).toBe('Home'));
+      expect(api.getWorkspace).toHaveBeenCalledWith('flash-ws');
     });
 
     it('keeps Flash on the flash row with the flag off', async () => {

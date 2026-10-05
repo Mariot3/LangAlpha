@@ -5,6 +5,7 @@ import '@testing-library/jest-dom';
 import { runAuthResets } from '@/lib/authResets';
 import WorkspaceImage from '../WorkspaceImage';
 import { WorkspaceProvider } from '../../contexts/WorkspaceContext';
+import type { ComputerFolders } from '../../utils/agentPaths';
 
 // WorkspaceImage's only utils/api dependency is the authenticated downloader.
 const downloadWorkspaceFile = vi.fn((..._args: unknown[]) => Promise.resolve('blob:authed'));
@@ -14,10 +15,14 @@ vi.mock('../../utils/api', () => ({
 
 function renderInWorkspace(
   src: string,
-  { workspaceId, downloadFile }: { workspaceId: string | null; downloadFile: ((p: string) => void) | null },
+  { workspaceId, downloadFile, folders = null }: {
+    workspaceId: string | null;
+    downloadFile: ((p: string) => void) | null;
+    folders?: ComputerFolders | null;
+  },
 ) {
   return render(
-    <WorkspaceProvider workspaceId={workspaceId} downloadFile={downloadFile}>
+    <WorkspaceProvider workspaceId={workspaceId} downloadFile={downloadFile} folders={folders}>
       <WorkspaceImage src={src} alt="chart" />
     </WorkspaceProvider>,
   );
@@ -89,6 +94,30 @@ describe('WorkspaceImage reads a destination the way a link does', () => {
   ])('fetches the workspace-relative path for %s', async (_label, src, expected) => {
     renderInWorkspace(src, { workspaceId: 'ws-1', downloadFile: null });
     await waitFor(() => expect(downloadWorkspaceFile).toHaveBeenCalledWith('ws-1', expected));
+  });
+
+  // From the working directory `../Home/x.png` is `x.png`, and the server
+  // refuses the climb as written.
+  it('fetches a path through the workspace\'s own folder from its root', async () => {
+    renderInWorkspace('../Home/charts/own.png', {
+      workspaceId: 'ws-home',
+      downloadFile: null,
+      folders: { dirName: 'Home', siblings: [] },
+    });
+    await waitFor(() => expect(downloadWorkspaceFile).toHaveBeenCalledWith('ws-home', 'charts/own.png'));
+  });
+
+  // One name per row: the blob cache would answer the second from the first.
+  it.each([
+    ['climbed into', '../NVDA/charts/climbed.png', 'charts/climbed.png'],
+    ['rooted', '/home/workspace/NVDA/charts/rooted.png', 'charts/rooted.png'],
+  ])('fetches an image in a sibling folder %s from that workspace', async (_how, src, expected) => {
+    renderInWorkspace(src, {
+      workspaceId: 'ws-home',
+      downloadFile: null,
+      folders: { dirName: 'Home', siblings: [{ workspaceId: 'ws-nvda', dirName: 'NVDA' }] },
+    });
+    await waitFor(() => expect(downloadWorkspaceFile).toHaveBeenCalledWith('ws-nvda', expected));
   });
 
   // An image that did not load is a state, not a blank: the name plus why.
