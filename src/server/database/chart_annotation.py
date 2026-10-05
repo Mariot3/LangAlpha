@@ -37,8 +37,12 @@ _UPSERT_SQL = """
     DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
 """
 
+# ``read_at_us`` dates the read in the same statement, so it orders snapshots:
+# parallel draws commit in any order, and a set's size or members can't say
+# which read came last once something else removed rows in between.
 _CHART_SELECT_SQL = """
-    SELECT payload
+    SELECT payload,
+           (extract(epoch FROM statement_timestamp()) * 1000000)::bigint AS read_at_us
     FROM chart_annotations
     WHERE workspace_id = %s AND chart_id = %s
     ORDER BY created_at
@@ -119,8 +123,9 @@ async def add_and_list_annotations(
     symbol: str,
     timeframe: str,
     annotation: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Upsert one annotation and return the instance's full set, oldest first.
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Upsert one annotation; return the instance's full set, oldest first,
+    and when that set was read (epoch microseconds, None if not read back).
 
     Write and read share one pooled connection (autocommit, so the read sees the
     just-written row) — one checkout per draw instead of two. Raises on the write
@@ -143,9 +148,10 @@ async def add_and_list_annotations(
                 rows = await cur.fetchall()
         except Exception:
             logger.exception("[chart_annotation] read-back after upsert failed")
-            return [annotation]
+            return [annotation], None
     _warn_if_capped(len(rows), workspace_id, chart_id)
-    return [row["payload"] for row in rows]
+    read_at_us = rows[0]["read_at_us"] if rows else None
+    return [row["payload"] for row in rows], read_at_us
 
 
 async def list_charts(

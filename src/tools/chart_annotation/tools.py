@@ -234,7 +234,7 @@ async def draw_chart_annotation(
     # set is the chart instance's full current annotations so the inline-card
     # artifact renders the cumulative chart, not just this one shape.
     try:
-        all_items = await add_and_list_annotations(
+        all_items, read_at_us = await add_and_list_annotations(
             workspace_id, chart_id, symbol_upper, timeframe, stored
         )
     except Exception:
@@ -271,6 +271,9 @@ async def draw_chart_annotation(
         "workspace_id": workspace_id,
         "annotation_id": annotation_id,
         "annotations": all_items,
+        # Orders this draw's snapshot against the turn's other draws, for the
+        # chat card that shows the latest.
+        "read_at_us": read_at_us,
     }
     return _summarize(stored), result_artifact
 
