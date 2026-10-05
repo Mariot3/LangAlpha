@@ -57,3 +57,35 @@ async def test_workspace_list_rows_carry_only_what_a_hand_off_reads():
             "last_activity_at": None,
         }
     ]
+
+
+async def test_the_chief_of_staff_sees_a_folder_only_on_homes_computer():
+    """Home reads its siblings' folders on its own computer. A workspace on
+    another computer has no folder there, so its row names none."""
+    from src.server.database.home_workspace import get_flash_workspace_id
+    from src.tools.secretary.chief_of_staff import chief_of_staff_workspaces
+
+    rows = [
+        {"workspace_id": "ws-here", "computer_id": "cmp-home", "dir_name": "semis"},
+        {"workspace_id": "ws-there", "computer_id": "cmp-other", "dir_name": "macro"},
+    ]
+    read_home = AsyncMock(return_value={"computer_id": "cmp-home"})
+    with patch(
+        "src.server.database.workspace.get_workspaces_for_user",
+        AsyncMock(return_value=(rows, 2)),
+    ), patch("src.server.database.workspace.get_workspace", read_home):
+        command = await chief_of_staff_workspaces.ainvoke(
+            {
+                "name": "manage_workspaces",
+                "args": {"action": "list", "state": {}},
+                "id": "call-1",
+                "type": "tool_call",
+            },
+            config={"configurable": {"user_id": OWNER}},
+        )
+    listed = json.loads(command.update["messages"][0].content)["workspaces"]
+    assert {ws["workspace_id"]: ws["dir_name"] for ws in listed} == {
+        "ws-here": "semis",
+        "ws-there": None,
+    }
+    read_home.assert_awaited_once_with(get_flash_workspace_id(OWNER))

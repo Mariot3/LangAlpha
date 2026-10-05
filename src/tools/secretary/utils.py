@@ -3,7 +3,9 @@
 import json
 import logging
 import re
+from datetime import datetime, timezone as dt_timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ptc_agent.core.paths import SANDBOX_ROOTS
 
@@ -21,6 +23,16 @@ _EMPTY_LATEST_FALLBACK_TURNS = 5
 
 # Inserted between turns when more than one turn is returned.
 _TURN_SEPARATOR = "\n\n---\n\n"
+
+# How a run's label words its stored status. A run that stopped on a question
+# or an approval card is waiting on the user, not finished.
+_RUN_STATUS = {
+    "in_progress": "still running",
+    "completed": "completed",
+    "error": "failed",
+    "cancelled": "stopped",
+    "interrupted": "waiting on the user",
+}
 
 # Destinations worth rewriting into a workspace reference. Deliberately
 # narrower than the web client, which treats any relative link as a file
@@ -284,9 +296,9 @@ def _join_recent_turns(turn_texts: list[str]) -> str:
 
 
 async def extract_text_from_thread(
-    thread_id: str, turns: int = 1
+    thread_id: str, turns: int = 1, timezone: str = "UTC"
 ) -> dict[str, Any]:
-    """Extract text content from a thread's SSE events.
+    """Extract text content from a thread's SSE events, one labeled block per run.
 
     Reads from Redis if the thread is actively running, otherwise reads
     from the database. Filters for message_chunk events with text content.
@@ -297,6 +309,7 @@ async def extract_text_from_thread(
             only the latest turn; N > 1 = the last N turns; <= 0 = the full
             thread history. The window applies to the persisted record; while
             a turn is actively streaming, only that live turn is returned.
+        timezone: The user's IANA zone, which the run labels state times in.
 
     Returns:
         Dict with keys: text, status, thread_id, workspace_id
@@ -316,6 +329,7 @@ async def extract_text_from_thread(
         }
 
     workspace_id = str(thread.get("workspace_id", ""))
+    zone = user_zone(timezone)
 
     # The ledger routes live-vs-settled (v4 2.4): an in_progress row means
     # the turn is still streaming into Redis on SOME worker; anything else
@@ -338,11 +352,19 @@ async def extract_text_from_thread(
         text = await _extract_from_redis(
             thread_id, str(active_run["conversation_response_id"])
         )
-        text = _truncate_single(_qualify_file_paths(text, workspace_id))
+        text = _truncate_single(
+            _run_block(active_run, _qualify_file_paths(text, workspace_id), zone)
+        )
     else:
-        turn_texts = await _extract_from_db(thread_id, turns)
-        turn_texts = [_qualify_file_paths(t, workspace_id) for t in turn_texts]
-        text = _join_recent_turns(turn_texts)
+        runs = await _runs_to_read(thread_id, turns)
+        text = _join_recent_turns([
+            _run_block(
+                run,
+                _qualify_file_paths(_text_from_response(run), workspace_id),
+                zone,
+            )
+            for run in runs
+        ])
 
     return {
         "text": text,
@@ -350,6 +372,44 @@ async def extract_text_from_thread(
         "thread_id": thread_id,
         "workspace_id": workspace_id,
     }
+
+
+def user_zone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - an unknown zone reads as UTC
+        return ZoneInfo("UTC")
+
+
+def _run_block(run: dict[str, Any], text: str, zone: ZoneInfo) -> str:
+    """One run's text under a line saying which run it is and how it ended.
+
+    Without the line, the text of an earlier run reads as the newest run's, a
+    run that wrote nothing vanishes, and a report-back on an analyst's run
+    reads as another attempt at the work.
+    """
+    started = run.get("created_at")
+    if isinstance(started, str):
+        started = datetime.fromisoformat(started)
+    if isinstance(started, datetime):
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=dt_timezone.utc)
+        parts = [f"Run started {started.astimezone(zone):%Y-%m-%d %H:%M %Z}"]
+    else:
+        parts = ["Run"]
+    status = str(run.get("status") or "")
+    parts.append(_RUN_STATUS.get(status, status or "status unknown"))
+    if (attempt := run.get("attempt_no") or 1) > 1:
+        parts.append(f"attempt {attempt} of the same request")
+    metadata = run.get("metadata")
+    if isinstance(metadata, dict) and (
+        analyst := metadata.get("report_back_ptc_thread_id")
+    ):
+        parts.append(f"a report-back on analyst thread {analyst}")
+    if not text:
+        parts.append("no text yet" if status == "in_progress" else "no text")
+    label = "[" + ", ".join(parts) + "]"
+    return f"{label}\n{text}" if text else label
 
 
 async def _extract_from_redis(thread_id: str, run_id: str) -> str:
@@ -421,47 +481,36 @@ def _text_from_response(response: dict[str, Any]) -> str:
     return "".join(chunks)
 
 
-async def _latest_turn_text(thread_id: str) -> list[str]:
-    """Newest turn's text, as ``[]`` or ``[text]``.
+async def _runs_to_read(thread_id: str, turns: int = 1) -> list[dict[str, Any]]:
+    """The settled runs to show, oldest -> newest, for the most-recent ``turns`` turns.
 
-    Hot path is ``limit=1``; a text-less newest turn (tool-only / chart-only)
-    pays one wider ``_EMPTY_LATEST_FALLBACK_TURNS`` read so an empty result
-    isn't mistaken for "the agent produced nothing".
-    """
-    from src.server.database.conversation.responses import get_recent_responses_for_thread
-
-    responses = await get_recent_responses_for_thread(thread_id, limit=1)
-    if responses and (text := _text_from_response(responses[0])):
-        return [text]
-
-    # No turns at all: nothing to widen to.
-    if not responses:
-        return []
-
-    # Newest turn is text-less: re-read the fallback window once and surface the
-    # most-recent turn that carries text.
-    responses = await get_recent_responses_for_thread(
-        thread_id, limit=_EMPTY_LATEST_FALLBACK_TURNS
-    )
-    for text in map(_text_from_response, reversed(responses)):
-        if text:
-            return [text]
-    return []
-
-
-async def _extract_from_db(thread_id: str, turns: int = 1) -> list[str]:
-    """Return per-turn text (oldest -> newest) for the most-recent ``turns`` turns.
-
-    ``turns == 1`` delegates to ``_latest_turn_text``; otherwise reads the last
-    ``turns`` turns (``<= 0`` = recent history), clamped to ``_MAX_HISTORY_TURNS``.
-    Read failures propagate so the caller surfaces an error instead of an empty,
+    ``turns == 1`` is the newest run, plus the newest earlier run that has
+    text when it has none (a tool-only or chart-only turn), so an empty read
+    is not mistaken for "the agent produced nothing". ``turns > 1`` reads the
+    last ``turns`` turns and ``<= 0`` recent history, clamped to
+    ``_MAX_HISTORY_TURNS``; a run without text stays in, labeled as such. Read
+    failures propagate so the caller surfaces an error instead of an empty,
     success-looking result.
     """
-    if turns == 1:
-        return await _latest_turn_text(thread_id)
-
     from src.server.database.conversation.responses import get_recent_responses_for_thread
 
-    limit = _MAX_HISTORY_TURNS if turns <= 0 else min(turns, _MAX_HISTORY_TURNS)
-    responses = await get_recent_responses_for_thread(thread_id, limit=limit)
-    return [text for text in map(_text_from_response, responses) if text]
+    if turns != 1:
+        limit = _MAX_HISTORY_TURNS if turns <= 0 else min(turns, _MAX_HISTORY_TURNS)
+        return await get_recent_responses_for_thread(thread_id, limit=limit)
+
+    # Hot path is limit=1; a text-less newest run pays one wider read.
+    runs = await get_recent_responses_for_thread(thread_id, limit=1)
+    if not runs or _text_from_response(runs[0]):
+        return runs
+    window = await get_recent_responses_for_thread(
+        thread_id, limit=_EMPTY_LATEST_FALLBACK_TURNS
+    )
+    if not window:
+        return runs
+    newest = window[-1]
+    if _text_from_response(newest):  # a newer run settled between the reads
+        return [newest]
+    for run in reversed(window[:-1]):
+        if _text_from_response(run):
+            return [run, newest]
+    return [newest]

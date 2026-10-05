@@ -241,6 +241,35 @@ async def test_cancel_stops_manual_mutation_when_no_active_workflow(stopped, mes
 
 
 @pytest.mark.asyncio
+async def test_a_stop_naming_a_run_never_stops_a_manual_mutation():
+    """A late stop for a run that has since finished, such as the Chief of
+    Staff's for a hand-off, must not end the compaction the user started on
+    that thread after it. The user's own stop of a compaction names no run."""
+    from src.server.services.cancel_dispatch import cancel_workflow
+
+    patches, _registry_store, _manager, runner, _get_active_run, request_run_cancel = (
+        _patch_common(
+            manager_cancel_returns=False,
+            has_active_returns=False,
+            mutation_stop_returns="cancelled",  # would early-return if reached
+            intent_state="already_terminal",
+        )
+    )
+    for p in patches:
+        p.start()
+    try:
+        result = await cancel_workflow("t-1", "run-DONE")
+    finally:
+        for p in patches:
+            p.stop()
+
+    runner.request_stop.assert_not_awaited()
+    request_run_cancel.assert_awaited_once_with("run-DONE", thread_id="t-1")
+    assert result["cancelled"] is False
+    assert result["state"] == "already_finished"
+
+
+@pytest.mark.asyncio
 async def test_cancel_idle_thread_stamps_no_intent_but_runs_safety_net():
     """A /cancel that lands on an idle thread (no BTM task, no in-flight
     mutation, no active run) — e.g. a Stop click racing a compaction that

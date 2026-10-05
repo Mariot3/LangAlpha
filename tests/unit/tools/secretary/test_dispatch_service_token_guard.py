@@ -169,7 +169,7 @@ async def test_ptc_agent_oss_mode_proceeds_without_token(monkeypatch):
         )
 
     hitl.assert_called_once()
-    assert result.update["messages"][0].content == "User declined PTC agent dispatch."
+    assert result.update["messages"][0].content.startswith("User declined the hand-off.")
 
 
 @pytest.mark.asyncio

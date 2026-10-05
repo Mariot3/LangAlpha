@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "InjectedToolCallId",
     "decline_command",
+    "decline_routing_command",
     "error_command",
     "hitl_confirm",
     "success_command",
@@ -63,6 +64,26 @@ def decline_command(message: str, tool_call_id: str) -> Command:
                 ToolMessage(content=message, tool_call_id=tool_call_id),
             ],
         }
+    )
+
+
+def decline_routing_command(
+    declined: str, response: dict, tool_call_id: str
+) -> Command:
+    """Decline a hand-off, or the workspace for one, without freeing the work.
+
+    A bare decline read to the model as leave to do the work itself, though
+    the user declined where it would go, not that it should be done here.
+    """
+    from src.server.models.chat import rejection_feedback
+
+    decisions = response.get("decisions") or [{}]
+    feedback = rejection_feedback(decisions[0].get("message"))
+    said = f', saying: "{feedback}"' if feedback else ""
+    return decline_command(
+        f"User declined {declined}{said}. Unless they said to do the work "
+        "here, do not do it yourself instead: ask them where they want it.",
+        tool_call_id,
     )
 
 

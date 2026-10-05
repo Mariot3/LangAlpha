@@ -31,8 +31,10 @@ def _call(args: dict) -> dict:
     [
         {"question": "Value NVDA", "workspace_id": HOME_ID},
         {"question": "And the margins?", "thread_id": THREAD_ID},
+        # The owner check reads any spelling the database accepts as the same row.
+        {"question": "Value NVDA", "workspace_id": f"urn:uuid:{HOME_ID.upper()}"},
     ],
-    ids=["new thread", "continuation"],
+    ids=["new thread", "continuation", "another spelling of Home's id"],
 )
 async def test_a_hand_off_into_home_is_refused_before_the_user_is_asked(args):
     confirm = MagicMock(side_effect=AssertionError("the user must not be asked"))

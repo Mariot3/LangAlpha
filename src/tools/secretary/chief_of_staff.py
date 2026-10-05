@@ -24,6 +24,7 @@ from src.tools.secretary.tools import (
     agent_output,
     threads_delete,
     threads_list,
+    threads_stop,
     workspaces_create,
     workspaces_list,
 )
@@ -46,13 +47,18 @@ async def chief_of_staff_workspaces(
         description: What the new workspace is for; optional.
 
     Returns:
-        One short row per workspace, with its id and folder (dir_name); for "create", the new id.
+        One short row per workspace, with its id, and its folder (dir_name) when it is on
+        this computer; for "create", the new id.
     """
     user_id = config.get("configurable", {}).get("user_id")
     if not user_id:
         return error_command("user_id not found in config", tool_call_id)
     if action == "list":
-        return await workspaces_list(user_id, tool_call_id)
+        from src.server.database.home_workspace import get_flash_workspace_id
+
+        return await workspaces_list(
+            user_id, tool_call_id, home_id=get_flash_workspace_id(user_id)
+        )
     if action == "create":
         return await workspaces_create(
             user_id, name, description, tool_call_id,
@@ -108,24 +114,38 @@ async def chief_of_staff_threads(
     config: RunnableConfig,
     workspace_id: str | None = None,
     thread_id: str | None = None,
+    run_id: str | None = None,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> Command:
-    """List the user's threads, or delete one once the user confirms.
+    """List the user's threads, stop the turn one is running, or delete one once the user confirms.
 
     Args:
-        action: "list" or "delete".
+        action: "list", "stop" or "delete". "stop" ends the turn within a few seconds;
+            the thread and what it produced so far stay.
         workspace_id: For "list", only this workspace's threads; all of them without it.
-        thread_id: The thread to delete; required for "delete".
+        thread_id: The thread to stop or delete; required for both.
+        run_id: For "stop", the run_id from the hand-off's delegate_to_analyst result, so
+            the stop never ends a turn started there since; omit it to stop whatever the
+            thread is running.
     """
-    user_id = config.get("configurable", {}).get("user_id")
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
     if not user_id:
         return error_command("user_id not found in config", tool_call_id)
     if action == "list":
         return await threads_list(user_id, workspace_id, tool_call_id)
+    if action == "stop":
+        return await threads_stop(
+            user_id,
+            thread_id,
+            configurable.get("thread_id"),
+            tool_call_id,
+            run_id=run_id,
+        )
     if action == "delete":
         return await threads_delete(user_id, thread_id, tool_call_id)
     return error_command(
-        f"Unknown action: {action}. Use list or delete.", tool_call_id
+        f"Unknown action: {action}. Use list, stop or delete.", tool_call_id
     )
 
 

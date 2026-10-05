@@ -23,6 +23,7 @@ from src.tools.secretary import activity
 from src.tools.secretary.activity import render_activity
 
 HOME = "home-0001"
+HOME_COMPUTER = "computer-home"
 NY = ZoneInfo("America/New_York")
 TODAY = date(2026, 10, 5)
 
@@ -39,6 +40,7 @@ def _render(**rows) -> str:
         runs=[],
         holdings=[],
         home_id=HOME,
+        home_computer_id=HOME_COMPUTER,
         zone=NY,
         today=TODAY,
     )
@@ -69,6 +71,7 @@ WORKSPACES = [
         "workspace_id": "ws-semis",
         "name": "Semis",
         "description": "Chip makers",
+        "computer_id": HOME_COMPUTER,
         "dir_name": "semis",
         "last_activity_at": _at(14),
     },
@@ -144,6 +147,18 @@ def test_every_workspace_carries_the_id_the_model_acts_on():
     ) in lines
     # No activity stamp falls back to the row's update; no folder says none.
     assert "- Macro (last active 2026-10-05, workspace_id `ws-macro`)" in lines
+
+
+def test_a_workspace_on_another_computer_names_no_folder():
+    """Its folder is on that computer, not beside Home, where a read or a link
+    built from it would find nothing."""
+    text = _render(
+        workspaces=[{**WORKSPACES[0], "computer_id": "computer-other"}],
+        workspace_total=1,
+    )
+    assert text.splitlines()[1] == (
+        "- Semis: Chip makers (last active 2026-10-05, workspace_id `ws-semis`)"
+    )
 
 
 def test_every_thread_carries_its_place_status_and_id():
@@ -326,6 +341,7 @@ async def _read(timezone_name: str = "UTC", **reads) -> str | None:
         "get_recent_threads_for_user": AsyncMock(return_value=[]),
         "list_settled_since": AsyncMock(return_value=[]),
         "get_user_portfolio": AsyncMock(return_value=[]),
+        "get_workspace": AsyncMock(return_value={"computer_id": HOME_COMPUTER}),
         **reads,
     }
     with ExitStack() as stack:

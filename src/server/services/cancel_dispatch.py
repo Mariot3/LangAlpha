@@ -77,8 +77,11 @@ async def cancel_workflow(thread_id: str, run_id: Optional[str] = None) -> dict:
         # runner cancels a locally-owned op directly, or flags the stop key a
         # foreign worker's heartbeat polls. (An AUTO compaction runs inside
         # the turn's task — there has_active is True, so we fall through and
-        # cancel_workflow's inner_task cancel interrupts the summarize.)
-        if not has_active:
+        # cancel_workflow's inner_task cancel interrupts the summarize.) A
+        # stop that names a run is for that run alone, so a late one never
+        # ends a compaction started after it; the stop of a manual one names
+        # no run, as it has none.
+        if not has_active and not run_id:
             from src.server.services.thread_mutation import ThreadMutationRunner
 
             stopped = await ThreadMutationRunner.get_instance().request_stop(

@@ -17,6 +17,7 @@ from langgraph.types import Command
 from src.tools.secretary._commands import (
     InjectedToolCallId,
     decline_command,
+    decline_routing_command,
     error_command,
     hitl_confirm,
     success_command,
@@ -34,6 +35,12 @@ logger = logging.getLogger(__name__)
 # it does pass back, stay.
 _OWNER_ID = frozenset({"user_id"})
 
+_STOPPING = (
+    "Stopping; the turn ends within a few seconds. If it was a hand-off with "
+    "a report-back, that report will say how far it got: tell the user it is "
+    "stopping and do not read the thread now."
+)
+
 # A workspace as a listing shows it: what a hand-off is routed by, and the
 # status a stop or a "what is running" answer reads. A listing comes before
 # every hand-off, so the row's settings, artifacts and machine bindings stay out.
@@ -48,8 +55,17 @@ _LISTED_WORKSPACE_FIELDS = (
 )
 
 
+def _timezone(configurable: dict) -> str:
+    """The user's zone, which a run's label states its start time in."""
+    return configurable.get("timezone") or "UTC"
+
+
 async def _get_thread_output(
-    user_id: str, thread_id: str, tool_call_id: str, turns: int = 1
+    user_id: str,
+    thread_id: str,
+    tool_call_id: str,
+    turns: int = 1,
+    timezone: str = "UTC",
 ) -> Command:
     """Verify ownership and extract thread output.
 
@@ -62,7 +78,7 @@ async def _get_thread_output(
         return err
 
     try:
-        result = await extract_text_from_thread(thread_id, turns)
+        result = await extract_text_from_thread(thread_id, turns, timezone=timezone)
     except Exception as e:
         logger.error(f"Failed to extract text from thread {thread_id}: {e}")
         return error_command("failed to retrieve thread output", tool_call_id)
@@ -116,10 +132,16 @@ async def manage_workspaces(
         )
 
 
-async def workspaces_list(user_id: str, tool_call_id: str) -> Command:
-    """List workspaces for the user."""
+async def workspaces_list(
+    user_id: str, tool_call_id: str, *, home_id: str | None = None
+) -> Command:
+    """List workspaces for the user.
+
+    With ``home_id``, the Chief of Staff's listing: a row names its folder only
+    when the workspace is on Home's computer, the one whose folders it reads.
+    """
     try:
-        from src.server.database.workspace import get_workspaces_for_user
+        from src.server.database.workspace import get_workspace, get_workspaces_for_user
 
         # Pinned, then most recently used: past the 20th the list stops, and
         # the workspace a hand-off is for is far likelier to be recent than
@@ -127,6 +149,14 @@ async def workspaces_list(user_id: str, tool_call_id: str) -> Command:
         workspaces, total = await get_workspaces_for_user(
             user_id=user_id, limit=20, sort_by="activity"
         )
+        if home_id is not None:
+            from src.tools.secretary.activity import folder_on
+
+            home = await get_workspace(home_id)
+            computer_id = home.get("computer_id") if home else None
+            workspaces = [
+                {**ws, "dir_name": folder_on(ws, computer_id)} for ws in workspaces
+            ]
         content = json.dumps(
             {
                 "success": True,
@@ -165,14 +195,14 @@ async def workspaces_create(
         )
 
     if not preapproved:
-        approved, _ = hitl_confirm(
+        approved, response = hitl_confirm(
             "create_workspace",
             {"workspace_name": name, "workspace_description": description or ""},
         )
 
         if not approved:
-            return decline_command(
-                "User declined workspace creation.", tool_call_id
+            return decline_routing_command(
+                "workspace creation", response, tool_call_id
             )
 
     from src.server.database.workspace_names import (
@@ -348,14 +378,16 @@ async def agent_output(
             live turn.
 
     Returns:
-        The agent's reply text, not its tool calls, and whether the thread is still running.
+        The agent's reply text, not its tool calls, each run under a line with its start time, how it ended and whether it was a report-back, and whether the thread is still running.
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id")
     if not user_id:
         return error_command("user_id not found in config", tool_call_id)
 
-    return await _get_thread_output(user_id, thread_id, tool_call_id, turns)
+    return await _get_thread_output(
+        user_id, thread_id, tool_call_id, turns, _timezone(configurable)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +422,9 @@ async def manage_threads(
     if action == "list":
         return await threads_list(user_id, workspace_id, tool_call_id)
     elif action == "get_output":
-        return await _threads_get_output(user_id, thread_id, tool_call_id, turns)
+        return await _threads_get_output(
+            user_id, thread_id, tool_call_id, turns, _timezone(configurable)
+        )
     elif action == "delete":
         return await threads_delete(user_id, thread_id, tool_call_id)
     else:
@@ -443,7 +477,11 @@ async def threads_list(
 
 
 async def _threads_get_output(
-    user_id: str, thread_id: str | None, tool_call_id: str, turns: int = 1
+    user_id: str,
+    thread_id: str | None,
+    tool_call_id: str,
+    turns: int = 1,
+    timezone: str = "UTC",
 ) -> Command:
     """Get output from a specific thread."""
     if not thread_id:
@@ -451,7 +489,66 @@ async def _threads_get_output(
             "thread_id is required for get_output action", tool_call_id
         )
 
-    return await _get_thread_output(user_id, thread_id, tool_call_id, turns)
+    return await _get_thread_output(user_id, thread_id, tool_call_id, turns, timezone)
+
+
+async def threads_stop(
+    user_id: str,
+    thread_id: str | None,
+    own_thread_id: str | None,
+    tool_call_id: str,
+    run_id: str | None = None,
+) -> Command:
+    """Stop the turn ``run_id`` names on a thread, else whichever it is running.
+
+    The same cancel as ``POST /cancel``, so the run ends through the finalize
+    CAS and a hand-off with a report-back still reports that it was stopped.
+    A run_id keeps a stop meant for a hand-off from ending a turn started in
+    that thread after the hand-off finished.
+    """
+    from src.server.utils.pg_sanitize import normalize_uuid
+
+    if not thread_id:
+        return error_command("thread_id is required for stop", tool_call_id)
+    thread_id = normalize_uuid(thread_id)
+    if thread_id is None:
+        return error_command("thread not found or not owned by user", tool_call_id)
+    if thread_id == normalize_uuid(own_thread_id):
+        return error_command(
+            "That is this conversation; end your turn instead.", tool_call_id
+        )
+    # An empty run_id reads as omitted, as it does for POST /cancel.
+    if run_id:
+        run_id = normalize_uuid(run_id)
+        if run_id is None:
+            return error_command(
+                "run_id is not a run id: pass the one delegate_to_analyst "
+                "returned, or leave it out.",
+                tool_call_id,
+            )
+    if err := await verify_thread_owner(thread_id, user_id, tool_call_id):
+        return err
+
+    from src.server.services.cancel_dispatch import cancel_workflow
+
+    try:
+        outcome = await cancel_workflow(thread_id, run_id=run_id or None)
+    except Exception:
+        # cancel_workflow logs the cause and raises it as a bare 500.
+        return error_command("stop_failed", tool_call_id)
+    if outcome["cancelled"]:
+        # Said here, where the model decides what to do next: told only in the
+        # prompt, it read the thread straight away and reported the stop twice.
+        return success_command(
+            {"success": True, "cancelled": True, "message": _STOPPING},
+            tool_call_id,
+        )
+    # The stop ran and found nothing of that run to end; ``state`` says why.
+    # The model named the thread to stop; echoing its id back invites it into
+    # the reply.
+    return success_command(
+        {"success": True, **without_keys(outcome, {"thread_id"})}, tool_call_id
+    )
 
 
 async def threads_delete(

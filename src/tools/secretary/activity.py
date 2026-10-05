@@ -19,8 +19,9 @@ from zoneinfo import ZoneInfo
 from src.server.database.automation_executions import list_settled_since
 from src.server.database.conversation.threads_read import get_recent_threads_for_user
 from src.server.database.portfolio import get_user_portfolio
-from src.server.database.workspace import get_workspaces_for_user
+from src.server.database.workspace import get_workspace, get_workspaces_for_user
 from src.server.services.thread_lifecycle import project_lifecycle
+from src.tools.secretary.utils import user_zone
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,10 @@ async def read_activity(
     has not answered and asks again next turn, where a partial block would
     freeze as the truth and file a row once the missing part came back.
     """
-    zone = _zone(timezone)
+    zone = user_zone(timezone)
     today = _now().astimezone(zone).date()
     try:
-        (workspaces, total), threads, runs, holdings = await asyncio.wait_for(
+        (workspaces, total), threads, runs, holdings, home = await asyncio.wait_for(
             asyncio.gather(
                 get_workspaces_for_user(
                     user_id, limit=RECENT_WORKSPACES, sort_by="recent"
@@ -82,6 +83,7 @@ async def read_activity(
                     limit=AUTOMATION_RUNS,
                 ),
                 get_user_portfolio(user_id),
+                get_workspace(home_id),
             ),
             timeout=_READ_TIMEOUT_S,
         )
@@ -92,6 +94,7 @@ async def read_activity(
             runs=runs,
             holdings=holdings,
             home_id=home_id,
+            home_computer_id=(home or {}).get("computer_id"),
             zone=zone,
             today=today,
         )
@@ -110,11 +113,13 @@ def render_activity(
     home_id: str,
     zone: ZoneInfo,
     today: date,
+    home_computer_id: Any = None,
 ) -> str:
     """The block's text: byte-identical for equal rows, and empty for none.
 
     Dates rather than times, except for today's runs, so the text moves when
-    something happened rather than when the clock did.
+    something happened rather than when the clock did. A workspace names its
+    folder only on ``home_computer_id``, so with none it names none.
     """
     sections: list[str] = []
     if workspaces:
@@ -123,7 +128,10 @@ def render_activity(
                 [
                     "Recently active workspaces "
                     f"({len(workspaces)} of {workspace_total}):",
-                    *(_workspace_line(ws, zone) for ws in workspaces),
+                    *(
+                        _workspace_line(ws, home_computer_id, zone)
+                        for ws in workspaces
+                    ),
                 ]
             )
         )
@@ -155,15 +163,26 @@ def render_activity(
     return "\n\n".join(sections)
 
 
-def _workspace_line(ws: dict[str, Any], zone: ZoneInfo) -> str:
+def folder_on(workspace: dict[str, Any], computer_id: Any) -> str | None:
+    """The workspace's folder when it is on ``computer_id``, Home's computer.
+
+    A workspace on another computer keeps its folder there, so naming it to
+    the Chief of Staff would send a read or a link to a path Home lacks.
+    """
+    if computer_id is None or str(workspace.get("computer_id")) != str(computer_id):
+        return None
+    return workspace.get("dir_name")
+
+
+def _workspace_line(ws: dict[str, Any], home_computer_id: Any, zone: ZoneInfo) -> str:
     name = _one_line(ws.get("name"), _TITLE_CHARS) or "Untitled"
     described = _one_line(ws.get("description"), _EXCERPT_CHARS)
     facts = []
     active = ws.get("last_activity_at") or ws.get("updated_at")
     if active:
         facts.append(f"last active {_date(active, zone)}")
-    if ws.get("dir_name"):
-        facts.append(f"folder `{_one_line(ws['dir_name'], _TITLE_CHARS)}`")
+    if folder := folder_on(ws, home_computer_id):
+        facts.append(f"folder `{_one_line(folder, _TITLE_CHARS)}`")
     facts.append(f"workspace_id `{ws['workspace_id']}`")
     return f"- {name}{f': {described}' if described else ''} ({', '.join(facts)})"
 
@@ -265,10 +284,3 @@ def _one_line(value: Any, cap: int) -> str:
 
 def _now() -> datetime:
     return datetime.now(dt_timezone.utc)
-
-
-def _zone(name: str) -> ZoneInfo:
-    try:
-        return ZoneInfo(name)
-    except Exception:  # noqa: BLE001 - an unknown zone reads as UTC
-        return ZoneInfo("UTC")

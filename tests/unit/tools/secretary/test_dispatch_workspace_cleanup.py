@@ -296,8 +296,32 @@ async def test_success_status_with_lost_body_commits_and_reports_dispatched(cach
     payload = _payload(result)
     assert payload["success"] is True
     assert payload["status"] == "dispatched"
+    # Only the body names the run, so a later stop takes whatever is running.
+    assert "run_id" not in payload
     assert _reservation(cache) == payload["thread_id"]
     mgr.delete_workspace.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_dispatched_run_id_reaches_the_result(cache):
+    """The run a later stop names, so it never ends a newer turn there."""
+    run_id = "55555555-5555-5555-5555-555555555555"
+    body = {"status": "dispatched", "run_id": run_id}
+    with (
+        patch("src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})),
+        patch(
+            "src.server.services.workspace_manager.WorkspaceManager.get_instance",
+            return_value=workspace_manager(),
+        ),
+        patch("aiohttp.ClientSession", return_value=FakeSession(FakeResp(body=body))),
+    ):
+        result = await ptc_agent.ainvoke(
+            _tool_call({"question": "analyze this"}), config=_config()
+        )
+
+    payload = _payload(result)
+    assert payload["success"] is True
+    assert payload["run_id"] == run_id
 
 
 @pytest.mark.asyncio
@@ -610,7 +634,9 @@ def _seed_predecessor(cache) -> None:
     }
 
 
-def _continuation_patches(post_exc: Exception) -> list:
+def _continuation_patches(
+    post_exc: Exception | None = None, resp: FakeResp | None = None
+) -> list:
     owner = AsyncMock(return_value=USER_ID)
     by_id = AsyncMock(
         return_value={
@@ -624,17 +650,19 @@ def _continuation_patches(post_exc: Exception) -> list:
         patch("src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})),
         patch(
             "aiohttp.ClientSession",
-            return_value=FakeSession(post_exc=post_exc),
+            return_value=FakeSession(resp, post_exc=post_exc),
         ),
         patch("src.tools.secretary.dispatch._DISPATCH_CONFIRM_GRACE_S", 0.0),
     ]
 
 
-async def _continuation_dispatch(post_exc: Exception) -> dict:
+async def _continuation_dispatch(
+    post_exc: Exception | None = None, resp: FakeResp | None = None
+) -> dict:
     import contextlib
 
     with contextlib.ExitStack() as stack:
-        for p in _continuation_patches(post_exc):
+        for p in _continuation_patches(post_exc, resp):
             stack.enter_context(p)
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "follow up", "thread_id": PTC_THREAD_ID}),
@@ -714,6 +742,21 @@ async def test_continuation_our_marker_reports_success(cache, ledger):
     assert payload["status"] == "dispatched"
     new_gen = cache.kv[keys.ptc_origin_key(PTC_THREAD_ID)]["dispatch_gen"]
     assert new_gen != PRIOR_GEN
+
+
+@pytest.mark.asyncio
+async def test_a_busy_thread_says_so_and_restores_the_running_hand_off(cache):
+    """A 409 on a continuation means the thread is mid-turn: the model is told
+    what it can do instead of retrying, and the rollback hands the origin back
+    to the hand-off still running there, whose report-back depends on it."""
+    from src.tools.secretary.dispatch import _THREAD_BUSY
+
+    _seed_predecessor(cache)
+    payload = await _continuation_dispatch(resp=FakeResp(status=409))
+
+    assert payload == {"success": False, "error": _THREAD_BUSY}
+    assert cache.kv[keys.ptc_origin_key(PTC_THREAD_ID)]["dispatch_gen"] == PRIOR_GEN
+    assert PTC_THREAD_ID in cache.client.sets[keys.flash_watch_key(FLASH_THREAD_ID)]
 
 
 @pytest.mark.asyncio

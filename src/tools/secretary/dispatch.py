@@ -17,7 +17,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
 
 from src.tools.secretary._commands import (
-    decline_command,
+    decline_routing_command,
     error_command,
     hitl_confirm,
     success_command,
@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 
 _DISPATCH_CONFIRM_GRACE_S = 6.0
 _DISPATCH_CONFIRM_POLL_S = 0.5
+
+# Flash's ptc_agent gets this too and has no stop of its own, so the stop is
+# offered as the user's choice rather than the model's.
+_THREAD_BUSY = (
+    "That thread is still working on an earlier message, so this was not "
+    "sent. Tell the user it is busy: they can wait for that turn and ask "
+    "again or stop it, or you can start a new thread with workspace_id."
+)
 
 
 async def _confirm_dispatch_admission(
@@ -115,26 +123,20 @@ async def _cleanup_auto_created_workspace(workspace_id: str) -> None:
         )
 
 
-async def _resolve_workspace_name(
-    workspace_id: str | None, user_id: str
-) -> str | None:
-    """Display name for a workspace OWNED by ``user_id`` (else None).
+async def _owned_workspace(workspace_id: str, user_id: str) -> dict | None:
+    """The workspace row when ``user_id`` owns it, else None.
 
     Ownership-scoped so the new-thread dispatch HITL card can't surface another
     user's workspace name before the ownership check runs.
     """
-    if not workspace_id:
-        return None
     from src.server.database.workspace import get_workspace
 
     try:
         ws = await get_workspace(workspace_id)
-        if not ws or str(ws.get("user_id")) != user_id:
-            return None
-        return ws.get("name")
     except Exception as e:
-        logger.warning(f"Failed to resolve workspace name for {workspace_id}: {e}")
+        logger.warning(f"Failed to read workspace {workspace_id}: {e}")
         return None
+    return ws if ws and str(ws.get("user_id")) == user_id else None
 
 
 
@@ -202,12 +204,15 @@ async def dispatch(
         )
         return error_command("internal_service_token_missing", tool_call_id)
 
+    from src.server.database.home_workspace import is_flash_row
+    from src.server.utils.pg_sanitize import normalize_uuid
+
     is_continuation = thread_id is not None
 
     # Resolve workspace_id from existing thread or create/verify workspace
+    workspace = None
     if is_continuation:
         from src.server.database.conversation.threads_read import get_thread_by_id
-        from src.server.utils.pg_sanitize import normalize_uuid
 
         # Normalize once so the owner check and every downstream bind use the
         # same canonical UUID (get_thread_owner_id and get_thread_by_id also
@@ -226,16 +231,27 @@ async def dispatch(
             return err
         thread = await get_thread_by_id(thread_id)
         workspace_id = str(thread["workspace_id"])
-        workspace_name = await _resolve_workspace_name(workspace_id, user_id)
+        workspace = await _owned_workspace(workspace_id, user_id)
+        workspace_name = workspace.get("name") if workspace else None
     else:
         # New thread: surface the existing workspace's real name; when
         # auto-creating (no workspace_id) use the planned name (question snippet).
         if workspace_id:
-            workspace_name = await _resolve_workspace_name(workspace_id, user_id)
+            # Canonical, as the owner check reads it, so no other spelling of
+            # the dispatcher's own id gets past the check below. One that is
+            # no UUID matches no row, which the owner check refuses.
+            workspace_id = normalize_uuid(workspace_id) or workspace_id
+            workspace = await _owned_workspace(workspace_id, user_id)
+            workspace_name = workspace.get("name") if workspace else None
         else:
             workspace_name = await _free_workspace_name(user_id, question[:50])
 
-    if workspace_id is not None and workspace_id == configurable.get("workspace_id"):
+    # Any flash row, not only the dispatcher's: a turn there runs on Flash or
+    # as the Chief of Staff in Home, never as a workspace's analyst.
+    if workspace_id is not None and (
+        workspace_id == normalize_uuid(configurable.get("workspace_id"))
+        or is_flash_row(workspace)
+    ):
         return error_command(
             "That is the workspace you are working in: do it here, or "
             "dispatch to another workspace.",
@@ -256,9 +272,7 @@ async def dispatch(
         )
 
         if not approved:
-            return decline_command(
-                "User declined PTC agent dispatch.", tool_call_id
-            )
+            return decline_routing_command("the hand-off", response, tool_call_id)
 
         # Apply user overrides from HITL decision (e.g. toggling report_back)
         decisions = response.get("decisions", [])
@@ -334,7 +348,7 @@ async def dispatch(
         flash_thread_id, thread_id, workspace_id, flash_workspace_id, user_id
     ) as slot:
 
-        def dispatched() -> Command:
+        def dispatched(run_id: str | None = None) -> Command:
             # The card for a pre-approved hand-off is drawn from this result,
             # since no approval request carried the workspace's name.
             result = {
@@ -345,6 +359,11 @@ async def dispatch(
                 "status": "dispatched",
                 "report_back": slot.wired,
             }
+            if run_id:
+                # What a later stop names, so it ends this hand-off and never
+                # a turn started in the thread since. Absent when the body
+                # was lost; the stop then takes whatever the thread runs.
+                result["run_id"] = run_id
             if preapproved:
                 result["preapproved"] = True
             return success_command(result, tool_call_id)
@@ -363,6 +382,7 @@ async def dispatch(
         # settled by the admission-marker reconciliation below the try.
         rejected = False
         ambiguous_error: str | None = None
+        run_id: str | None = None
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -406,6 +426,14 @@ async def dispatch(
                         rejected = True
                         if auto_created_workspace:
                             await _cleanup_auto_created_workspace(workspace_id)
+                        if resp.status == 409:
+                            # A dispatch never steers (steer_allowed), so a
+                            # thread mid-turn refuses it; say so, or the model
+                            # reports a failure and retries into the same 409.
+                            # It sends no request_key, retry_of_run_id or
+                            # steer_only, so every 409 left means busy:
+                            # running, stopping or compacting.
+                            return error_command(_THREAD_BUSY, tool_call_id)
                         return error_command("dispatch_failed", tool_call_id)
                     if resp.status != 200:
                         # Not the endpoint's reply (it answers exactly 200;
@@ -436,6 +464,8 @@ async def dispatch(
                             # proof stands (never roll back), but don't claim
                             # success — reconcile below.
                             ambiguous_error = "dispatch_failed"
+                        else:
+                            run_id = body.get("run_id")
         except asyncio.CancelledError:
             # Cancellation mid-exchange (flash turn cancelled, worker
             # shutdown) is as ambiguous as a lost response: the endpoint may
@@ -507,4 +537,4 @@ async def dispatch(
             )
 
         slot.commit()
-        return dispatched()
+        return dispatched(run_id)

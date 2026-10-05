@@ -292,7 +292,7 @@ async def test_the_real_handoff_tools_ask_unless_their_call_was_recorded(
         )
 
     confirm.assert_called_once()
-    assert result.update["messages"][0].content == "User declined PTC agent dispatch."
+    assert result.update["messages"][0].content.startswith("User declined the hand-off.")
 
 
 _NEVER_ASK = MagicMock(side_effect=AssertionError("must not ask"))
@@ -361,3 +361,36 @@ async def test_a_handoff_approved_in_advance_names_the_workspace_it_made(monkeyp
     assert payload["preapproved"] is True
     assert payload["workspace_name"] == "analyze this"
     assert payload["report_back"] is True
+
+
+def test_a_declined_hand_off_keeps_the_work_unrouted_and_the_users_reason():
+    """A decline says where the work stands, since a bare one read to the model
+    as leave to build it in Home, and quotes only what the user wrote: the
+    resume path's no-feedback sentence is not theirs. The web reads it by its
+    prefix."""
+    from src.tools.secretary._commands import decline_routing_command
+
+    from src.server.models.chat import _format_rejection_message
+
+    bare = decline_routing_command(
+        "the hand-off",
+        {"decisions": [{"type": "reject", "message": _format_rejection_message(None)}]},
+        "c1",
+    )
+    said = decline_routing_command(
+        "workspace creation",
+        {
+            "decisions": [
+                {"type": "reject", "message": _format_rejection_message(" use my NVDA one ")}
+            ]
+        },
+        "c2",
+    )
+
+    assert bare.update["messages"][0].content == (
+        "User declined the hand-off. Unless they said to do the work here, "
+        "do not do it yourself instead: ask them where they want it."
+    )
+    assert said.update["messages"][0].content.startswith(
+        'User declined workspace creation, saying: "use my NVDA one". Unless'
+    )
