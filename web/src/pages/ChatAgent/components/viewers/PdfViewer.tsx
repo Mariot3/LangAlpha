@@ -1,8 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { PanelLeft } from 'lucide-react';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { Document, Page, pdfjs } from 'react-pdf';
+import PdfRail, { type RailTab } from './pdf/PdfRail';
 import { type PageSize, sizeOf, withMeasured } from './pdf/pageSize';
 import { useReleasePages } from './pdf/useReleasePages';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -156,6 +158,9 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
   // The document on show and the bytes it came from. While those are not the
   // current bytes, a newer copy of the file is loading over it.
   const [loaded, setLoaded] = useState<{ pdf: PDFDocumentProxy; from: unknown } | null>(null);
+  const [hasOutline, setHasOutline] = useState(false);
+  const [railOpen, setRailOpen] = useState(false);
+  const [railTab, setRailTab] = useState<RailTab>('pages');
   // What the reader is typing into the page field; null while they are not.
   const [pageDraft, setPageDraft] = useState<string | null>(null);
 
@@ -212,6 +217,14 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
     setDrawScale(null);
     setLoaded({ pdf, from: data });
     onPageCount?.(n);
+    pdf.getOutline().then(
+      (outline) => {
+        if (loadingDoc.current === pdf) setHasOutline(!!outline?.length);
+      },
+      () => {
+        if (loadingDoc.current === pdf) setHasOutline(false);
+      },
+    );
     // Every page starts at page 1's size, which most documents keep throughout,
     // so the column is its full height and the first page draws without
     // waiting on the rest. A page that differs is corrected when it is
@@ -387,6 +400,10 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
   if (error) throw error;
 
   const stretch = layout ? layout.scale / pageScale : 1;
+  // Names what the rail holds, so it never reads as the app's own sidebar.
+  const railLabel = t(hasOutline ? 'pdfViewer.sidebar' : 'pdfViewer.pages');
+  // The rail draws only from the current copy, never one being torn down.
+  const railDoc = loaded && loaded.from === data && pageSizes ? loaded.pdf : null;
 
   // Leaving the field goes to the page typed, as Enter does: the number pad
   // iOS shows for it has no Return key.
@@ -403,6 +420,17 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
       {/* Controls */}
       <div className="pdf-controls">
         <div className="pdf-nav">
+          <button
+            type="button"
+            onClick={() => setRailOpen((open) => !open)}
+            disabled={!railDoc}
+            aria-pressed={railOpen}
+            className="pdf-btn pdf-btn-icon"
+            aria-label={railLabel}
+            title={railLabel}
+          >
+            <PanelLeft size={14} aria-hidden />
+          </button>
           <button
             type="button"
             onClick={() => scrollToPage(currentPage - 2)}
@@ -493,69 +521,84 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
         </div>
       </div>
 
-      {/* Document */}
-      <div
-        ref={scrollerRef}
-        className="pdf-scroller"
-        onScroll={onScroll}
-        style={{ '--pdf-gap': `${GAP}px` } as React.CSSProperties}
-      >
-        {/* react-pdf defaults to Suspense, which would discard `fileData` with this
-            never-committed component on every retry and reload forever. Effect
-            mode keeps the loading props and the error throw above; Page inherits it. */}
-        <Document
-          suspense={false}
-          className="pdf-pages"
-          file={fileData}
-          options={DOCUMENT_OPTIONS}
-          onLoadSuccess={onDocumentLoadSuccess}
-          onLoadError={(err: Error) => setError(err)}
-          onItemClick={({ pageNumber }) => scrollToPage(pageNumber - 1)}
-          externalLinkTarget="_blank"
-          externalLinkRel="noopener noreferrer"
-          loading={<div className="pdf-loading">{t('pdfViewer.loading')}</div>}
+      <div className="pdf-body">
+        {railOpen && railDoc && pageSizes && (
+          <PdfRail
+            pdf={railDoc}
+            pageSizes={pageSizes}
+            currentPage={currentPage}
+            hasOutline={hasOutline}
+            tab={railTab}
+            onTabChange={setRailTab}
+            onGoToPage={scrollToPage}
+            onMeasure={measurePage}
+          />
+        )}
+
+        {/* Document */}
+        <div
+          ref={scrollerRef}
+          className="pdf-scroller"
+          onScroll={onScroll}
+          style={{ '--pdf-gap': `${GAP}px` } as React.CSSProperties}
         >
-          {layout && pageSizes ? (
-            layout.heights.map((height, i) => (
-              <div
-                key={i}
-                className="pdf-page"
-                data-pdf-slot={i}
-                style={{ width: layout.widths[i], height }}
-              >
-                {mounted.has(i) && (
-                  <div
-                    className="pdf-page-surface"
-                    style={stretch === 1 ? undefined : { transform: `scale(${stretch})` }}
-                  >
-                    <Page
-                      pageNumber={i + 1}
-                      scale={pageScale}
-                      devicePixelRatio={canvasPixelRatio(
-                        pageSizes[i].width * pageScale,
-                        pageSizes[i].height * pageScale,
-                      )}
-                      onLoadSuccess={(page) => measurePage(i, sizeOf(page))}
-                      loading={
-                        <div
-                          className="pdf-page-loading"
-                          style={{
-                            width: Math.floor(pageSizes[i].width * pageScale),
-                            height: Math.floor(pageSizes[i].height * pageScale),
-                          }}
-                        >
-                          {t('pdfViewer.rendering')}
-                        </div>
-                      }
-                    />
-                  </div>
-                )}
-              </div>
-            ))
-          ) : (
-            <div className="pdf-loading">{t('pdfViewer.loading')}</div>
-          )}
-        </Document>
+          {/* react-pdf defaults to Suspense, which would discard `fileData` with this
+              never-committed component on every retry and reload forever. Effect
+              mode keeps the loading props and the error throw above; Page inherits it. */}
+          <Document
+            suspense={false}
+            className="pdf-pages"
+            file={fileData}
+            options={DOCUMENT_OPTIONS}
+            onLoadSuccess={onDocumentLoadSuccess}
+            onLoadError={(err: Error) => setError(err)}
+            onItemClick={({ pageNumber }) => scrollToPage(pageNumber - 1)}
+            externalLinkTarget="_blank"
+            externalLinkRel="noopener noreferrer"
+            loading={<div className="pdf-loading">{t('pdfViewer.loading')}</div>}
+          >
+            {layout && pageSizes ? (
+              layout.heights.map((height, i) => (
+                <div
+                  key={i}
+                  className="pdf-page"
+                  data-pdf-slot={i}
+                  style={{ width: layout.widths[i], height }}
+                >
+                  {mounted.has(i) && (
+                    <div
+                      className="pdf-page-surface"
+                      style={stretch === 1 ? undefined : { transform: `scale(${stretch})` }}
+                    >
+                      <Page
+                        pageNumber={i + 1}
+                        scale={pageScale}
+                        devicePixelRatio={canvasPixelRatio(
+                          pageSizes[i].width * pageScale,
+                          pageSizes[i].height * pageScale,
+                        )}
+                        onLoadSuccess={(page) => measurePage(i, sizeOf(page))}
+                        loading={
+                          <div
+                            className="pdf-page-loading"
+                            style={{
+                              width: Math.floor(pageSizes[i].width * pageScale),
+                              height: Math.floor(pageSizes[i].height * pageScale),
+                            }}
+                          >
+                            {t('pdfViewer.rendering')}
+                          </div>
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="pdf-loading">{t('pdfViewer.loading')}</div>
+            )}
+          </Document>
+        </div>
       </div>
     </div>
   );

@@ -52,6 +52,12 @@
   cursor: default;
 }
 
+.pdf-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 5px;
+}
+
 .pdf-page-info {
   display: inline-flex;
   align-items: center;
@@ -87,9 +93,16 @@
   opacity: 0.5;
 }
 
+.pdf-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 /* Document area */
 .pdf-scroller {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   /* Fit width is measured off this box. Reserving the scrollbar's lane keeps
@@ -159,4 +172,112 @@
   text-align: center;
   color: var(--color-text-tertiary);
   font-size: 0.75rem;
+}
+
+/* Side rail: page thumbnails, and the document's bookmarks when it has any.
+   104px thumbnails plus 20px either side (THUMB_WIDTH in pdf/PdfRail.tsx). */
+.pdf-rail {
+  flex: none;
+  width: 144px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border-muted);
+}
+
+.pdf-rail-tabs {
+  display: flex;
+  justify-content: center;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--color-border-muted);
+}
+
+/* Positioned, so a thumbnail's offsetTop is measured from it. */
+.pdf-rail-scroller {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pdf-thumbs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.pdf-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  border-radius: 6px;
+}
+
+.pdf-thumb-paper {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--color-sheet-paper);
+  box-shadow: 0 0 0 1px var(--color-border-muted);
+  transition: box-shadow 0.15s;
+}
+
+.pdf-thumb-paper canvas {
+  display: block;
+}
+
+.pdf-thumb:hover .pdf-thumb-paper {
+  box-shadow: 0 0 0 1px var(--color-border-default);
+}
+
+/* The page being read: a neutral edge, since selection is not an annotation. */
+.pdf-thumb[aria-current='page'] .pdf-thumb-paper {
+  box-shadow: 0 0 0 2px var(--color-text-secondary);
+}
+
+.pdf-thumb-number {
+  font-size: 0.6875rem;
+  /* Secondary, not tertiary: tertiary reads under AA at this size on paper-white. */
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pdf-thumb[aria-current='page'] .pdf-thumb-number {
+  color: var(--color-text-primary);
+}
+
+/* react-pdf's Outline: nested lists of links, indented by depth. */
+.pdf-outline {
+  padding: 8px 6px;
+  font-size: 0.75rem;
+}
+
+.pdf-outline ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pdf-outline ul ul {
+  padding-left: 10px;
+}
+
+.pdf-outline a {
+  display: block;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.pdf-outline a:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
 }

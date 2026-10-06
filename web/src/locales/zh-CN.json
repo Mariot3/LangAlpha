@@ -1963,7 +1963,11 @@
     "zoomIn": "放大",
     "fit": "适应宽度",
     "fitWidth": "页面适应面板宽度",
-    "pageNumber": "页码"
+    "sidebar": "页面与目录",
+    "pages": "页面",
+    "contents": "目录",
+    "pageNumber": "页码",
+    "goToPage": "第 {{page}} 页"
   },
   "filePanel": {
     "tabs": {

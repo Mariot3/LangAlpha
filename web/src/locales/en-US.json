@@ -1967,7 +1967,11 @@
     "zoomIn": "Zoom in",
     "fit": "Fit",
     "fitWidth": "Fit pages to the panel width",
-    "pageNumber": "Page number"
+    "sidebar": "Pages and contents",
+    "pages": "Pages",
+    "contents": "Contents",
+    "pageNumber": "Page number",
+    "goToPage": "Page {{page}}"
   },
   "filePanel": {
     "tabs": {
