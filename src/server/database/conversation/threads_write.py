@@ -308,6 +308,28 @@ async def update_thread_status(
         return False
 
 
+async def promote_flash_thread(conversation_thread_id: str) -> bool:
+    """Mark a thread Flash started as the full agent's, once.
+
+    Guarded on the old type, so of two turns only the first promotes, and a
+    thread that was never Flash's is left alone. Raises, so a caller that has
+    to retry next turn knows it failed. Forgets the thread's model, which was
+    picked for Flash's slot, so the thread follows the account default for
+    the full agent until someone picks one for it.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE conversation_threads
+                SET msg_type = 'ptc', llm_model = NULL
+                WHERE conversation_thread_id = %s AND msg_type = 'flash'
+                """,
+                (conversation_thread_id,),
+            )
+            return cur.rowcount > 0
+
+
 async def update_thread_checkpoint_id(
     conversation_thread_id: str, checkpoint_id: str, conn=None
 ) -> bool:

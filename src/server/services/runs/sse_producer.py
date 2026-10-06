@@ -567,12 +567,16 @@ class RunSSEProducer:
         graph: Any,
         input_state: Any,
         config: dict,
+        *,
+        settled_results: list[ToolMessage] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream workflow execution events as SSE-formatted strings.
 
         Keepalives are emitted by the SSE consumer (``stream_from_log``) on
         XREAD BLOCK timeout, not by the producer — the workflow no longer
-        needs to interleave them with graph output.
+        needs to interleave them with graph output. ``settled_results`` are
+        tool results the turn wrote to the thread before the graph ran, so the
+        graph never emits them; they go out as the turn's first results.
         """
         import time
 
@@ -602,6 +606,12 @@ class RunSSEProducer:
                 {"thread_id": self.thread_id, "run_id": self.run_id},
                 accumulate=False,
             )
+
+            for result in settled_results or ():
+                async for event in self._process_message_chunk(
+                    result, "tools", {"langgraph_node": "tools"}
+                ):
+                    yield event
 
             # Create graph stream. durability="sync" awaits each checkpoint
             # put before the next step — necessary but NOT sufficient for

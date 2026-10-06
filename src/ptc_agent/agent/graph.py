@@ -235,6 +235,7 @@ async def build_ptc_graph_with_session(
     turn_context: TurnContext | None = None,
     project: ProjectContext | None = None,
     tool_view: Any | None = None,
+    extra_tools: list[Any] | None = None,
 ) -> Any:
     """Build a BackgroundSubagentOrchestrator from a pre-acquired session (WorkspaceManager path).
 
@@ -318,6 +319,7 @@ async def build_ptc_graph_with_session(
         order_ledger=order_ledger,
         turn_context=turn_context,
         project=project,
+        extra_tools=extra_tools,
     )
 
     logger.debug(

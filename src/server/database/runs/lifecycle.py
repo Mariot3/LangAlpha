@@ -660,6 +660,32 @@ async def workspace_has_active_run(workspace_id: str) -> bool:
             return bool((await cur.fetchone())[0])
 
 
+async def workspace_has_live_runs(cur, workspace_id: str) -> bool:
+    """Any root or background run in progress on the workspace's threads.
+
+    Read on the caller's dict-row cursor, so a caller holding the workspace
+    row FOR UPDATE sees every run admitted before it: admission holds that row
+    FOR SHARE until its run row commits.
+    """
+    await cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM conversation_responses r
+            JOIN conversation_threads t
+              ON t.conversation_thread_id = r.conversation_thread_id
+            WHERE t.workspace_id = %(workspace_id)s AND r.status = 'in_progress'
+            UNION ALL
+            SELECT 1 FROM subagent_runs r
+            JOIN conversation_threads t
+              ON t.conversation_thread_id = r.thread_id
+            WHERE t.workspace_id = %(workspace_id)s AND r.status = 'in_progress'
+        ) AS busy
+        """,
+        {"workspace_id": workspace_id},
+    )
+    return (await cur.fetchone())["busy"]
+
+
 async def computer_has_active_run(computer_id: str) -> bool:
     """Any live root run on any workspace bound to the computer.
 

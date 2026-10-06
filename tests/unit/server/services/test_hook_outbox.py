@@ -109,6 +109,22 @@ class TestBuildFinalizeJobs:
         assert wc.payload["ptc_thread_id"] == "ptc-9"
         assert wc.ordering_key == "flash-1"
 
+    @pytest.mark.parametrize("msg_type", ["flash", "ptc"])
+    def test_completed_report_back_summary_consumes_its_watch(self, msg_type):
+        """The summary may land on Flash or, with the all-workspaces agent, on
+        the full agent in Home: either way its completion releases the pair."""
+        jobs = _jobs(
+            "completed",
+            thread_id="flash-1",
+            msg_type=msg_type,
+            report_back_ptc_thread_id="ptc-9",
+            origin_dispatch_gen="gen-3",
+        )
+        wc = next(j for j in jobs if j.hook_type == "watch_clear")
+        assert wc.payload["ptc_thread_id"] == "ptc-9"
+        assert wc.payload["error_wake"] is False
+        assert wc.payload["dispatch_gen"] == "gen-3"
+
     def test_completed_flash_never_reports_back(self):
         jobs = _jobs("completed", thread_id="flash-1", msg_type="flash")
         assert _types(jobs) == ["burst_release", "user_feed"]

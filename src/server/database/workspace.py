@@ -19,10 +19,12 @@ from src.server.database.computer import (
     COMPUTER_STATUSES,
     get_computer,
 )
+from src.server.database.home_fold import fold_former_homes
 from src.server.database.livefs_links import drop_workspace_links
 from src.server.database.mcp_servers import start_new_workspace_selection
 from src.server.database.pool import get_db_connection
 from src.server.database.home_workspace import get_flash_workspace_id
+from src.server.database.runs.lifecycle import workspace_has_live_runs
 from src.server.database.sql_fences import (
     FENCE_LIVE_WORKSPACE,
     FENCE_NOT_DELETED,
@@ -129,9 +131,9 @@ async def _ws_transaction(conn=None):
 class FlashWorkspaceTaken(RuntimeError):
     """The user's flash id names a row another account owns.
 
-    A user id migration carries a user's rows to the new id while their ids
-    stay derived from the old one, so an old id that signs in again finds its
-    flash id held by the account it became.
+    An account merge moves an account's rows onto the account it joins, flash
+    row included, so a merged id that signs in again finds its flash id held by
+    the account it joined.
     """
 
     def __init__(self, workspace_id: str, user_id: str) -> None:
@@ -146,6 +148,9 @@ async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, An
     lock, so the workspace commits with the MCP selection it starts with.
     Both statements match the owner as well as the id: the row is the one a
     turn runs in and Home binds, so another account's must never come back.
+    An account merge can leave a former flash row beside it, which every
+    resolve tries to fold in; a row with a run in progress, or a fold that
+    fails, waits for a later resolve.
     """
     from psycopg.types.json import Json
 
@@ -193,11 +198,17 @@ async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, An
                     await start_new_workspace_selection(cur, user_id, workspace_id)
 
         logger.info(f"Upserted flash workspace: {workspace_id} for user: {user_id}")
-        return dict(result)
 
     except Exception as e:
         logger.error(f"Error upserting flash workspace for user {user_id}: {e}")
         raise
+
+    try:
+        await fold_former_homes(user_id, workspace_id, conn)
+    except Exception:
+        # Home itself resolved; the fold retries on the next resolve.
+        logger.exception(f"[home_fold] fold into {workspace_id} failed")
+    return dict(result)
 
 
 async def create_workspace(
@@ -1314,23 +1325,7 @@ async def delete_workspace(
                     "SELECT workspace_id FROM workspaces WHERE workspace_id = %s FOR UPDATE",
                     (workspace_id,),
                 )
-                await cur.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1 FROM conversation_responses r
-                        JOIN conversation_threads t
-                          ON t.conversation_thread_id = r.conversation_thread_id
-                        WHERE t.workspace_id = %s AND r.status = 'in_progress'
-                        UNION ALL
-                        SELECT 1 FROM subagent_runs r
-                        JOIN conversation_threads t
-                          ON t.conversation_thread_id = r.thread_id
-                        WHERE t.workspace_id = %s AND r.status = 'in_progress'
-                    ) AS busy
-                    """,
-                    (workspace_id, workspace_id),
-                )
-                if (await cur.fetchone())["busy"]:
+                if await workspace_has_live_runs(cur, workspace_id):
                     raise WorkspaceBusyError(
                         "This workspace has active work. Stop it or wait for it to finish before deleting."
                     )

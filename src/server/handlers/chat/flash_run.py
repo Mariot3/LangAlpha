@@ -81,6 +81,7 @@ from src.config.settings import get_flash_recursion_limit
 from .admission_gate import admission_conflict_detail, steer_allowed, wait_or_steer
 from .attachments import attach_flash_request_files
 from .error_handling import handle_workflow_error
+from .flash_handover import cancel_tool_calls_it_lacks
 from src.server.services.llm.clients import is_own_key_turn
 from src.server.services.llm.config import resolve_llm_config
 from src.server.services.llm.thread_model import NamedModel
@@ -403,6 +404,16 @@ async def astream_flash_workflow(
             turn_context=turn_context,
         )
 
+        cancelled_calls = []
+        if (
+            request.hitl_response
+            and not request.checkpoint_id
+            and prior_thread.msg_type != "flash"
+        ):
+            # Home's thread, back on Flash with the all-workspaces agent off,
+            # may be waiting on a Chief of Staff step Flash cannot run.
+            cancelled_calls = await cancel_tool_calls_it_lacks(flash_graph, thread_id)
+
         messages = normalize_request_messages(request)
 
         # Multimodal Context Injection (images and PDFs) -- Flash-specific
@@ -517,6 +528,7 @@ async def astream_flash_workflow(
                             graph=flash_graph,
                             input_state=input_state,
                             config=graph_config,
+                            settled_results=cancelled_calls,
                         )
                     ),
                 ),

@@ -751,6 +751,110 @@ async def test_resume_boundary_tail_is_the_interrupt_checkpoint():
     assert anchors[1].tail_checkpoint_id == tip_id
 
 
+def _ask_then_reply_graph(checkpointer, *, asks=True):
+    """``ask`` waits on the user, ``reply`` follows. ``asks=False`` is another
+    agent holding the same node, one that runs without asking."""
+
+    def ask(state):
+        if not asks:
+            return {"messages": [AIMessage(content="refused", id="ai-refused")]}
+        answer = interrupt({"action_requests": [{"description": "go?"}]})
+        return {"messages": [AIMessage(content=f"asked: {answer}", id="ai-asked")]}
+
+    def reply(state):
+        return {"messages": [AIMessage(content="reply", id=f"ai-{len(state['messages'])}")]}
+
+    return (
+        StateGraph(DeltaAgentState)
+        .add_node("ask", ask)
+        .add_node("reply", reply)
+        .add_edge(START, "ask")
+        .add_edge("ask", "reply")
+        .compile(checkpointer=checkpointer)
+    )
+
+
+async def _interrupted_turn(graph):
+    await graph.ainvoke(
+        {"messages": [HumanMessage(content="q0", id="h-0")]},
+        _cfg(turn_index=0, run_id="run-0"),
+    )
+    state = await graph.aget_state(_cfg())
+    return state.config["configurable"]["checkpoint_id"], state.interrupts[0].id
+
+
+async def test_resume_of_cancelled_calls_is_its_own_turn_boundary():
+    # A thread that changed agents while it waited has its waiting calls
+    # cancelled by an update, so nothing re-runs interrupt() to write
+    # __resume__; the resume still persists a turn of its own.
+    saver = InMemorySaver()
+    graph = _ask_then_reply_graph(saver)
+    interrupt_tip, interrupt_id = await _interrupted_turn(graph)
+
+    await graph.aupdate_state(
+        _cfg(),
+        {"messages": [AIMessage(content="Not run", id="ai-cancelled")]},
+        as_node="ask",
+    )
+    await graph.ainvoke(
+        Command(resume={interrupt_id: "yes"}), _cfg(turn_index=1, run_id="run-1")
+    )
+
+    history = await CheckpointHistoryReader(saver).aget_thread_history(THREAD)
+    assert len(history.turns) == 2
+    assert history.turns[1].input_checkpoint_id == interrupt_tip
+    assert [m.content for m in history.turns[1].messages] == ["Not run", "reply"]
+    assert [i["id"] for i in history.turns[0].ending_interrupts] == [interrupt_id]
+
+
+async def test_resume_by_an_agent_that_does_not_ask_is_its_own_turn_boundary():
+    saver = InMemorySaver()
+    interrupt_tip, interrupt_id = await _interrupted_turn(
+        _ask_then_reply_graph(saver)
+    )
+
+    await _ask_then_reply_graph(saver, asks=False).ainvoke(
+        Command(resume={interrupt_id: "yes"}), _cfg(turn_index=1, run_id="run-1")
+    )
+
+    history = await CheckpointHistoryReader(saver).aget_thread_history(THREAD)
+    assert len(history.turns) == 2
+    assert history.turns[1].input_checkpoint_id == interrupt_tip
+    assert [m.content for m in history.turns[1].messages] == ["refused", "reply"]
+
+
+async def test_interrupted_checkpoint_continued_by_its_own_run_is_no_boundary():
+    # The background-task orchestrator injects into the same run and carries
+    # on; that run's turn is still one turn.
+    saver = InMemorySaver()
+    graph = _ask_then_reply_graph(saver)
+    await _interrupted_turn(graph)
+
+    await graph.aupdate_state(
+        _cfg(run_id="run-0"),
+        {"messages": [AIMessage(content="note", id="ai-note")]},
+        as_node="ask",
+    )
+    await graph.ainvoke(None, _cfg(run_id="run-0"))
+
+    history = await CheckpointHistoryReader(saver).aget_thread_history(THREAD)
+    assert len(history.turns) == 1
+
+
+async def test_new_message_over_an_unanswered_interrupt_adds_one_boundary():
+    saver = InMemorySaver()
+    graph = _ask_then_reply_graph(saver)
+    await _interrupted_turn(graph)
+
+    await graph.ainvoke(
+        {"messages": [HumanMessage(content="q1", id="h-1")]},
+        _cfg(turn_index=1, run_id="run-1"),
+    )
+
+    history = await CheckpointHistoryReader(saver).aget_thread_history(THREAD)
+    assert [t.turn_index for t in history.turns] == [0, 1]
+
+
 async def test_empty_thread():
     reader = CheckpointHistoryReader(InMemorySaver())
     history = await reader.aget_thread_history("no-such-thread")

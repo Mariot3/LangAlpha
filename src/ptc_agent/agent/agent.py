@@ -236,6 +236,7 @@ class PTCAgent:
         order_ledger: OrderLedger | None = None,
         turn_context: TurnContext | None = None,
         project: ProjectContext | None = None,
+        extra_tools: list[Any] | None = None,
     ) -> Any:
         """Create a deepagent with PTC pattern capabilities.
 
@@ -261,6 +262,8 @@ class PTCAgent:
             project: The workspace folder this turn runs in. Passed rather
                 than read from the ambient context because the build happens
                 before the run's own task binds it.
+            extra_tools: Tools only this turn's main agent gets, such as
+                Home's workspace tool; subagents never see them.
 
         Returns:
             Configured BackgroundSubagentOrchestrator wrapping the deepagent.
@@ -874,8 +877,8 @@ class PTCAgent:
         # Main agent only, added after the subagent snapshot was taken above:
         # directly bound MCP tools are the ones a policy has to see every
         # call, and a subagent runs no main-only middleware.
-        if direct_tools:
-            tools = [*tools, *direct_tools]
+        if direct_tools or extra_tools:
+            tools = [*tools, *direct_tools, *(extra_tools or [])]
 
         agent: Any = create_agent(
             turn.client,

@@ -70,9 +70,30 @@ _PATCHES = {
     "enforce_credit": "src.server.services.automation_executor.enforce_credit_limit",
     "auto_db": "src.server.services.automation_executor",
     "settlement_db": "src.server.services.automation_settlement",
-    "flash_ws": "src.server.services.automation_executor.get_or_create_flash_workspace",
     "get_run": "src.server.database.runs.lifecycle.get_run",
 }
+
+
+@contextmanager
+def _route_reads():
+    """The rows the turn route reads, with the all-workspaces agent off."""
+    with (
+        patch(
+            "src.server.services.turn_runtime.home_enabled",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "src.server.database.workspace.get_or_create_flash_workspace",
+            new=AsyncMock(return_value={"workspace_id": _WS_ID}),
+        ),
+        patch(
+            "src.server.database.workspace.get_workspace",
+            new=AsyncMock(
+                return_value={"workspace_id": _WS_ID, "user_id": _USER_ID, "status": "running"}
+            ),
+        ),
+    ):
+        yield
 
 
 @contextmanager
@@ -115,10 +136,7 @@ def _patch_all(
         ),
         "auto_db": _bind_db(_PATCHES["auto_db"], db),
         "settlement_db": _bind_db(_PATCHES["settlement_db"], db),
-        "flash_ws": patch(
-            _PATCHES["flash_ws"],
-            new=AsyncMock(return_value={"workspace_id": _WS_ID}),
-        ),
+        "route": _route_reads(),
         "webhook": _webhook_of("src.server.services.automation_executor"),
         "settlement_webhook": _webhook_of("src.server.services.automation_settlement"),
         "get_run": patch(_PATCHES["get_run"], new=AsyncMock(side_effect=_run_row)),
@@ -152,7 +170,7 @@ class TestCredentialGate:
             patches["enforce_credit"] as mock_credit,
             patches["auto_db"] as mock_adb,
             patches["settlement_db"],
-            patches["flash_ws"],
+            patches["route"],
             patches["webhook"],
             patches["settlement_webhook"],
             patches["get_run"],
@@ -185,7 +203,7 @@ class TestCredentialGate:
             patches["enforce_credit"] as mock_credit,
             patches["auto_db"] as mock_adb,
             patches["settlement_db"],
-            patches["flash_ws"],
+            patches["route"],
             patches["webhook"],
             patches["settlement_webhook"],
             patches["get_run"],
@@ -218,7 +236,7 @@ class TestCredentialGate:
             patches["enforce_credit"] as mock_credit,
             patches["auto_db"] as mock_adb,
             patches["settlement_db"],
-            patches["flash_ws"],
+            patches["route"],
             patches["webhook"],
             patches["settlement_webhook"],
             patches["get_run"],
@@ -248,7 +266,7 @@ class TestCredentialGate:
             patches["enforce_credit"] as mock_credit,
             patches["auto_db"] as mock_adb,
             patches["settlement_db"],
-            patches["flash_ws"],
+            patches["route"],
             patches["webhook"],
             patches["settlement_webhook"],
             patches["get_run"],
@@ -334,7 +352,7 @@ async def _gated(exc):
         patches["enforce_credit"],
         patches["auto_db"] as mock_adb,
         patches["settlement_db"],
-        patches["flash_ws"],
+        patches["route"],
         patches["webhook"],
         patches["settlement_webhook"] as mock_settled,
         patches["get_run"],
@@ -361,7 +379,7 @@ class TestAdmitted:
             patches["enforce_credit"],
             patches["auto_db"] as mock_adb,
             patches["settlement_db"],
-            patches["flash_ws"],
+            patches["route"],
             patches["webhook"] as mock_started,
             patches["settlement_webhook"] as mock_settled,
             patches["get_run"] as mock_get_run,

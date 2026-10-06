@@ -124,6 +124,32 @@ def is_turn_boundary(cp_tuple: Any) -> bool:
     )
 
 
+def _resumed_by_later_run(branch: list[Any], i: int) -> bool:
+    """An interrupted checkpoint that a later run carried on from.
+
+    A resume normally marks itself: the waiting node runs again and its
+    ``interrupt()`` writes ``__resume__``. When the thread changed agents while
+    it waited, the waiting calls are cancelled or run by tools that never ask
+    (``flash_handover``), so nothing writes the mark and the resume shows only
+    as execution continuing under another run. Updates between the two (the
+    cancellation, a stop's flush) are skipped; an ``input`` checkpoint is a
+    new message, its own boundary, not a resume.
+    """
+    cp = branch[i]
+    if not any(
+        channel == "__interrupt__" for _, channel, _ in (cp.pending_writes or [])
+    ):
+        return False
+    run_id = (cp.metadata or {}).get("run_id")
+    for later in branch[i + 1 :]:
+        metadata = later.metadata or {}
+        if metadata.get("source") == "update":
+            continue
+        later_run = metadata.get("run_id")
+        return metadata.get("source") == "loop" and later_run not in (None, run_id)
+    return False
+
+
 # Pending-write channels the walk consumers read: ``__resume__`` marks a HITL
 # resume boundary (is_turn_boundary), ``__interrupt__`` carries the answered
 # interrupt payloads (history reader).
@@ -288,10 +314,14 @@ async def walk_current_branch_boundaries(
         parent = cp_by_id[cursor].parent_config
         cursor = parent["configurable"].get("checkpoint_id") if parent else None
 
-    boundaries = [
+    branch = [
         cp
         for cp in reversed(checkpoints)
         if cp.config["configurable"]["checkpoint_id"] in current_branch
-        and is_turn_boundary(cp)
+    ]
+    boundaries = [
+        cp
+        for i, cp in enumerate(branch)
+        if is_turn_boundary(cp) or _resumed_by_later_run(branch, i)
     ]
     return boundaries, tip_id

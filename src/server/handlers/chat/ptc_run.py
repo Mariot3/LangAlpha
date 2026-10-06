@@ -21,7 +21,10 @@ from langgraph.types import Command
 
 from ptc_agent.core.project_context import ProjectContext, run_with_project
 from src.server.app import setup
-from src.server.database.workspace import update_workspace_activity
+from src.server.database.workspace import (
+    get_flash_workspace_id,
+    update_workspace_activity,
+)
 from src.server.services.computer_disk import TURN_MEASURE_MIN_INTERVAL_SECONDS
 from src.server.services.runs.sse_producer import RunSSEProducer
 from src.server.models.chat import (
@@ -61,6 +64,7 @@ from ptc_agent.agent.graph import (
     get_user_profile_for_prompt,
 )
 from ptc_agent.agent.middleware.credit_gate import run_with_credit_gate
+from src.tools.secretary.home import HOME_TOOLS
 
 from .request_prep import (
     DISPATCH_STARTED_MARKER,
@@ -95,6 +99,7 @@ from src.config.settings import get_ptc_recursion_limit
 from .admission_gate import steer_allowed, wait_or_steer
 from .attachments import attach_request_files
 from .error_handling import handle_workflow_error
+from .flash_handover import cancel_tool_calls_it_lacks, hand_over_flash_thread
 from src.server.services.llm.clients import is_own_key_turn
 from src.server.services.llm.config import resolve_llm_config
 from src.server.services.llm.thread_model import NamedModel
@@ -150,6 +155,11 @@ async def _resolve_origin_meta(request, thread_id: str) -> dict:
     # would fall out of its flash chain permanently.
     prev = await tl_db.get_latest_attempt(thread_id)
     meta = (prev.get("metadata") or {}) if prev is not None else {}
+    if not meta.get("origin_flash_thread_id"):
+        # Only a thread a dispatch started has an origin. A generation without
+        # one is a report-back's, stamped by the summary turn that answered it
+        # (on Flash, or in Home), and is that pair's, not the thread's.
+        meta = {}
     return {
         "origin_flash_thread_id": meta.get("origin_flash_thread_id"),
         "origin_dispatch_gen": meta.get("origin_dispatch_gen"),
@@ -328,7 +338,8 @@ async def astream_ptc_workflow(
         # passes it false while still paying its own vendor bill.
         own_key = is_own_key_turn(config)
         query_metadata = {
-            "workspace_id": request.workspace_id,
+            # The resolved one: a request may name none, or name Flash's.
+            "workspace_id": workspace_id,
             "msg_type": "ptc",
         }
         if effective_model:
@@ -655,9 +666,24 @@ async def astream_ptc_workflow(
             turn_context=turn_context,
             project=project,
             tool_view=tool_view,
+            extra_tools=HOME_TOOLS if workspace_id == get_flash_workspace_id(user_id) else None,
         )
 
         _mark_phase("graph_build")
+
+        cancelled_calls = []
+        if prior_thread.msg_type == "flash":
+            cancelled_calls = await hand_over_flash_thread(
+                ptc_graph, thread_id, replay=bool(request.checkpoint_id)
+            )
+        elif (
+            role == "chief_of_staff"
+            and request.hitl_response
+            and not request.checkpoint_id
+        ):
+            # A Home thread Flash ran while the all-workspaces agent was off
+            # keeps its type, and may be waiting on a step only Flash has.
+            cancelled_calls = await cancel_tool_calls_it_lacks(ptc_graph, thread_id)
 
         if session.sandbox:
             sandbox_id = getattr(session.sandbox, "sandbox_id", None)
@@ -885,7 +911,7 @@ async def astream_ptc_workflow(
                 # Any project on the machine may have changed, not only this
                 # one: the sweep finds which, and mirrors those.
                 await ws_manager.backup_changed_projects(
-                    request.workspace_id, session=session
+                    workspace_id, session=session
                 )
             except Exception as e:
                 logger.warning(
@@ -917,6 +943,7 @@ async def astream_ptc_workflow(
                             graph=ptc_graph,
                             input_state=input_state,
                             config=graph_config,
+                            settled_results=cancelled_calls,
                         )
                     ),
                 ),

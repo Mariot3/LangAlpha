@@ -185,14 +185,14 @@ def build_finalize_jobs(
             )
 
         if final_status in ("error", "cancelled") or (
-            final_status == "completed"
-            and not is_ptc
-            and report_back_ptc_thread_id
+            final_status == "completed" and report_back_ptc_thread_id
         ):
             # error/cancelled: tear down any watch this run held open (a
-            # dispatched PTC directly, a report-back flash run via its
-            # origin id). completed flash WITH an origin id: consumption
-            # clear — the report-back summary landed, release the watch.
+            # dispatched PTC directly, a report-back summary run via its
+            # origin id). completed WITH an origin id: consumption clear —
+            # the report-back summary landed, release the watch. The summary
+            # may run on either agent: Home answers it when the user has the
+            # all-workspaces agent.
             jobs.append(
                 HookJob(
                     hook_type="watch_clear",

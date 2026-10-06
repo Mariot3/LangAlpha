@@ -23,7 +23,6 @@ from src.server.database import automation_executions as exec_db
 from src.server.database.api_keys import is_byok_active
 from src.server.database.oauth_tokens import has_any_oauth_token
 from src.server.database.runs import lifecycle as tl_db
-from src.server.database.workspace import get_or_create_flash_workspace
 from src.server.dependencies.usage_limits import enforce_credit_limit
 from src.server.models.chat import ChatMessage, ChatRequest, ThreadOrigin
 from src.server.services.automation_settlement import (
@@ -33,6 +32,7 @@ from src.server.services.automation_settlement import (
 )
 from src.server.services.runs.admission import BUSY_STATES
 from src.server.services.thread_lifecycle_feed import publish_automation_wait
+from src.server.services.turn_runtime import TurnRoute, resolve_turn_route
 from src.server.services.webhook_client import WebhookClient
 from src.observability.tracing import hash_id as _obs_hash_id, tracer as _otel_tracer
 
@@ -67,17 +67,22 @@ class _Firing:
     reached whichever way it ends.
 
     ``automation`` is re-read after every wait. ``agent_mode`` stays the one
-    the thread and workspace were resolved for.
+    the thread and workspace were resolved for, and ``route`` is where that
+    resolution sent the turn.
     """
 
     automation: Dict[str, Any]
     agent_mode: str
-    workspace_id: Optional[str] = None
+    route: Optional[TurnRoute] = None
     thread_id: Optional[str] = None
     run_id: Optional[str] = None
     # The run ledger holds ``run_id`` and the firing records it: the turn went
     # ahead, and the firing now ends however that run ends.
     admitted: bool = False
+
+    @property
+    def workspace_id(self) -> Optional[str]:
+        return self.route.workspace_id if self.route else None
 
 
 async def _thread_busy(thread_id: str) -> bool:
@@ -199,20 +204,24 @@ async def _credentials(user_id: str) -> tuple[bool, bool]:
     return has_byok, has_byok or has_oauth
 
 
-async def _resolve_workspace(automation: Dict[str, Any]) -> str:
-    """Flash runs in the user's shared flash workspace, created on demand;
-    PTC in the stored one, whose ownership was verified when the automation
-    was written."""
+async def _resolve_route(automation: Dict[str, Any]) -> TurnRoute:
+    """Where the automation's turn runs, asked where every other turn asks.
+
+    Flash runs in the user's shared flash workspace, created on demand, or in
+    Home under the all-workspaces agent. PTC runs in the stored workspace,
+    whose ownership was verified when the automation was written, unless that
+    is the flash workspace: the Chief of Staff stores its automations there,
+    and with the flag off they run on Flash like any other turn there.
+    """
     if automation["agent_mode"] == "flash":
-        flash_ws = await get_or_create_flash_workspace(automation["user_id"])
-        return str(flash_ws["workspace_id"])
+        return await resolve_turn_route(automation["user_id"], "flash", None)
     ws_id = automation.get("workspace_id")
     if not ws_id:
         raise ValueError(
             "PTC mode requires a workspace_id, but automation has none "
             "(workspace may have been deleted)"
         )
-    return str(ws_id)
+    return await resolve_turn_route(automation["user_id"], "ptc", str(ws_id))
 
 
 class AutomationExecutor:
@@ -242,7 +251,7 @@ class AutomationExecutor:
         automation: Dict[str, Any],
         thread_id: str,
         workspace_id: str,
-        agent_mode: str,
+        msg_type: str,
     ) -> None:
         """Pre-create the run's thread titled "<automation name> — <date>".
 
@@ -264,7 +273,7 @@ class AutomationExecutor:
                 conversation_thread_id=thread_id,
                 workspace_id=workspace_id,
                 current_status="completed",
-                msg_type=agent_mode,
+                msg_type=msg_type,
                 thread_index=None,
                 title=f"{name} — {run_date}"[:255],
                 metadata={
@@ -278,7 +287,7 @@ class AutomationExecutor:
             logger.warning(f"[AUTOMATION_EXEC] Thread pre-create failed: {e}")
 
     async def _resolve_thread(
-        self, automation: Dict[str, Any], workspace_id: str
+        self, automation: Dict[str, Any], workspace_id: str, runtime: str
     ) -> str:
         """The pinned thread under 'continue', else a new titled one, which
         'continue' pins when it has none yet."""
@@ -292,7 +301,7 @@ class AutomationExecutor:
                 conversation_thread_id=thread_id,
             )
         await self._precreate_titled_thread(
-            automation, thread_id, workspace_id, automation["agent_mode"]
+            automation, thread_id, workspace_id, runtime
         )
         return thread_id
 
@@ -531,7 +540,7 @@ class AutomationExecutor:
             user_id = automation["user_id"]
             instruction = automation["instruction"]
             request = ChatRequest(
-                agent_mode=firing.agent_mode,
+                agent_mode=firing.route.agent,
                 workspace_id=firing.workspace_id,
                 messages=[ChatMessage(role="user", content=instruction)],
                 llm_model=automation.get("llm_model"),
@@ -560,10 +569,15 @@ class AutomationExecutor:
                     "automation_id": str(automation["automation_id"]),
                 },
             )
-            if firing.agent_mode == "flash":
-                turn = astream_flash_workflow(**turn_args)
+            if firing.route.agent == "flash":
+                turn = astream_flash_workflow(
+                    **turn_args, flash_workspace=firing.route.flash_workspace
+                )
             else:
-                turn = astream_ptc_workflow(**turn_args, workspace_id=firing.workspace_id)
+                turn = astream_ptc_workflow(
+                    **turn_args,
+                    workspace_id=firing.workspace_id,
+                )
 
             # Drain the async generator: no HTTP client to consume SSE
             event_count = 0
@@ -670,9 +684,9 @@ class AutomationExecutor:
             await enforce_credit_limit(user_id, byok=has_cred)
 
             # ─── Resolve workspace + thread ───────────────────────
-            firing.workspace_id = await _resolve_workspace(firing.automation)
+            firing.route = await _resolve_route(firing.automation)
             firing.thread_id = await self._resolve_thread(
-                firing.automation, firing.workspace_id
+                firing.automation, firing.workspace_id, firing.route.agent
             )
             # The thread exists from here on, so record it on the run now: a
             # live run can then be opened and watched while it streams, not

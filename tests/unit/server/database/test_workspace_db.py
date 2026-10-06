@@ -62,7 +62,17 @@ def selection():
 
 
 @pytest.fixture
-def ws_mock_db(mock_connection, selection):
+def fold():
+    """The fold of a former flash row into Home, which every Home resolve
+    awaits; its SQL is pinned against a real Postgres in
+    tests/integration/test_home_fold_db.py."""
+    fold = AsyncMock(return_value=[])
+    with patch("src.server.database.workspace.fold_former_homes", new=fold):
+        yield fold
+
+
+@pytest.fixture
+def ws_mock_db(mock_connection, selection, fold):
     """Patch get_db_connection where the workspace module and its folder allocation import it."""
 
     @asynccontextmanager
@@ -175,26 +185,39 @@ async def test_a_first_flash_turn_upserts_and_starts_the_selection_once(
 
 
 @pytest.mark.asyncio
-async def test_a_flash_id_another_account_holds_is_never_handed_back(
-    ws_mock_db, mock_cursor, selection
+async def test_every_resolve_folds_former_rows_into_home(
+    ws_mock_db, mock_cursor, fold
 ):
-    """A user id migration leaves the old id's flash row with the account it
-    became; that row is the one a turn would run in and Home would bind."""
+    """An account merge leaves the merged account's flash row beside Home, which
+    the account would list as a second All workspaces entry. Whether there is
+    one is the fold's own read, so a first resolve that inserts Home folds too."""
     from src.server.database.home_workspace import get_flash_workspace_id
-    from src.server.database.workspace import (
-        FlashWorkspaceTaken,
-        get_or_create_flash_workspace,
-    )
+    from src.server.database.workspace import get_or_create_flash_workspace
 
-    mock_cursor.fetchone.side_effect = [None, None]
-    with pytest.raises(FlashWorkspaceTaken):
-        await get_or_create_flash_workspace("user-1")
+    home_id = get_flash_workspace_id("user-1")
+    row = _workspace_row(workspace_id=home_id, name="Flash", status="flash")
+    mock_cursor.fetchone.return_value = row
+    await get_or_create_flash_workspace("user-1", conn=ws_mock_db)
+    fold.assert_awaited_once_with("user-1", home_id, ws_mock_db)
 
-    touch, upsert = (call.args for call in mock_cursor.execute.call_args_list)
-    assert "AND user_id = %s" in touch[0]
-    assert touch[1] == (get_flash_workspace_id("user-1"), "user-1")
-    assert "WHERE workspaces.user_id = EXCLUDED.user_id" in upsert[0]
-    selection.start.assert_not_awaited()
+    mock_cursor.fetchone.side_effect = [None, {**row, "inserted": True}]
+    await get_or_create_flash_workspace("user-1")
+    assert fold.await_args_list[-1].args == ("user-1", home_id, None)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fold_still_resolves_home(ws_mock_db, mock_cursor, fold):
+    """Every turn outside a workspace resolves Home here; the fold runs again
+    on the next resolve, so its failure must not take the turn with it."""
+    from src.server.database.workspace import get_or_create_flash_workspace
+
+    row = _workspace_row(name="Flash")
+    mock_cursor.fetchone.return_value = row
+    fold.side_effect = RuntimeError("unique violation")
+
+    result = await get_or_create_flash_workspace("user-1")
+
+    assert result["workspace_id"] == row["workspace_id"]
 
 
 @pytest.mark.asyncio

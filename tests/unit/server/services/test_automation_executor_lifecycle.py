@@ -126,7 +126,11 @@ def _firing(turns, *, runs=None, busy=(), fresh=None, is_byok=(False,)):
         patch(f"{_MOD}.has_any_oauth_token", new=AsyncMock(return_value=False)),
         patch(f"{_MOD}.enforce_credit_limit", new=fx.credit),
         patch(
-            f"{_MOD}.get_or_create_flash_workspace",
+            "src.server.services.turn_runtime.home_enabled",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "src.server.database.workspace.get_or_create_flash_workspace",
             new=AsyncMock(return_value={"workspace_id": "ws-1"}),
         ),
         patch(f"{_MOD}.WebhookClient", return_value=MagicMock(fire_event=fx.started)),
