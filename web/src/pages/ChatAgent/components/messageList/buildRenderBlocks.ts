@@ -4,6 +4,7 @@ import { normalizeSubagentText } from './normalizeSubagentText';
 import { isUserDataReadmePath } from '../../utils/agentPaths';
 import { MIN_LIVE_EXPOSURE_MS } from './liveZoneTiming';
 import { inChunkOrder } from '../../session/stream/textChunks';
+import { preapprovedCardOf, type PreapprovedCard } from '../../utils/preapprovedCards';
 import type { ContentSegmentRecord, ToolCallProcessRecord } from './types';
 import type { ActivityItem, ToolActivityItem, LiveState, ToolCallData, ToolCallResultData } from './activityTypes';
 
@@ -50,6 +51,9 @@ export interface CreateWorkspaceRenderBlock {
   type: 'create_workspace';
   key: string;
   segment: ContentSegmentRecord;
+  /** Set for a workspace created without asking; otherwise the card is the
+   *  proposal under `segment.proposalId`. */
+  proposal?: Record<string, unknown>;
 }
 export interface StartQuestionRenderBlock {
   type: 'start_question';
@@ -60,6 +64,9 @@ export interface PTCAgentRenderBlock {
   type: 'ptc_agent';
   key: string;
   segment: ContentSegmentRecord;
+  /** Set for a hand-off made without asking; otherwise the card is the
+   *  proposal under `segment.proposalId`. */
+  proposal?: Record<string, unknown>;
 }
 export interface SecretaryActionRenderBlock {
   type: 'delete_workspace' | 'stop_workspace' | 'delete_thread';
@@ -172,6 +179,9 @@ export function buildRenderBlocks(
     now?: number;
   },
 ): { blocks: RenderBlock[]; nextExpiry: number | null; pinnedLive: boolean; pinnedSettledAt: number | null } {
+    // A hidden secretary call the user approved in advance has no proposal
+    // segment, so it draws its card where the call sits.
+    const preapproved = new Map<string, PreapprovedCard>();
     const filtered = groupedSegments.filter((s) => {
         if (s.type === 'text' || s.type === 'reasoning') return true;
         if (s.type === 'notification') return true;
@@ -188,9 +198,14 @@ export function buildRenderBlocks(
         if (s.type === 'tool_approval') return true;
         if (s.type === 'html_widget') return true;
         if (s.type === 'tool_call') {
-          const toolName = toolCallProcesses[s.toolCallId!]?.toolName as string | undefined;
-          if (HIDDEN_TOOL_CALL_NAMES.has(toolName || '')) return false;
-          const args = (toolCallProcesses[s.toolCallId!]?.toolCall as ToolCallData | undefined)?.args;
+          const proc = toolCallProcesses[s.toolCallId!];
+          const toolName = proc?.toolName as string | undefined;
+          const args = (proc?.toolCall as ToolCallData | undefined)?.args;
+          if (HIDDEN_TOOL_CALL_NAMES.has(toolName || '')) {
+            const card = preapprovedCardOf(proc);
+            if (card) preapproved.set(s.toolCallId!, card);
+            return card !== null;
+          }
           const path = args?.file_path || args?.filePath || args?.path || args?.filename;
           if (toolName === 'Read' && typeof path === 'string' && isUserDataReadmePath(path)) return false;
           return true;
@@ -276,6 +291,13 @@ export function buildRenderBlocks(
         } else if (seg.type === 'tool_call') {
           const proc = toolCallProcesses[seg.toolCallId!];
           if (!proc) continue;
+          const card = preapproved.get(seg.toolCallId!);
+          if (card) {
+            flushActivity();
+            const key = `${card.type === 'ptc_agent' ? 'ptc-agent' : 'workspace'}-${seg.toolCallId}`;
+            blocks.push({ type: card.type, key, segment: seg, proposal: card.proposal });
+            continue;
+          }
 
           const createdAt = proc._createdAt as number | undefined;
           const age = createdAt ? now - createdAt : Infinity;

@@ -369,7 +369,7 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
 
         if (block.type === 'create_workspace') {
           if (readOnly) return null;
-          const wd = workspaceProposals[(block as CreateWorkspaceRenderBlock).segment.proposalId!];
+          const wd = (block as CreateWorkspaceRenderBlock).proposal ?? workspaceProposals[(block as CreateWorkspaceRenderBlock).segment.proposalId!];
           if (!wd) return null;
           return (
             <CreateWorkspaceCard
@@ -397,7 +397,7 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
 
         if (block.type === 'ptc_agent') {
           if (readOnly) return null;
-          const pad = ptcAgentProposals[(block as PTCAgentRenderBlock).segment.proposalId!];
+          const pad = (block as PTCAgentRenderBlock).proposal ?? ptcAgentProposals[(block as PTCAgentRenderBlock).segment.proposalId!];
           if (!pad) return null;
           return (
             <PTCAgentCard

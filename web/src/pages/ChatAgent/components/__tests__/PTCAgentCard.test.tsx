@@ -38,7 +38,7 @@ const APPROVED = {
 };
 
 /** Render an approved card inside the batched-liveness provider. */
-function renderApproved(proposalData = APPROVED) {
+function renderApproved(proposalData: React.ComponentProps<typeof PTCAgentCard>['proposalData'] = APPROVED) {
   return renderWithProviders(
     <DispatchStatusProvider>
       <PTCAgentCard proposalData={proposalData} onApprove={vi.fn()} onReject={vi.fn()} />
@@ -62,7 +62,7 @@ describe('PTCAgentCard — pending approval', () => {
     expect(screen.getByText('Semiconductors')).toBeInTheDocument();
     expect(screen.getByText('chat.ptcCard.awaitingApproval')).toBeInTheDocument();
     expect(screen.getByText('Compare NVDA vs AMD')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'chat.ptcCard.approve' })).toBeInTheDocument();
     expect(mockLiveness).not.toHaveBeenCalled();
   });
 
@@ -93,7 +93,7 @@ describe('PTCAgentCard — pending approval', () => {
 
     // Toggle report-back off, then approve.
     fireEvent.click(screen.getByRole('switch'));
-    fireEvent.click(screen.getByRole('button', { name: /approve/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'chat.ptcCard.approve' }));
     expect(onApprove).toHaveBeenCalledWith({ report_back: false });
   });
 });
@@ -115,6 +115,16 @@ describe('PTCAgentCard — live dispatch status', () => {
     expect(screen.getByText('chat.ptcCard.ctaOpenThread')).toBeInTheDocument();
   });
 
+  it('times a run it opened mid-way from the run start, not from mount', async () => {
+    const startedAt = new Date(Date.now() - 95_000).toISOString();
+    mockLiveness.mockResolvedValue([
+      { thread_id: 'thread-123', status: 'running', run_id: 'run-1', can_reconnect: true, run_started_at: startedAt },
+    ]);
+    renderApproved();
+
+    await waitFor(() => expect(screen.getByText(/^1:3\d$/)).toBeInTheDocument());
+  });
+
   // Backend WorkflowStatus → pill / hint / CTA row (a missing liveness row means
   // the run hasn't registered yet → 'starting').
   it.each<[string | null, string, string | null, string]>([
@@ -132,6 +142,41 @@ describe('PTCAgentCard — live dispatch status', () => {
     await waitFor(() => expect(screen.getByText(`chat.ptcCard.${pill}`)).toBeInTheDocument());
     if (hint) expect(screen.getByText(`chat.ptcCard.${hint}`)).toBeInTheDocument();
     expect(screen.getByText(`chat.ptcCard.${cta}`)).toBeInTheDocument();
+  });
+});
+
+describe('PTCAgentCard: a dispatch that failed after approval', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('reads as failed, not starting, when no thread was started', () => {
+    renderApproved({ ...APPROVED, thread_id: undefined, dispatch_failed: true });
+
+    expect(screen.getByText('chat.ptcCard.statusFailed')).toBeInTheDocument();
+    expect(screen.getByText('chat.ptcCard.hintNotStarted')).toBeInTheDocument();
+    expect(screen.queryByText('chat.ptcCard.statusStarting')).toBeNull();
+    // Nothing to open or poll.
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(mockLiveness).not.toHaveBeenCalled();
+  });
+
+  it('reads as failed while the thread an unknown outcome named shows no run', async () => {
+    mockLiveness.mockResolvedValue([]);
+    renderApproved({ ...APPROVED, dispatch_failed: true });
+
+    await waitFor(() => expect(mockLiveness).toHaveBeenCalledWith(['thread-123']));
+    expect(screen.getByText('chat.ptcCard.statusFailed')).toBeInTheDocument();
+    expect(screen.getByText('chat.ptcCard.hintNotStarted')).toBeInTheDocument();
+    expect(screen.getByText('chat.ptcCard.ctaViewThread')).toBeInTheDocument();
+  });
+
+  it('follows the run once it turns up on that thread', async () => {
+    mockLiveness.mockResolvedValue([
+      { thread_id: 'thread-123', status: 'running', run_id: 'run-1', can_reconnect: true },
+    ]);
+    renderApproved({ ...APPROVED, dispatch_failed: true });
+
+    await waitFor(() => expect(screen.getByText('chat.ptcCard.statusWorking')).toBeInTheDocument());
+    expect(screen.queryByText('chat.ptcCard.statusFailed')).toBeNull();
   });
 });
 

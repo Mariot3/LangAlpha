@@ -14,6 +14,7 @@ import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import ConfirmDialog from '@/pages/Dashboard/components/ConfirmDialog';
 import { useOnboarding } from '@/pages/Onboarding';
 import type { Preferences } from './types';
+import { AutoApproveSettings } from './AutoApproveSettings';
 
 /** Preferences tab: investment-preference summary, output format, onboarding
  * replay/reset entry points, and the reset-preferences flow. */
@@ -257,6 +258,8 @@ export function PreferencesTab() {
           </div>
         );
       })()}
+
+      <AutoApproveSettings />
 
       {/* Column until there is room for a row. The two actions are a fixed
           ~259px whatever the viewport, so side-by-side on a phone leaves the

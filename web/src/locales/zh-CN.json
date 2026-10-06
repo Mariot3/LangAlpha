@@ -417,7 +417,13 @@
       "byok": "BYOK",
       "oauth": "OAuth",
       "locked": "未解锁"
-    }
+    },
+    "approvals": "审批",
+    "autoApproveHandoffs": "交给分析师前不再询问",
+    "autoApproveHandoffsDesc": "任务直接交给工作区的分析师，不再弹出审批卡片。每次交接仍会显示为卡片，方便你查看进度或停止运行。",
+    "autoApproveHandoffsDescPtc": "任务直接分派到 PTC 工作区，不再弹出审批卡片。每次交接仍会显示为卡片，方便你查看进度或停止运行。",
+    "autoApproveWorkspaceCreation": "创建工作区前不再询问",
+    "autoApproveWorkspaceCreationDesc": "为新任务创建工作区时不再弹出审批卡片。"
   },
   "dashboard": {
     "title": "LangAlpha",
@@ -1665,10 +1671,14 @@
       "hintProvisioning": "正在配置沙箱…",
       "hintWorking": "正在后台运行",
       "hintFailed": "运行未完成便已停止",
+      "hintNotStarted": "运行未能启动",
       "hintStopped": "运行已停止",
       "ctaOpenThread": "打开对话",
       "ctaAnswerContinue": "回答并继续",
-      "ctaViewThread": "查看对话"
+      "ctaViewThread": "查看对话",
+      "alwaysApprove": "始终允许",
+      "alwaysApproveHint": "这次及以后交给分析师的任务都不再询问，可在设置中关闭。",
+      "alwaysApproveHintPtc": "这次及以后分派到 PTC 工作区的任务都不再询问，可在设置中关闭。"
     },
     "marketWatch": {
       "watching": "正在监控 {{symbols}}",
@@ -1867,6 +1877,15 @@
       "hoursMinutes": "{{hours}} 小时 {{minutes}} 分",
       "minutes": "{{minutes}} 分钟",
       "hours": "{{hours}} 小时"
+    },
+    "createWorkspaceCard": {
+      "title": "创建工作区",
+      "create": "创建",
+      "decline": "拒绝",
+      "created": "已创建工作区：{{name}}",
+      "declined": "已拒绝创建工作区",
+      "alwaysApprove": "始终允许",
+      "alwaysApproveHint": "这次及以后创建工作区都不再询问，可在设置中关闭。"
     }
   },
   "context": {

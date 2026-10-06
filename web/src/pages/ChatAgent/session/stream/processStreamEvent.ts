@@ -18,7 +18,7 @@ import {
 import { computeSteeringBoundary, keepSegmentsThrough, shouldSkipSteeringRollback } from './steeringRollback';
 import {
   buildModelFallbackSegment, appendNotificationSegmentOnce,
-  isOnboardingRelatedToolSuccess, mapToolCallIdToAgentId,
+  isOnboardingRelatedToolSuccess, isWorkspaceChangingToolSuccess, mapToolCallIdToAgentId,
 } from '../../hooks/utils/messageFinalizers';
 import { handleContextWindowEvent } from '../../hooks/utils/contextWindowEvent';
 import {
@@ -34,11 +34,12 @@ import {
 import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
 import type {
-  SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelStatus,
+  SSEEvent, StreamProcessorRefs, ModelStatus,
 } from '../types';
-import { PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP } from '../interrupts/buckets';
+import { dispatchResultFields, setCardFields, settleProposalFromResult } from '../interrupts/buckets';
 import { projectLiveInterrupt } from '../interrupts/fromLiveEvent';
 import type { StreamRuntime } from '../runtime';
+import { preapprovedReportBack } from '../../utils/preapprovedCards';
 
 export interface StreamRouterDeps {
   /** Fold a model-fallback event into the fallback banner state. */
@@ -52,6 +53,10 @@ export interface StreamRouterDeps {
   /** Re-read the workspace row, whose folder a run's sandbox acquisition may
    * have moved; null where a run acquires none (flash). */
   refreshWorkspaceFolder: (() => void) | null;
+  /** Watch this thread for a hand-off's report-back. */
+  armReportBack: () => void;
+  /** Re-read the user's workspaces after an agent changed one. */
+  refreshWorkspaces: () => void;
 }
 
 /**
@@ -924,44 +929,13 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
     } else if (eventType === 'tool_call_result') {
       // A tool result means the turn is producing output — drop the pill.
       deps.clearModelStatus();
-      // Check if this resolves an unresolved interrupt from history replay (FIFO array matching)
-      const unresolvedList = refs.unresolvedHistoryInterruptRef?.current as HistoryInterruptInfo[] | undefined;
-      if (unresolvedList && unresolvedList.length > 0 && typeof event.content === 'string') {
-        const content = event.content as string;
-
-        // Try create_workspace / start_question / ptc_agent / secretary actions
-        const matchIdx = unresolvedList.findIndex((u: HistoryInterruptInfo) => PROPOSAL_INTERRUPT_TYPES.has(u.type));
-        if (matchIdx !== -1) {
-          const matched = unresolvedList[matchIdx];
-          const dataKey = PROPOSAL_DATA_KEY_MAP[matched.type] || 'questionProposals';
-          let resolvedStatus = 'approved';
-          let resultPayload: Record<string, unknown> | null = null;
-          if (content.startsWith('User declined')) {
-            resolvedStatus = 'rejected';
-          } else {
-            try { const p = JSON.parse(content); if (p?.success === false) resolvedStatus = 'rejected'; resultPayload = p; } catch { /* not JSON */ }
-          }
-          const proposalId = matched.proposalId!;
-          const extraFields: Record<string, unknown> = {};
-          if (matched.type === 'ptc_agent' && resultPayload) {
-            if (resultPayload.thread_id) extraFields.thread_id = resultPayload.thread_id;
-            if (resultPayload.workspace_id) extraFields.workspace_id = resultPayload.workspace_id;
-          }
-          rt.setMessages((prev) =>
-            updateMessage(prev,matched.assistantMessageId, (m) => { if (m.role !== 'assistant') return m; const msg = m as AssistantMessage; return {
-              ...msg,
-              [dataKey]: {
-                ...((msg as unknown as Record<string, Record<string, unknown>>)[dataKey] || {}),
-                [proposalId]: {
-                  ...((msg as unknown as Record<string, Record<string, Record<string, unknown>>>)[dataKey]?.[proposalId] || {}),
-                  status: resolvedStatus,
-                  ...extraFields,
-                },
-              },
-            }; })
-          );
-          unresolvedList.splice(matchIdx, 1);
-        }
+      // Settle a card the history replay left pending, from the result of the
+      // run that answered it.
+      const unresolvedList = refs.unresolvedHistoryInterruptRef?.current;
+      if (unresolvedList && typeof event.content === 'string') {
+        settleProposalFromResult(
+          unresolvedList, event.tool_call_id as string | undefined, event.content, rt.setMessages,
+        );
       }
 
       const toolCallId = event.tool_call_id as string;
@@ -986,6 +960,16 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
         setMessages: setMessagesForHandlers,
       });
 
+      // A card's approve click arms the report-back watch; a hand-off the user
+      // approved in advance had no click, so its result arms it. A reconnect's
+      // backlog too: it replays a run that is still live, and no report-back
+      // can run on this thread while it is, so this one is still owed. Arming
+      // is idempotent, and an in-page reconnect after a network drop does not
+      // re-read /status, so this may be the only arm.
+      if (preapprovedReportBack(event.content)) deps.armReportBack();
+
+      if (isWorkspaceChangingToolSuccess(event.content)) deps.refreshWorkspaces();
+
       // When onboarding-related tools succeed, sync onboarding_completed via PUT
       if (rt.onOnboardingRelatedToolComplete && isOnboardingRelatedToolSuccess(event.content)) {
         rt.onOnboardingRelatedToolComplete();
@@ -1001,38 +985,17 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
         } catch { /* not JSON, ignore */ }
       }
 
-      // Update ptcAgentProposals with thread_id/workspace_id from tool result.
-      // After HITL resume, the tool_call_result arrives on a NEW assistant message
-      // while the proposals live on the OLD one (from the interrupt turn).
+      // Write the dispatch's outcome onto the approved card: the thread it
+      // opens, or that it failed. After HITL resume, the tool_call_result
+      // arrives on a NEW assistant message while the proposals live on the OLD
+      // one (from the interrupt turn), so setCardFields searches every bubble.
       // Match by tool_call_id for exact correlation (safe under concurrent dispatches).
       if (rt.pendingPTCBackfillRef.current.size > 0 && typeof event.content === 'string') {
         const backfillPid = toolCallId ? rt.pendingPTCBackfillRef.current.get(toolCallId) : undefined;
         if (backfillPid) {
-          try {
-            const parsed = JSON.parse(event.content);
-            if (parsed?.success && parsed?.thread_id && parsed?.workspace_id) {
-              rt.pendingPTCBackfillRef.current.delete(toolCallId);
-              rt.setMessages((prev) =>
-                prev.map((m) => {
-                  if (m.role !== 'assistant') return m;
-                  const msg = m as AssistantMessage;
-                  const proposals = msg.ptcAgentProposals;
-                  if (!proposals?.[backfillPid]) return m;
-                  return {
-                    ...msg,
-                    ptcAgentProposals: {
-                      ...proposals,
-                      [backfillPid]: {
-                        ...proposals[backfillPid],
-                        thread_id: parsed.thread_id,
-                        workspace_id: parsed.workspace_id,
-                      },
-                    },
-                  };
-                })
-              );
-            }
-          } catch { /* not JSON, ignore */ }
+          rt.pendingPTCBackfillRef.current.delete(toolCallId);
+          const fields = dispatchResultFields(event.content);
+          rt.setMessages((prev) => setCardFields(prev, 'ptcAgentProposals', backfillPid, fields));
         }
       }
     } else if (eventType === 'interrupt') {

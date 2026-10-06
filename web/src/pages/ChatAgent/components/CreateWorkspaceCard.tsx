@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from '@/lib/framer';
 import { FolderPlus, Check, X, ChevronRight } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
+import { AUTO_APPROVE, useApproveAlways } from '@/hooks/useAutoApprove';
 
 interface ProposalData {
   workspace_name: string;
@@ -24,7 +26,9 @@ interface CreateWorkspaceCardProps {
  *   rejected - collapsed "Workspace creation declined"
  */
 function CreateWorkspaceCard({ proposalData, onApprove, onReject }: CreateWorkspaceCardProps) {
+  const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(true);
+  const { approveAlways, saving } = useApproveAlways(AUTO_APPROVE.workspaceCreation);
 
   if (!proposalData) return null;
 
@@ -58,7 +62,9 @@ function CreateWorkspaceCard({ proposalData, onApprove, onReject }: CreateWorksp
             className="text-sm"
             style={{ color: isApproved ? 'var(--color-text-tertiary)' : 'var(--color-text-tertiary)' }}
           >
-            {isApproved ? `Workspace created: ${workspace_name}` : 'Workspace creation declined'}
+            {isApproved
+              ? t('chat.createWorkspaceCard.created', { name: workspace_name })
+              : t('chat.createWorkspaceCard.declined')}
           </span>
         </button>
 
@@ -107,7 +113,7 @@ function CreateWorkspaceCard({ proposalData, onApprove, onReject }: CreateWorksp
       <div className="flex items-center gap-2 pb-3">
         <FolderPlus className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
         <span className="text-[0.9375rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>
-          Create Workspace
+          {t('chat.createWorkspaceCard.title')}
         </span>
         <Loader
          
@@ -135,6 +141,7 @@ function CreateWorkspaceCard({ proposalData, onApprove, onReject }: CreateWorksp
       {/* Actions */}
       <div className="pt-3 flex items-center gap-2">
         <motion.button
+          disabled={saving}
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); onApprove?.(); }}
           className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-md font-medium transition-colors hover:brightness-110"
           style={{ backgroundColor: 'var(--color-btn-primary-bg)', color: 'var(--color-btn-primary-text)' }}
@@ -142,9 +149,21 @@ function CreateWorkspaceCard({ proposalData, onApprove, onReject }: CreateWorksp
           whileTap={{ scale: 0.98 }}
         >
           <Check className="h-3.5 w-3.5 stroke-[2.5]" />
-          Create
+          {t('chat.createWorkspaceCard.create')}
         </motion.button>
         <motion.button
+          disabled={saving}
+          title={t('chat.createWorkspaceCard.alwaysApproveHint')}
+          onClick={(e: React.MouseEvent) => { e.stopPropagation(); approveAlways(() => onApprove?.()); }}
+          className="text-sm px-4 py-2 rounded-md font-medium transition-colors hover:bg-(--color-bg-hover)"
+          style={{ border: '1px solid var(--color-border-default)', color: 'var(--color-text-secondary)' }}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+        >
+          {t('chat.createWorkspaceCard.alwaysApprove')}
+        </motion.button>
+        <motion.button
+          disabled={saving}
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); onReject?.(); }}
           className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-md font-medium transition-colors"
           style={{
@@ -163,7 +182,7 @@ function CreateWorkspaceCard({ proposalData, onApprove, onReject }: CreateWorksp
           whileTap={{ scale: 0.98 }}
         >
           <X className="h-3.5 w-3.5" />
-          Decline
+          {t('chat.createWorkspaceCard.decline')}
         </motion.button>
       </div>
     </motion.div>

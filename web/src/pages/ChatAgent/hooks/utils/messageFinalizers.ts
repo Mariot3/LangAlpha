@@ -99,6 +99,22 @@ function isOnboardingRelatedToolSuccess(resultContent: unknown): boolean {
   return !!(parsed.risk_preference || parsed.watchlist_item || parsed.portfolio_holding);
 }
 
+/**
+ * Whether a tool result changed the user's workspaces: an agent created one,
+ * or handed work to one, which may create it and starts its computer. Both
+ * answer with the workspace's id. The user's own changes refresh the cached
+ * lists in their mutation hooks; this is the agent's equivalent.
+ */
+function isWorkspaceChangingToolSuccess(resultContent: unknown): boolean {
+  if (typeof resultContent !== 'string' || !resultContent.startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(resultContent);
+    return parsed?.success === true && typeof parsed.workspace_id === 'string';
+  } catch {
+    return false;
+  }
+}
+
 
 /**
  * Marks incomplete todos as 'stale' in todoListProcesses of assistant messages.
@@ -180,4 +196,4 @@ export function mapToolCallIdToAgentId(
   return rest;
 }
 
-export { collectRenderedInterruptIds, buildModelFallbackSegment, appendNotificationSegmentOnce, isOnboardingRelatedToolSuccess };
+export { collectRenderedInterruptIds, buildModelFallbackSegment, appendNotificationSegmentOnce, isOnboardingRelatedToolSuccess, isWorkspaceChangingToolSuccess };

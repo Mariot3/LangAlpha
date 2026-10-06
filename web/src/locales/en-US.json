@@ -419,7 +419,13 @@
       "byok": "BYOK",
       "oauth": "OAuth",
       "locked": "locked"
-    }
+    },
+    "approvals": "Approvals",
+    "autoApproveHandoffs": "Hand off work without asking",
+    "autoApproveHandoffsDesc": "Tasks go to a workspace's Analyst without an approval card. Each hand-off still shows as a card you can follow or stop.",
+    "autoApproveHandoffsDescPtc": "Tasks go to a PTC workspace without an approval card. Each hand-off still shows as a card you can follow or stop.",
+    "autoApproveWorkspaceCreation": "Create workspaces without asking",
+    "autoApproveWorkspaceCreationDesc": "A workspace for new work is created without an approval card."
   },
   "dashboard": {
     "title": "LangAlpha",
@@ -1669,10 +1675,14 @@
       "hintProvisioning": "Provisioning sandbox…",
       "hintWorking": "Running in the background",
       "hintFailed": "Run stopped before finishing",
+      "hintNotStarted": "Run couldn't start",
       "hintStopped": "Run was stopped",
       "ctaOpenThread": "Open thread",
       "ctaAnswerContinue": "Answer & continue",
-      "ctaViewThread": "View thread"
+      "ctaViewThread": "View thread",
+      "alwaysApprove": "Always allow",
+      "alwaysApproveHint": "Hand this and later work to Analysts without asking. Turn it off in Settings.",
+      "alwaysApproveHintPtc": "Hand this and later tasks to PTC workspaces without asking. Turn it off in Settings."
     },
     "marketWatch": {
       "watching": "Watching {{symbols}}",
@@ -1871,6 +1881,15 @@
       "hoursMinutes": "{{hours}}h {{minutes}}m",
       "minutes": "{{minutes}}m",
       "hours": "{{hours}}h"
+    },
+    "createWorkspaceCard": {
+      "title": "Create workspace",
+      "create": "Create",
+      "decline": "Decline",
+      "created": "Workspace created: {{name}}",
+      "declined": "Workspace creation declined",
+      "alwaysApprove": "Always allow",
+      "alwaysApproveHint": "Create this and later workspaces without asking. Turn it off in Settings."
     }
   },
   "context": {
