@@ -64,10 +64,13 @@ function FileBody({ code, path, frameBase, onDownload, downloading }: {
   }, []);
   // A grid or a paged document uses the width; prose and code read in a column.
   const wide = bodyMode(path) === 'buffer' || getFileExtension(path) === 'csv';
+  // A PDF scrolls inside its own viewer, which needs the page's height for it:
+  // left to grow with its pages, it would draw every one of them at once.
+  const fill = getFileExtension(path) === 'pdf';
 
   return (
     <div className="share-scroll">
-      <div className={cn(!wide && 'share-document')}>
+      <div className={cn(!wide && 'share-document', fill && 'share-fill')}>
         <WorkspaceProvider workspaceId={null} downloadFile={imageDownloader}>
           <FileViewer
             path={path}

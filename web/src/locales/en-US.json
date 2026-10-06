@@ -1958,6 +1958,17 @@
     "addOffer": "Add <code>{{locator}}</code> to context",
     "add": "Add"
   },
+  "pdfViewer": {
+    "loading": "Loading PDF…",
+    "rendering": "Rendering page…",
+    "prev": "Prev",
+    "next": "Next",
+    "zoomOut": "Zoom out",
+    "zoomIn": "Zoom in",
+    "fit": "Fit",
+    "fitWidth": "Fit pages to the panel width",
+    "pageNumber": "Page number"
+  },
   "filePanel": {
     "tabs": {
       "files": "Workspace",

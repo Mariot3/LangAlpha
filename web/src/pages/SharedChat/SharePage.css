@@ -84,6 +84,10 @@ html.desktop-mac .share-page {
   overflow: auto;
 }
 
+.share-fill {
+  height: 100%;
+}
+
 /* Prose and code read in a column. The viewer inside pads itself by 1rem. */
 .share-document {
   max-width: 56rem;
