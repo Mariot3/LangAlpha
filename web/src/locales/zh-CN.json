@@ -1954,6 +1954,21 @@
     "addOffer": "将 <code>{{locator}}</code> 加入上下文",
     "add": "添加"
   },
+  "pdfViewer": {
+    "loading": "正在加载 PDF…",
+    "rendering": "正在渲染页面…",
+    "prev": "上一页",
+    "next": "下一页",
+    "zoomOut": "缩小",
+    "zoomIn": "放大",
+    "fit": "适应宽度",
+    "fitWidth": "页面适应面板宽度",
+    "sidebar": "页面与目录",
+    "pages": "页面",
+    "contents": "目录",
+    "pageNumber": "页码",
+    "goToPage": "第 {{page}} 页"
+  },
   "filePanel": {
     "tabs": {
       "files": "工作区",

@@ -131,7 +131,11 @@ export function FileViewer(props: FileViewerProps): React.ReactElement {
   if (body?.mime === 'pdf') {
     return (
       <Suspense fallback={<DocumentLoadingFallback />}>
-        <DocumentErrorBoundary fallback={<DocumentErrorFallback onDownload={props.onDownloadInFallback} downloadState={props.downloadState} />}>
+        <DocumentErrorBoundary
+          // A newer copy of the same file keeps the reader's place; another
+          // file starts over, and a failed one does not fail the next.
+          key={path}
+          fallback={<DocumentErrorFallback onDownload={props.onDownloadInFallback} downloadState={props.downloadState} />}>
           <PdfViewer data={body.buffer!} focusPage={focus.focusPage} focusSeq={focus.seq} onPageCount={props.onPageCount} />
         </DocumentErrorBoundary>
       </Suspense>
