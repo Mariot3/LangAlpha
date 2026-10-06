@@ -139,8 +139,8 @@ class _EscInterruptWatcher:
             logger.debug(f"Soft interrupt API call failed: {e}")
 
 
-async def _prompt_for_plan_approval(action_request: dict) -> tuple[dict, str | None]:
-    """Show plan and prompt user for approval with arrow key navigation.
+async def _prompt_for_approval(action_request: dict) -> tuple[dict, str | None]:
+    """Show the pending action and prompt for approval with arrow key navigation.
 
     Args:
         action_request: The action request from HITL interrupt
@@ -161,13 +161,13 @@ async def _prompt_for_plan_approval(action_request: dict) -> tuple[dict, str | N
 
     description = action_request.get("description", "No description available")
 
-    # Display the plan for review with markdown rendering
+    # Display the action for review with markdown rendering
     console.print()
     md_content = Markdown(description)
     console.print(
         Panel(
             md_content,
-            title="[bold cyan]Plan Review[/bold cyan]",
+            title="[bold cyan]Approval Required[/bold cyan]",
             border_style="cyan",
             box=box.ROUNDED,
             padding=(0, 1),
@@ -221,7 +221,7 @@ async def _prompt_for_plan_approval(action_request: dict) -> tuple[dict, str | N
         return {"type": "reject"}, "User cancelled"
     if result == 0:  # Accept
         console.print()
-        console.print("[green]Plan approved. Starting execution...[/green]")
+        console.print("[green]Approved. Continuing...[/green]")
         return {"type": "approve"}, None
     # Reject with feedback
     console.print()
@@ -252,7 +252,6 @@ TOOL_ICONS = {
     "Task": "🤖",
     "TaskOutput": "📤",
     "TodoWrite": "📋",
-    "SubmitPlan": "📋",
 }
 
 
@@ -342,7 +341,6 @@ async def execute_task(
             message=user_input,
             thread_id=session_state.thread_id,
             hitl_response=hitl_response,
-            plan_mode=getattr(session_state, "plan_mode", False),
             llm_model=getattr(session_state, "llm_model", None),
             agent_mode="flash" if flash_mode else None,
             **stream_kwargs,
@@ -392,14 +390,14 @@ async def execute_task(
                 if getattr(session_state, "auto_approve", False):
                     decisions = [{"type": "approve"} for _ in action_requests]
                     console.print()
-                    console.print("[dim]Auto-approved plan[/dim]")
+                    console.print("[dim]Auto-approved[/dim]")
                 else:
                     # Prompt user for each action
                     decisions = []
                     esc_watcher.stop()
                     try:
                         for action_request in action_requests:
-                            decision, feedback = await _prompt_for_plan_approval(action_request)
+                            decision, feedback = await _prompt_for_approval(action_request)
                             if decision.get("type") == "reject" and feedback:
                                 decision["message"] = feedback
                             decisions.append(decision)

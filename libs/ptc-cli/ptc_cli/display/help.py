@@ -15,7 +15,6 @@ def show_help() -> None:
   ptc-agent --flash             Flash mode (no sandbox, external tools only)
   ptc-agent --agent NAME        Use named agent with separate memory
   ptc-agent --model NAME        Use specific LLM model
-  ptc-agent --plan-mode         Enable plan mode (agent submits plan first)
   ptc-agent --reconnect         Reconnect to latest workflow
   ptc-agent --reconnect ID      Reconnect to specific workflow
   ptc-agent --list-sessions     List available reconnection sessions
@@ -48,7 +47,6 @@ def show_help() -> None:
   Enter                         Submit input
   Esc+Enter / Alt+Enter         Insert newline
   Ctrl+E                        Open in external editor
-  Shift+Tab                     Toggle plan mode
   Esc (during streaming)        Soft-interrupt (background tasks continue)
   Ctrl+C                        Clear input / Interrupt / Exit (x3)
 

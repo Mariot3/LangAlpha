@@ -74,7 +74,6 @@ class SSEStreamClient:
 
         # Message accumulation
         self.current_message: Message = Message()
-        self.last_plan_data: Optional[Dict[str, Any]] = None
 
     async def close(self) -> None:
         """Close the HTTP client."""
@@ -413,7 +412,6 @@ class SSEStreamClient:
         message: str,
         thread_id: Optional[str] = None,
         hitl_response: Optional[Dict[str, Any]] = None,
-        plan_mode: bool = False,
         llm_model: Optional[str] = None,
         agent_mode: Optional[str] = None,
         **kwargs,
@@ -425,7 +423,6 @@ class SSEStreamClient:
             message: User message (can be empty for resume)
             thread_id: Thread identifier for conversation continuity
             hitl_response: HITL interrupt response (for resume)
-            plan_mode: Whether to enable plan mode (agent submits plan for approval)
             llm_model: LLM model name from models.json (e.g., 'minimax-m3')
             agent_mode: Agent mode ('flash' for Flash Agent, None for default)
             **kwargs: Additional request parameters
@@ -451,7 +448,6 @@ class SSEStreamClient:
 
         request_body = {
             "messages": [{"role": "user", "content": message}] if message else [],
-            "plan_mode": plan_mode,
         }
 
         # Add workspace_id only if not flash mode
@@ -702,7 +698,3 @@ class SSEStreamClient:
 
         # Accumulate message chunks
         self.current_message.merge_event(event_type, event_data)
-
-        # Capture plan data
-        if self.current_message.plan_data:
-            self.last_plan_data = self.current_message.plan_data

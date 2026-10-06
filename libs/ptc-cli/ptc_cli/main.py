@@ -170,11 +170,6 @@ def parse_args() -> argparse.Namespace:
         help="Create new workspace (don't reuse existing session)",
     )
     parser.add_argument(
-        "--plan-mode",
-        action="store_true",
-        help="Enable plan mode: agent must submit a plan for approval before execution",
-    )
-    parser.add_argument(
         "--reconnect",
         nargs="?",
         const=True,
@@ -236,10 +231,6 @@ async def chat_loop(
 
     if session_state.llm_model:
         console.print(f"  [cyan]Model: {session_state.llm_model}[/cyan]")
-        console.print()
-
-    if session_state.plan_mode:
-        console.print("  [cyan]Plan Mode: ON[/cyan] [dim](agent will submit plan for approval)[/dim]")
         console.print()
 
     if session_state.auto_approve:
@@ -560,7 +551,6 @@ def run_cli() -> None:
                 auto_approve=args.auto_approve,
                 no_splash=args.no_splash,
                 persist_session=not args.new_workspace and not args.flash,
-                plan_mode=args.plan_mode,
                 llm_model=args.model,
                 flash_mode=args.flash,
             )
