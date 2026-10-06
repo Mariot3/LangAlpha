@@ -215,7 +215,6 @@ export function handleSubagentMessageChunk({
       ...prev,
       contentSegments: nextContentSegments,
       reasoningProcesses,
-      arrivalSeq: nextArrivalSeq(prev),
     };
     taskRefs.messages = updatedMessages;
     updateSubagentCard(taskId, { messages: updatedMessages });
@@ -319,7 +318,6 @@ export function handleSubagentToolCallChunks({ taskId, assistantMessageId, chunk
   });
 
   msg.pendingToolCallChunks = pending;
-  msg.arrivalSeq = nextArrivalSeq(msg);
   updatedMessages[messageIndex] = msg;
   taskRefs.messages = updatedMessages;
 
