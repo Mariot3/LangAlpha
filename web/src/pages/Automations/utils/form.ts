@@ -145,9 +145,15 @@ function cooldownMinutes(text: string): number | null {
  * The server's own rules, checked before the round trip so the reader gets
  * a sentence and the field instead of a 422. `initial` is what an edit
  * opened with: a one-time moment left alone is not the edit's to judge, so
- * a finished run can still be renamed.
+ * a finished run can still be renamed. Under the all-workspaces agent the
+ * agent picker offers places, so a missing workspace is named as one.
  */
-export function validateForm(form: FormState, now = Date.now(), initial?: FormState): FormProblem | null {
+export function validateForm(
+  form: FormState,
+  now = Date.now(),
+  initial?: FormState,
+  { allWorkspaces = false }: { allWorkspaces?: boolean } = {},
+): FormProblem | null {
   if (form.trigger_type === 'once' && form.next_run_at !== initial?.next_run_at) {
     const at = Date.parse(form.next_run_at);
     if (Number.isNaN(at)) return { messageKey: 'automation.onceHint', section: 'when' };
@@ -171,6 +177,7 @@ export function validateForm(form: FormState, now = Date.now(), initial?: FormSt
     return { messageKey: 'automation.instructionSymbolUnfilled', section: 'instruction' };
   }
   if (form.agent_mode === 'ptc' && !form.workspace_id) {
+    if (allWorkspaces) return { messageKey: 'agents.workspaceRequired', section: 'more' };
     return { messageKey: 'automation.workspaceRequired', section: 'more' };
   }
   return null;

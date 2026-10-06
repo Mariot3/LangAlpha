@@ -13,6 +13,7 @@ import { Disclosure } from '@/components/ui/Disclosure';
 import { Input } from '@/components/ui/input';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { cn } from '@/lib/utils';
+import { useAgentModeLabels } from '../hooks/useAgentModeLabels';
 import { useWorkspaceOptions, workspaceNameOf } from '../hooks/useWorkspaceOptions';
 import { deliveryMethodName } from '../utils/delivery';
 import type { FormPatch, FormState } from '../utils/form';
@@ -56,12 +57,11 @@ export default function MoreOptions({ form, patch, open, onOpenChange }: MoreOpt
 
   const workspaces = useWorkspaceOptions();
   const workspaceName = workspaceNameOf(workspaces, form.workspace_id);
+  const agentModes = useAgentModeLabels();
 
   // What the folded options are set to, so they can stay folded.
   const summary = [
-    form.agent_mode === 'ptc'
-      ? workspaceName ? t('automation.ptcInWorkspace', { workspace: workspaceName }) : t('automation.ptc')
-      : t('automation.flash'),
+    agentModes.label(form.agent_mode, workspaceName),
     t(form.thread_strategy === 'continue' ? 'automation.continueExisting' : 'automation.newThreadEachRun'),
     form.delivery_methods.length
       ? t('automation.deliversTo', { method: form.delivery_methods.map((m) => deliveryMethodName(m, t)).join(', ') })
@@ -92,8 +92,8 @@ export default function MoreOptions({ form, patch, open, onOpenChange }: MoreOpt
             value={form.agent_mode}
             onChange={(mode) => patch('agent_mode', mode)}
             options={[
-              { value: 'flash', label: t('automation.flash') },
-              { value: 'ptc', label: t('automation.ptcSandbox') },
+              { value: 'flash', label: agentModes.options.flash },
+              { value: 'ptc', label: agentModes.options.ptc },
             ]}
           />
         </FormRow>

@@ -13,9 +13,9 @@ import {
   Search,
   Upload,
   X,
-  Zap,
 } from 'lucide-react';
 import type { IntroVisualId } from '../registry';
+import { IntroHomeIcon, useAgentNames } from './introAgents';
 import './pageIntro.css';
 
 /*
@@ -152,7 +152,7 @@ function WsCard({ hot = false, flash = false, delay }: { hot?: boolean; flash?: 
       }
     >
       <div className="flex items-center gap-1">
-        {flash && <Zap className="h-2 w-2 shrink-0" style={{ color: 'var(--iv-accent)' }} />}
+        {flash && <IntroHomeIcon className="h-2 w-2 shrink-0" style={{ color: 'var(--iv-accent)' }} />}
         <Ln w="52%" h={4} c="var(--iv-line-2)" />
       </div>
       <Ln w="88%" />
@@ -168,14 +168,15 @@ function WsCard({ hot = false, flash = false, delay }: { hot?: boolean; flash?: 
 
 /** Split scene: Flash (instant answer) vs PTC (subagents → deliverable). */
 function TwoModes() {
+  const names = useAgentNames();
   return (
     <Frame topbar={<Ln w="26%" />}>
       <div className="flex flex-1 gap-2">
         {/* Flash half: coordinating the desk, with quick answers on the side */}
         <Region hot delay={0.12} className="flex flex-1 flex-col gap-1.5 p-2">
           <div className="flex items-center gap-1.5" style={{ color: 'var(--iv-accent)' }}>
-            <Zap className="h-2.5 w-2.5" />
-            <span className="font-mono text-[0.5rem]">Flash</span>
+            <IntroHomeIcon className="h-2.5 w-2.5" />
+            <span className="font-mono text-[0.5rem]">{names.home}</span>
           </div>
           <OrchRow
             icon={<Folder className="h-2 w-2 shrink-0" style={{ color: 'var(--iv-accent)' }} />}
@@ -184,7 +185,7 @@ function TwoModes() {
           />
           <OrchRow
             icon={<ChevronRight className="h-2 w-2 shrink-0" style={{ color: 'var(--iv-accent)' }} />}
-            label="dispatched to PTC"
+            label={names.handoff}
             delay={0.3}
           />
           <div className="grid grid-cols-2 gap-1.5 pt-0.5">
@@ -199,7 +200,7 @@ function TwoModes() {
             + teal tag — the blue accent belongs to Flash in this comparison */}
         <Region delay={0.28} className="flex flex-1 flex-col gap-1.5 p-2">
           <div className="flex items-center">
-            <Tag color="var(--iv-teal)">PTC</Tag>
+            <Tag color="var(--iv-teal)">{names.worker}</Tag>
           </div>
           <SubagentCard name="data-prep" tools="23 tools" delay={0.4} />
           <SubagentCard name="valuation" tools="17 tools" delay={0.48} />
@@ -214,7 +215,7 @@ function TwoModes() {
       </div>
       <div className="mt-2.5 flex items-center gap-1.5 font-mono text-[0.5rem]" style={{ color: 'var(--iv-text-3)' }}>
         <span className="intro-pulse" style={{ width: 5, height: 5 }} />
-        one agent · two modes
+        {names.footer}
       </div>
     </Frame>
   );
@@ -335,8 +336,9 @@ function OrchRow({
     to PTC, and schedules an automation; a quick price check follows so fast
     QA reads as part of the job, not the whole job. */
 function FlashAnswer() {
+  const names = useAgentNames();
   return (
-    <Frame topbar={<><Ln w="22%" /><Tag>Flash</Tag></>}>
+    <Frame topbar={<><Ln w="22%" /><Tag>{names.home}</Tag></>}>
       <div className="flex flex-1 flex-col gap-2">
         {/* mr keeps the bubbles clear of the bleed crop (scene anchors left) */}
         <div className="intro-rv mr-24 flex justify-end" style={rv(0.12)}>
@@ -354,8 +356,8 @@ function FlashAnswer() {
         </div>
         <Region hot delay={0.2} className="flex flex-col gap-1.5 p-2">
           <div className="flex items-center gap-1.5" style={{ color: 'var(--iv-accent)' }}>
-            <Zap className="h-2.5 w-2.5" />
-            <span className="font-mono text-[0.5rem]">flash · orchestrating</span>
+            <IntroHomeIcon className="h-2.5 w-2.5" />
+            <span className="font-mono text-[0.5rem]">{names.homeRun} · orchestrating</span>
           </div>
           <OrchRow
             icon={<Folder className="h-2 w-2 shrink-0" style={{ color: 'var(--iv-accent)' }} />}
@@ -364,7 +366,7 @@ function FlashAnswer() {
           />
           <OrchRow
             icon={<ChevronRight className="h-2 w-2 shrink-0" style={{ color: 'var(--iv-accent)' }} />}
-            label="task dispatched to PTC"
+            label={names.taskHandoff}
             delay={0.38}
           />
           <OrchRow
@@ -389,8 +391,8 @@ function FlashAnswer() {
         </div>
         <Region delay={0.62} className="flex flex-col gap-1.5 p-2">
           <div className="flex items-center gap-1.5" style={{ color: 'var(--iv-accent)' }}>
-            <Zap className="h-2.5 w-2.5" />
-            <span className="font-mono text-[0.5rem]">flash · 0.9s</span>
+            <IntroHomeIcon className="h-2.5 w-2.5" />
+            <span className="font-mono text-[0.5rem]">{names.homeRun} · 0.9s</span>
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             <QuoteCard ticker="NVDA" price="$142.10" change="+1.8%" up delay={0.7} />
@@ -434,8 +436,9 @@ function SubagentCard({ name, tools, delay }: { name: string; tools: string; del
 function PtcSandbox() {
   const bars = [38, 56, 46, 86, 60, 70];
   const accent = 3;
+  const { worker } = useAgentNames();
   return (
-    <Frame topbar={<><Ln w="22%" /><Tag>PTC</Tag></>}>
+    <Frame topbar={<><Ln w="22%" /><Tag>{worker}</Tag></>}>
       <div className="flex flex-1 gap-2">
         {/* chat column */}
         <div className="flex min-w-0 flex-[1.5] flex-col gap-2">
@@ -694,6 +697,7 @@ function ThreadFrame({
   panel: ReactNode;
   bubble?: ReactNode;
 }) {
+  const { worker } = useAgentNames();
   return (
     <Frame
       topbar={
@@ -701,7 +705,7 @@ function ThreadFrame({
           <ArrowLeft className="h-2.5 w-2.5 shrink-0" style={{ color: 'var(--iv-text-3)' }} />
           <Ln w="24%" />
           <span className="ml-auto">
-            <Tag>PTC</Tag>
+            <Tag>{worker}</Tag>
           </span>
         </>
       }

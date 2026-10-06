@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/use-toast';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
 import type { Automation, AutomationPayload, AutomationUpdatePayload } from '@/types/automation';
 import { PANE_ENTER } from '../utils/motion';
 import {
@@ -56,6 +57,7 @@ export default function AutomationInlineForm({
   const [moreOpen, setMoreOpen] = useState(false);
   const uid = useId();
   const ids = { name: `${uid}-name`, instruction: `${uid}-instruction` };
+  const allWorkspaces = useAllWorkspacesAgent();
 
   const patch: FormPatch = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -67,7 +69,7 @@ export default function AutomationInlineForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const problem = validateForm(form, Date.now(), isEdit ? opened.values : undefined);
+    const problem = validateForm(form, Date.now(), isEdit ? opened.values : undefined, { allWorkspaces });
     if (problem) {
       // A field folded away cannot be fixed, so its section opens.
       if (problem.section === 'more') setMoreOpen(true);

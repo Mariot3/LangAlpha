@@ -8,7 +8,7 @@ import {
   type BuiltinMcpServer,
   type CatalogServer,
 } from '@/pages/ChatAgent/utils/api';
-import { useFlashWorkspace } from '@/hooks/useFlashWorkspace';
+import { useFlashScope } from '@/hooks/useFlashWorkspace';
 import type { BulkAction } from '../components/BulkActionBar';
 import type { BulkScopeSpec } from '../components/BulkScopeMenu';
 import { scopeLocked, type ScopeWorkspace } from '../components/ScopeControl';
@@ -43,7 +43,7 @@ export function useMcpBulkActions({
 }): { actions: BulkAction[]; scope: BulkScopeSpec; count: number; selectionKey: string } {
   const { t } = useTranslation();
   const { selected } = surface.selection;
-  const flashWorkspace = useFlashWorkspace();
+  const flashScopeFor = useFlashScope();
 
   const rows: McpScopeRow[] = [
     ...builtins.map((server) => ({ tier: 'builtin' as const, server })),
@@ -75,9 +75,9 @@ export function useMcpBulkActions({
     key: rowKey,
     denyMarkers: (row) =>
       scopeLocked(row.server) ? null : (row.server.disabled_workspace_ids ?? []),
-    // The row's rule: only a server with a directly bound tool lists Flash.
+    // The row's rule (useFlashScope), for user rows only.
     flashWorkspaceId: (row) =>
-      row.tier === 'catalog' && row.server.has_direct_tools ? (flashWorkspace?.id ?? null) : null,
+      row.tier === 'catalog' ? (flashScopeFor(row.server.has_direct_tools)?.id ?? null) : null,
     setWorkspaceEnabled: (row, workspaceId, enabled) =>
       setWorkspaceMcpServerEnabled(workspaceId, row.server.name, enabled),
     // Only a user row (brokerages included) has the setting. Absent reads as

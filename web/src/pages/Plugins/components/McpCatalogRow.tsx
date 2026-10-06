@@ -22,7 +22,7 @@ import {
 } from '@/components/mcp/McpPrimitives';
 import type { CatalogServer } from '@/pages/ChatAgent/utils/api';
 import { brokerageArt, mcpServerArt } from '@/lib/brandArt';
-import { useFlashWorkspace } from '@/hooks/useFlashWorkspace';
+import { useFlashScope } from '@/hooks/useFlashWorkspace';
 import type { Brokerage } from '../brokerages';
 import { useNow } from '@/hooks/useNow';
 import { isEffectivelyEnabled, isPluginOwned } from '../utils/provenance';
@@ -111,7 +111,7 @@ export function McpCatalogRow({
   onSetNewWorkspacesOn: (on: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const flashWorkspace = useFlashWorkspace();
+  const flashScopeFor = useFlashScope();
   const oauthEligible = server.transport === 'http';
   const status = server.oauth_status ?? null;
   // What the host-side probe learned about the row, read through the one
@@ -145,10 +145,7 @@ export function McpCatalogRow({
       ? { key: probe.noteKey, tone: probe.tone, wire: probe.wire }
       : null;
   const rowKey = `catalog-${server.name}`;
-  // Flash has no sandbox, so it can install only directly bound tools. The
-  // server answers whether this row has any; offering Flash on a row that has
-  // none is a switch that does nothing.
-  const flashScope = server.has_direct_tools ? flashWorkspace : undefined;
+  const flashScope = flashScopeFor(server.has_direct_tools);
   // An off server's line names no workspace, so only an on one waits for the
   // list it would be counted against. A server its plugin holds off is off
   // everywhere, whatever its own switch says.
