@@ -270,7 +270,7 @@ Beyond data, the agent works with these tools:
 | Code and files | Run Python and shell commands, long jobs in the background; read, write, edit and search files; share a preview link to an app it serves from the sandbox |
 | Web | Search, fetch a page, and with Firecrawl crawl or map a whole site |
 | Output | Render an interactive widget in the chat, and draw annotations on a stock's live chart |
-| Coordination | Dispatch [subagents and workflows](#subagents-and-teams-of-agents), keep a todo list, ask you a structured question, and in plan mode submit a plan for your approval |
+| Coordination | Dispatch [subagents and workflows](#subagents-and-teams-of-agents), ask you a structured question, and keep a todo list if you turn it on |
 | Your connections | Brokerage and remote MCP servers over OAuth or header auth, and Agent Plugins |
 | Messaging | On LangAlpha.ai, message you on a connected channel, with files attached |
 

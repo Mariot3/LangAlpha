@@ -53,7 +53,7 @@
 - **Secretary（事务助理）** — Flash agent 还能处理事务性工作：建立和管理 workspace、在后台派发深度 PTC 分析、跟踪运行中的任务、取回结果——这些都通过对话式指令完成，并带 human-in-the-loop 审批。
 - **Agent 集群** — 并行的异步 subagent，各自拥有隔离的上下文窗口、预加载的工具集与 skill，支持执行中途 steering、基于 checkpoint 的恢复，以及界面上的实时进度监控。
 - **实时 steering** — agent 或 subagent 运行时，你可以随时追加消息来纠偏、澄清或改变方向，不用等任务结束。
-- **Middleware 栈** — 一套深层、可组合的 middleware stack，负责 skill 加载、plan mode、多模态输入、自动 compaction 和上下文管理，支撑长时间运行的 agent session。
+- **Middleware 栈** — 一套深层、可组合的 middleware stack，负责 skill 加载、多模态输入、自动 compaction 和上下文管理，支撑长时间运行的 agent session。
 - **安全与 vault** — 用 pgcrypto 做静态加密，自动检测并脱敏泄露的 credential；代码在 sandbox 里执行，每个账户都有独立的 secret 存储，供 agent 安全取用。
 - **渠道集成** — 在 Slack、Discord、飞书、Telegram 里直接用 LangAlpha，定时结果还能通过邮件送达。
 - **生产级基础设施** — agent 活动通过 SSE 流式输出，断线重连时靠 Redis 缓冲回放，后台执行与 HTTP 连接解耦，状态由 PostgreSQL 持久化。
@@ -275,7 +275,7 @@ flowchart TB
         direction LR
         MW1["Tool Safety<br/>Leak Detection<br/>Protected Paths<br/>Error Handling"]
         MW2["Context & Skills<br/>agent.md Injection<br/>Skill Loading<br/>Multimodal"]
-        MW3["Coordination<br/>HITL · Plan Mode<br/>Steering<br/>Subagent Dispatch"]
+        MW3["Coordination<br/>HITL<br/>Steering<br/>Subagent Dispatch"]
         MW4["Resilience<br/>Compaction<br/>Retry + Fallback<br/>Prompt Caching"]
     end
 
@@ -325,7 +325,6 @@ agent 内置一套 middleware 栈，包括：
 - **实时 steering** — agent 可能走错方向、追踪无关数据，或者在分析中途误解你的意图。steering 让你不用等待任务结束就能纠偏。agent 运行时，你随时可以追加消息——更新指令、补充说明，或者提出新的问题——agent 会在下一步之前接收这些信息，就像实时对话一样。steering 在每一层都适用：给主 agent 改方向、给某个后台 subagent 追加指令，或者当工作流先结束时，让系统把尚未消费的消息退回输入框。任务不会丢失，也不用重启。
 - **动态 skill 加载**：通过 `LoadSkill` 工具，agent 按需发现并激活 skill 工具集；默认工具面保持精简，需要时再启用专门能力
 - **多模态**：拦下对图片和 PDF 的文件读取，从 sandbox 或 URL 下载内容，以 base64 注入对话，让多模态模型直接解读
-- **Plan mode**：配合 human-in-the-loop 中断，让你在执行前审阅并批准 agent 的策略
 - **自动 compaction**：接近 token 上限时压缩对话历史，保留关键上下文并释放空间
 - **上下文管理**：自动把大块工具结果卸载到 workspace 文件系统，上下文里只保留简短预览；对话变长时随之 compaction——概括较早轮次，同时把完整记录留在 workspace 里随时可取回。研究 session 可以长期运行，不会轻易触及上下文上限。
 
