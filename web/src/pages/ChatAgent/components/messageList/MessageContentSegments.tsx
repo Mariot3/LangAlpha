@@ -24,7 +24,7 @@ import StructuredResultBlock from './StructuredResultBlock';
 import { parseStructuredResult } from '../../utils/structuredResult';
 import { useMessageActions } from './MessageActionsContext';
 import { FoldPanel } from './FoldPanel';
-import { projectContent, blockIsProcess, blockVisible, type ContentProjection } from './contentProjection';
+import { projectContent, blockIsProcess, blockVisible, streamingTextBlockIndex, type ContentProjection } from './contentProjection';
 import { EMPTY_OBJ } from './types';
 import type { ContentSegmentRecord, FoldState, ToolCallProcessRecord } from './types';
 import type {
@@ -201,7 +201,6 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
 
   let lastTextBlockIdx = -1;
   let lastActivityBlockIdx = -1;
-  let hasAnyTrulyInProgress = false;
   // Task ids in this message, for the stop notices rendered after the prose.
   const taskSubagentIds: string[] = [];
   for (let i = 0; i < renderBlocks.length; i++) {
@@ -211,13 +210,9 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
       const id = b.segment.subagentId;
       if (id) taskSubagentIds.push(id);
     }
-    if (b.type === 'activity') {
-      lastActivityBlockIdx = i;
-      if (b.items.some(item => item._liveState === 'active' && item.type === 'tool_call')) {
-        hasAnyTrulyInProgress = true;
-      }
-    }
+    if (b.type === 'activity') lastActivityBlockIdx = i;
   }
+  const streamingTextIdx = isStreaming ? streamingTextBlockIndex(renderBlocks) : -1;
 
   // Blocks that wait for the prose above them to catch up. They all narrate
   // work the prose introduces, so drawing one over a paragraph the gate is
@@ -293,7 +288,7 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
             <TextBlock
               key={block.key}
               block={block as TextRenderBlock}
-              isStreaming={!!(isStreaming && blockIdx === lastTextBlockIdx && !hasAnyTrulyInProgress && lastActivityBlockIdx < blockIdx)}
+              isStreaming={blockIdx === streamingTextIdx}
               isReplyStart={blockIdx === lastTextBlockIdx}
               hasError={!!hasError}
               structuredError={structuredError}

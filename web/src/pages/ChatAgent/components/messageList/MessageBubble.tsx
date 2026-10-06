@@ -24,7 +24,7 @@ import { isSteeringUserMessage } from './messagePredicates';
 import { assistantText } from './messageText';
 import { TurnFileCards } from './TurnFileCards';
 import type { TurnFile } from '../../utils/turnFiles';
-import { projectMessageContent, type ContentProjection } from './contentProjection';
+import { projectMessageContent, streamingTextBlockIndex, type ContentProjection } from './contentProjection';
 import { EMPTY_OBJ } from './types';
 import type { ContentSegmentRecord, FeedbackResult, FoldState, MessageRecord, ToolCallProcessRecord } from './types';
 
@@ -514,12 +514,13 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
             // the rest of the reply the moment the first paragraph landed, and
             // was never true at all once the turn called a tool, so the
             // indicator vanished and a reply mid-paragraph looked finished.
+            // Only the block still being written is held. Asking every block
+            // counted a sentence a tool call followed, which shows whole, and
+            // held the indicator up through the rest of the turn.
+            const streamingText = projection.blocks[streamingTextBlockIndex(projection.blocks)];
+            const tail = streamingText?.type === 'text' ? streamingText.segment.content || '' : '';
             const waitingForParagraph = streamingMode === 'paragraph'
-              && projection.blocks.some((block) => {
-                if (block.type !== 'text') return false;
-                const content = block.segment.content || '';
-                return visibleParagraphPrefix(content).length < content.length;
-              });
+              && visibleParagraphPrefix(tail).length < tail.length;
             const quiet = arrivalQuiet || waitingForParagraph;
             const size = isMobile ? 20 : 24;
             // The gap above the glyph is padding inside the row, not a margin:

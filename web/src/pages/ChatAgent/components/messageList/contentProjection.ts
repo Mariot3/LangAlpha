@@ -217,6 +217,26 @@ export function projectMessageContent(message: MessageRecord, isSubagentView = f
   return projection;
 }
 
+/**
+ * The text block still being written, or -1. Only the last one is, and only
+ * with no activity after it and no tool call running: prose the model turned
+ * away from is finished and shows whole. The renderer gates this block alone,
+ * and the streaming indicator waits on it alone, so both read it from here.
+ */
+export function streamingTextBlockIndex(blocks: RenderBlock[]): number {
+  let text = -1;
+  let activity = -1;
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.type === 'text') text = i;
+    if (b.type === 'activity') {
+      if (b.items.some((item) => item._liveState === 'active' && item.type === 'tool_call')) return -1;
+      activity = i;
+    }
+  }
+  return activity < text ? text : -1;
+}
+
 export function blockIsProcess(projection: ContentProjection, block: RenderBlock, isTurnTail: boolean): boolean {
   const role = projection.roles.get(block.key);
   return role !== 'retain' && !(role === 'text' && isTurnTail && block.key === projection.lastTextKey);
