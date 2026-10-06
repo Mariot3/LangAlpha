@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, Copy, FileSearch, Info, Pencil, RefreshCw, RotateCcw, StopCircle, ThumbsDown, ThumbsUp } from 'lucide-react';
 import ThumbDownModal from '../ThumbDownModal';
-import LissajousLoading, { FADE_MS } from '@/components/ui/lissajous-loading';
+import FigureEightLoading, { FADE_MS } from '@/components/ui/figure-eight-loading';
 import { AnimatePresence, motion } from '@/lib/framer';
 import { EXIT_TWEEN } from './liveZoneTiming';
 import { visibleParagraphPrefix } from '@/lib/paragraphGate';
@@ -538,7 +538,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
                 data-testid="streaming-indicator"
                 data-quiet={quiet ? 'true' : 'false'}
               >
-                <LissajousLoading active={quiet} className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} text-neutral-500 dark:text-neutral-400`} />
+                <FigureEightLoading active={quiet} className={`${isMobile ? 'h-[20px]' : 'h-[24px]'} text-(--color-accent-primary)`} />
               </motion.div>
             );
           })()}

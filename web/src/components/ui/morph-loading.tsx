@@ -1,4 +1,4 @@
-// Currently unused — replaced by LissajousLoading in the chat streaming indicator.
+// Currently unused — the chat streaming indicator is FigureEightLoading.
 // Kept as an alternative loading animation. Uses CSS keyframes (morph-0 to morph-3)
 // defined in index.css.
 import { cn } from "@/lib/utils";
