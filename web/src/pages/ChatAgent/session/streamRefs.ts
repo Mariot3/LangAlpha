@@ -45,9 +45,11 @@ interface ToolCallChunkRecord {
 
 /**
  * Next value of a message's monotonic arrival counter. Every landed reply
- * text, reasoning text or tool-argument chunk bumps it, so a bubble can tell
- * "text is still flowing" from "the turn has gone quiet" without re-measuring
- * everything it holds.
+ * text chunk or context notice bumps it, so a bubble can tell "text is still
+ * flowing" from "the turn has gone quiet" without re-measuring everything it
+ * holds. Thought text does not: its row may be folded, so the bubble counts
+ * it itself, and only while the row is open. Nor do tool-argument chunks: the
+ * indicator keeps going through a tool call.
  */
 export function nextArrivalSeq(msg: { arrivalSeq?: unknown }): number {
   return ((msg.arrivalSeq as number) ?? 0) + 1;

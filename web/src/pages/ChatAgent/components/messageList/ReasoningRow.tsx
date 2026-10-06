@@ -10,6 +10,7 @@ import { extractLeadingBoldHeader, extractReasoningHeaders } from '../../utils/r
 import { formatThoughtFor } from '@/lib/elapsed';
 import { useNow } from '@/hooks/useNow';
 import { SPRING_FOLD } from './liveZoneTiming';
+import { useMarkOpenThought } from './useArrivalQuiet';
 import type { ReasoningActivityItem } from './activityTypes';
 
 function capitalizeFirst(text: string): string {
@@ -96,6 +97,10 @@ export const ReasoningRow = memo(function ReasoningRow({ item, defaultExpanded =
   // body, and the open row showed it twice.
   const displayContent = headers.length <= 1 && extractedTitle ? extractedBody : item.content;
   const hasContent = !!displayContent;
+  // Marked open before any text lands, not once it has: the mark comes from an
+  // effect, so one that waited for text would land after the first chunk and
+  // the bubble would count that chunk as already there.
+  useMarkOpenThought(item.id, isStreaming && expanded);
   // A row with no header of its own is named by its time, not its text: a
   // line of thought copied up as a label is noise down a timeline. Live it
   // ticks, settled it states the duration, and only a thought whose duration

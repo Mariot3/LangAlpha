@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, Copy, FileSearch, Info, Pencil, RefreshCw, RotateCcw, StopCircle, ThumbsDown, ThumbsUp } from 'lucide-react';
 import ThumbDownModal from '../ThumbDownModal';
-import LissajousLoading, { FADE_MS } from '@/components/ui/lissajous-loading';
+import FigureEightLoading, { FADE_MS } from '@/components/ui/figure-eight-loading';
 import { AnimatePresence, motion } from '@/lib/framer';
 import { EXIT_TWEEN } from './liveZoneTiming';
 import { visibleParagraphPrefix } from '@/lib/paragraphGate';
@@ -18,13 +18,13 @@ import type { AttachmentData, WidgetChipShape } from './attachments';
 import { MessageContentSegments } from './MessageContentSegments';
 import { OverflowCollapse } from './OverflowCollapse';
 import { useMessageActions } from './MessageActionsContext';
-import { useArrivalQuiet, useLiveToolRunning } from './useArrivalQuiet';
+import { OpenThoughtContext, openThoughtLength, useArrivalQuiet, useOpenThoughts } from './useArrivalQuiet';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { isSteeringUserMessage } from './messagePredicates';
 import { assistantText } from './messageText';
 import { TurnFileCards } from './TurnFileCards';
 import type { TurnFile } from '../../utils/turnFiles';
-import { projectMessageContent, type ContentProjection } from './contentProjection';
+import { projectMessageContent, streamingTextBlockIndex, type ContentProjection } from './contentProjection';
 import { EMPTY_OBJ } from './types';
 import type { ContentSegmentRecord, FeedbackResult, FoldState, MessageRecord, ToolCallProcessRecord } from './types';
 
@@ -142,15 +142,18 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
   // it hides every other turn's controls while the session loads.
   const showActions = canShowActions && !turnLive && !isLoading;
 
-  // The stream stamps `arrivalSeq` on every landed reply text, reasoning text
-  // or tool-argument chunk, whatever the typewriter has shown of it. The
-  // streaming indicator hides while it climbs and shows in the pauses. A tool
-  // whose card is visibly running counts as busy too.
+  // The stream stamps `arrivalSeq` on every landed reply text chunk, whatever
+  // the typewriter has shown of it. The streaming indicator hides while it
+  // climbs and shows in the pauses. Thought text counts only while its row is
+  // open: folded, it streams out of sight, and an indicator that hid for it
+  // blinked off and on with every burst of thinking. Tool calls never count,
+  // being written or running: the indicator keeps going under their rows.
   const { streamingMode } = useTranscriptDisplay();
-  const toolCallProcesses = message.toolCallProcesses as Record<string, ToolCallProcessRecord> | undefined;
   const arrivalSeq = (message.arrivalSeq as number | undefined) ?? 0;
-  const toolRunning = useLiveToolRunning(toolCallProcesses, isStreaming);
-  const arrivalQuiet = useArrivalQuiet(arrivalSeq, isStreaming, ARRIVAL_QUIET_MS) && !toolRunning;
+  const [openThoughts, markOpenThought] = useOpenThoughts();
+  const thoughtSeq = openThoughtLength(message.reasoningProcesses as Record<string, Record<string, unknown>> | undefined, openThoughts);
+  const thoughtQuiet = useArrivalQuiet(thoughtSeq, isStreaming, ARRIVAL_QUIET_MS);
+  const arrivalQuiet = useArrivalQuiet(arrivalSeq, isStreaming, ARRIVAL_QUIET_MS) && thoughtQuiet;
 
   // Provenance count for the Sources pill, deduped by (source_type,
   // identifier): the same URL fetched twice in one turn counts once. It counts
@@ -451,6 +454,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
           {(message.contentSegments as ContentSegmentRecord[] | undefined) && (message.contentSegments as ContentSegmentRecord[]).length > 0 ? (
             <CitationMetadataProvider toolCallProcesses={(message.toolCallProcesses as Record<string, Record<string, unknown>>) || EMPTY_OBJ}>
             <CreditPausePendingProvider creditPauses={message.creditPauses as Record<string, CreditPauseState> | undefined}>
+            <OpenThoughtContext value={markOpenThought}>
             <MessageContentSegments
               contentProjection={projection}
               segments={message.contentSegments as ContentSegmentRecord[]}
@@ -476,6 +480,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
               readOnly={readOnly}
               flashContext={flashContext}
             />
+            </OpenThoughtContext>
             </CreditPausePendingProvider>
             </CitationMetadataProvider>
           ) : (
@@ -502,9 +507,6 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
           <AnimatePresence initial={false}>
           {isStreaming && (() => {
             const hasContent = projection.blocks.length > 0 || (message.content as string)?.trim();
-            // A tool call being generated shows its own row in the activity
-            // block; the spinner fades for it like for any other activity.
-            const preparingTool = Object.keys((message.pendingToolCallChunks as Record<string, unknown>) || {}).length > 0;
             // Arriving bytes are not visible progress while paragraph delivery
             // is holding the tail back. The question is whether anything that
             // arrived is unpainted, not whether the whole bubble is blank:
@@ -512,13 +514,14 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
             // the rest of the reply the moment the first paragraph landed, and
             // was never true at all once the turn called a tool, so the
             // indicator vanished and a reply mid-paragraph looked finished.
+            // Only the block still being written is held. Asking every block
+            // counted a sentence a tool call followed, which shows whole, and
+            // held the indicator up through the rest of the turn.
+            const streamingText = projection.blocks[streamingTextBlockIndex(projection.blocks)];
+            const tail = streamingText?.type === 'text' ? streamingText.segment.content || '' : '';
             const waitingForParagraph = streamingMode === 'paragraph'
-              && projection.blocks.some((block) => {
-                if (block.type !== 'text') return false;
-                const content = block.segment.content || '';
-                return visibleParagraphPrefix(content).length < content.length;
-              });
-            const quiet = (arrivalQuiet || waitingForParagraph) && !preparingTool;
+              && visibleParagraphPrefix(tail).length < tail.length;
+            const quiet = arrivalQuiet || waitingForParagraph;
             const size = isMobile ? 20 : 24;
             // The gap above the glyph is padding inside the row, not a margin:
             // content that renders zero-height (text still held back, a block
@@ -538,7 +541,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
                 data-testid="streaming-indicator"
                 data-quiet={quiet ? 'true' : 'false'}
               >
-                <LissajousLoading active={quiet} className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} text-neutral-500 dark:text-neutral-400`} />
+                <FigureEightLoading active={quiet} className={`${isMobile ? 'h-[20px]' : 'h-[24px]'} text-(--color-accent-primary)`} />
               </motion.div>
             );
           })()}

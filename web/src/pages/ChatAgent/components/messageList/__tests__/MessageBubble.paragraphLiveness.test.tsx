@@ -107,4 +107,31 @@ describe('streaming indicator under paragraph delivery', () => {
 
     expect(quiet(container)).toBe('false');
   });
+
+  it('fades for a later reply after a tool call followed an unfinished sentence', () => {
+    // Prose a tool call follows is finished and shows whole, blank line or
+    // not. Counted as held back, it kept the indicator up for the rest of the
+    // turn, through every paragraph of the reply that followed.
+    const tool = {
+      tc1: {
+        toolName: 'WebSearch', toolCall: { args: {} },
+        isInProgress: false, isComplete: true, isFailed: false, order: 1,
+      },
+    };
+    const base = {
+      id: 'a3', role: 'assistant', contentType: 'text', timestamp: new Date(), isStreaming: true,
+      reasoningProcesses: {}, toolCallProcesses: tool,
+    };
+    const segments = (text: string) => [
+      { type: 'text', content: 'Checking the inputs.', order: 0 },
+      { type: 'tool_call', order: 1, toolCallId: 'tc1' },
+      { type: 'text', content: text, order: 2 },
+    ];
+    const { container } = renderMidArrival(
+      { ...base, arrivalSeq: 1, contentSegments: segments('The first paragraph is complete.\n\n') },
+      { ...base, arrivalSeq: 2, contentSegments: segments('The first paragraph is complete.\n\nSo is the second one.\n\n') },
+    );
+
+    expect(quiet(container)).toBe('false');
+  });
 });

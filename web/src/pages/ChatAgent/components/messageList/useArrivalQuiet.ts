@@ -1,15 +1,56 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ALWAYS_LIVE_TOOLS, HIDDEN_TOOL_CALL_NAMES, MAX_IN_PROGRESS_MS } from './buildRenderBlocks';
-import { isPlanTool } from './pastPlan';
-import type { ToolCallProcessRecord } from './types';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+
+/**
+ * How a streaming thought tells its bubble it is open. A thought streams into
+ * a row that is folded unless the reader opens it, and folded, its arriving
+ * text shows nothing, so the indicator must keep going through it. Calling the
+ * value with a thought's id marks it open; the function it returns unmarks it.
+ */
+export const OpenThoughtContext = createContext<((id: string) => () => void) | null>(null);
+
+/** The ids of a bubble's open streaming thoughts, and the marker to provide. */
+export function useOpenThoughts(): [ReadonlySet<string>, (id: string) => () => void] {
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const mark = useCallback((id: string) => {
+    setOpen((prev) => new Set(prev).add(id));
+    return () => setOpen((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  return [open, mark];
+}
+
+/** Marks thought `id` open in its bubble for as long as `open` holds. */
+export function useMarkOpenThought(id: string, open: boolean): void {
+  const mark = useContext(OpenThoughtContext);
+  useEffect(() => (open && mark ? mark(id) : undefined), [id, open, mark]);
+}
+
+/**
+ * The text of the open thoughts, as an arrival counter: it grows as an open
+ * thought streams and drops when one settles, and both count as an arrival.
+ * The drop is what carries the indicator over the moment between a thought
+ * and the reply that follows it, which would otherwise flash it on.
+ */
+export function openThoughtLength(
+  processes: Record<string, Record<string, unknown>> | undefined,
+  open: ReadonlySet<string>,
+): number {
+  let length = 0;
+  for (const id of open) length += ((processes?.[id]?.content as string | undefined) ?? '').length;
+  return length;
+}
 
 /**
  * True while no new text has landed for `quietMs`, false again the moment more
  * arrives. Drives the streaming indicator: arriving text is its own proof the
- * turn is alive, so the spinner shows only in the pauses (model thinking, a
- * tool running) where nothing else says so. Starts quiet, so a turn that has
- * produced nothing yet shows it at once, and returns to quiet when it goes
- * inactive so a bubble that stopped mid-arrival is not left reading busy.
+ * turn is alive, so the indicator steps aside for it and shows through every
+ * other stretch (a folded thought, a tool call being written or run). Starts
+ * quiet, so a turn that has produced nothing yet shows it at once, and returns
+ * to quiet when it goes inactive so a bubble that stopped mid-arrival is not
+ * left reading busy.
  */
 export function useArrivalQuiet(seq: number, active: boolean, quietMs: number): boolean {
   const [quiet, setQuiet] = useState(true);
@@ -30,47 +71,4 @@ export function useArrivalQuiet(seq: number, active: boolean, quietMs: number): 
     return () => clearTimeout(timer);
   }, [seq, active, quietMs]);
   return quiet;
-}
-
-/**
- * True while a running tool is still shown in the live zone. A tool's own card
- * already says it is busy, but only while the zone shows it: a regular tool
- * folds into the archive after MAX_IN_PROGRESS_MS and reads as finished there,
- * and a reconnect stamps its tools folded from the start. The spinner may hide
- * behind a visible card, never behind a folded or never-drawn one, so hidden
- * tools do not count and this re-evaluates at the moment the youngest visible
- * card folds.
- */
-export function useLiveToolRunning(
-  processes: Record<string, ToolCallProcessRecord> | undefined,
-  active: boolean,
-): boolean {
-  const [now, setNow] = useState(() => Date.now());
-  const { running, nextFold } = useMemo(() => {
-    let running = false;
-    let nextFold = Infinity;
-    if (!active) return { running, nextFold };
-    for (const p of Object.values(processes ?? {})) {
-      if (!p.isInProgress) continue;
-      const toolName = p.toolName as string;
-      if (HIDDEN_TOOL_CALL_NAMES.has(toolName) || isPlanTool(toolName)) continue;
-      if (ALWAYS_LIVE_TOOLS.has(toolName)) {
-        running = true;
-        continue;
-      }
-      const createdAt = p._createdAt as number | undefined;
-      const foldAt = createdAt ? createdAt + MAX_IN_PROGRESS_MS : 0;
-      if (foldAt > now) {
-        running = true;
-        nextFold = Math.min(nextFold, foldAt);
-      }
-    }
-    return { running, nextFold };
-  }, [processes, active, now]);
-  useEffect(() => {
-    if (nextFold === Infinity) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, nextFold - Date.now()) + 1);
-    return () => clearTimeout(timer);
-  }, [nextFold]);
-  return running;
 }

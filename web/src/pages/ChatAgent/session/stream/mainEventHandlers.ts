@@ -147,11 +147,7 @@ export function handleReasoningContent({ assistantMessageId, content, refs, setM
           };
         }
 
-        return {
-          ...msg,
-          reasoningProcesses,
-          arrivalSeq: nextArrivalSeq(msg),
-        };
+        return { ...msg, reasoningProcesses };
       })
     );
     return true;
@@ -653,7 +649,7 @@ export function handleToolCallChunks({ assistantMessageId, chunks, setMessages }
           firstSeenAt: existing.firstSeenAt,
         };
 
-        return { ...msg, pendingToolCallChunks: pending, arrivalSeq: nextArrivalSeq(msg) };
+        return { ...msg, pendingToolCallChunks: pending };
       })
     );
   });
