@@ -3,7 +3,6 @@ import ActivityBlock from '../ActivityBlock';
 import type { ActivityItem } from './activityTypes';
 import { INLINE_ARTIFACT_MAP, openCardTarget } from '../charts/InlineArtifactCards';
 import type { OpenFileHandler } from '../../utils/fileLocation';
-import PlanApprovalCard from '../PlanApprovalCard';
 import UserQuestionCard from '../UserQuestionCard';
 import CreateWorkspaceCard from '../CreateWorkspaceCard';
 import StartQuestionCard from '../StartQuestionCard';
@@ -11,6 +10,7 @@ import PTCAgentCard from '../PTCAgentCard';
 import SecretaryConfirmCard from '../SecretaryConfirmCard';
 import CreditPauseCard from '../CreditPauseCard';
 import ToolApprovalCard from '../ToolApprovalCard';
+import PastPlanCard from '../PastPlanCard';
 import TaskSegmentCard from './TaskSegmentCard';
 import { SubagentStopNotice } from '../SubagentTaskMessageContent';
 import type { CreditPauseState, SubagentTaskRecord, ToolApprovalState } from '@/types/chat';
@@ -33,7 +33,7 @@ import type {
   CreditPauseRenderBlock,
   HtmlWidgetRenderBlock,
   NotificationRenderBlock,
-  PlanApprovalRenderBlock,
+  PastPlanRenderBlock,
   PTCAgentRenderBlock,
   RenderBlock,
   SecretaryActionRenderBlock,
@@ -53,7 +53,6 @@ interface MessageContentSegmentsProps {
   toolCallProcesses: Record<string, ToolCallProcessRecord>;
   todoListProcesses: Record<string, Record<string, unknown>>;
   subagentTasks: Record<string, SubagentTaskRecord>;
-  planApprovals?: Record<string, Record<string, unknown>>;
   userQuestions?: Record<string, Record<string, unknown>>;
   workspaceProposals?: Record<string, Record<string, unknown>>;
   questionProposals?: Record<string, Record<string, unknown>>;
@@ -144,11 +143,10 @@ function TextBlock({ block, isStreaming, hasError, structuredError, isSubagentVi
   return isReplyStart && rendersNow ? <div data-reply-start="">{textEl}</div> : textEl;
 }
 
-export const MessageContentSegments = memo(function MessageContentSegments({ segments, contentProjection, reasoningProcesses, toolCallProcesses, todoListProcesses: _todoListProcesses, subagentTasks, planApprovals = EMPTY_OBJ, userQuestions = EMPTY_OBJ, workspaceProposals = EMPTY_OBJ, questionProposals = EMPTY_OBJ, pendingToolCallChunks = EMPTY_OBJ, isStreaming, hasError, structuredError, fold = 'unfolded', isTurnTail = false, isSubagentView = false, readOnly = false, ptcAgentProposals = EMPTY_OBJ, secretaryActionProposals = EMPTY_OBJ, creditPauses = EMPTY_OBJ, toolApprovals = EMPTY_OBJ, htmlWidgetProcesses = EMPTY_OBJ, flashContext }: MessageContentSegmentsProps): React.ReactElement {
+export const MessageContentSegments = memo(function MessageContentSegments({ segments, contentProjection, reasoningProcesses, toolCallProcesses, todoListProcesses: _todoListProcesses, subagentTasks, userQuestions = EMPTY_OBJ, workspaceProposals = EMPTY_OBJ, questionProposals = EMPTY_OBJ, pendingToolCallChunks = EMPTY_OBJ, isStreaming, hasError, structuredError, fold = 'unfolded', isTurnTail = false, isSubagentView = false, readOnly = false, ptcAgentProposals = EMPTY_OBJ, secretaryActionProposals = EMPTY_OBJ, creditPauses = EMPTY_OBJ, toolApprovals = EMPTY_OBJ, htmlWidgetProcesses = EMPTY_OBJ, flashContext }: MessageContentSegmentsProps): React.ReactElement {
   const { turnDisplay } = useTranscriptDisplay();
   const {
     onOpenSubagentTask, onOpenFile, onToolCallDetailClick, onOpenChart,
-    onApprovePlan, onRejectPlan, onPlanDetailClick,
     onAnswerQuestion, onSkipQuestion,
     onApproveCreateWorkspace, onRejectCreateWorkspace,
     onApproveStartQuestion, onRejectStartQuestion,
@@ -339,21 +337,6 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
           );
         }
 
-        if (block.type === 'plan_approval') {
-          const planApprovalId = (block as PlanApprovalRenderBlock).segment.planApprovalId!;
-          const pd = planApprovals[planApprovalId];
-          if (!pd) return null;
-          return (
-            <PlanApprovalCard
-              key={block.key}
-              planData={pd as any} // TODO: type properly, PlanData not exported
-              onApprove={readOnly ? undefined : onApprovePlan}
-              onReject={readOnly ? undefined : onRejectPlan}
-              onDetailClick={readOnly ? undefined : () => onPlanDetailClick?.(planApprovalId, pd)}
-            />
-          );
-        }
-
         if (block.type === 'user_question') {
           const qd = userQuestions[(block as UserQuestionRenderBlock).segment.questionId!];
           if (!qd) return null;
@@ -431,7 +414,7 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
           // Renders even read-only in this app (it explains why the turn
           // stopped); only the resume affordance needs an interactive host.
           // Shared transcripts are a different reader and never reach here:
-          // SharedChatView projects plan approvals only, so a pause never
+          // SharedChatView projects no interrupt cards, so a pause never
           // lands in a link anyone can open.
           return (
             <CreditPauseCard
@@ -473,6 +456,11 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
               onReject={!readOnly && onRejectToolCall && interruptId ? (message?: string) => onRejectToolCall(approvalId, interruptId, position, message, attemptId) : undefined}
             />
           );
+        }
+
+        if (block.type === 'past_plan') {
+          const plan = block as PastPlanRenderBlock;
+          return <PastPlanCard key={block.key} description={plan.description} outcome={plan.outcome} />;
         }
 
         return null;

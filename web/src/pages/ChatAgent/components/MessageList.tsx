@@ -84,7 +84,7 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
   // tail then run over the VISIBLE list, so a hidden bubble never steals an
   // affordance from a painted one.
   const projected = React.useMemo(() => projectTurns(messages), [messages]);
-  const visible = React.useMemo(() => visibleProjection(projected), [projected]);
+  const visible = React.useMemo(() => visibleProjection(projected, isSubagentView), [projected, isSubagentView]);
   const turnTails = React.useMemo(() => computeTurnTails(visible), [visible]);
 
   // The deliverables strip reads the RAW projection: a turn's files are named
@@ -99,13 +99,16 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
   // content-free finish_reason and the next chunk re-arms it, so between two
   // model calls of one agent loop it reads false. The session's `isLoading`
   // spans the whole turn, tool execution included, and is the truth here.
+  // Read from the raw projection: in that same gap a bubble whose blocks so
+  // far are all hidden tools is not painted, and the visible list would hand
+  // the running turn's liveness to the one before it.
   const newestTurn = React.useMemo(() => {
     let newest = -1;
-    for (const { message, turnIndex } of visible) {
+    for (const { message, turnIndex } of projected) {
       if ((message.role as string) === 'assistant' && turnIndex > newest) newest = turnIndex;
     }
     return newest;
-  }, [visible]);
+  }, [projected]);
 
   // Both display preferences fold finished turns; only live reasoning differs.
   const turnFolds = React.useMemo(() => {
@@ -331,4 +334,4 @@ export { MessageContentSegments } from './messageList/MessageContentSegments';
 // eslint-disable-next-line react-refresh/only-export-components
 export { normalizeSubagentText } from './messageList/normalizeSubagentText';
 // eslint-disable-next-line react-refresh/only-export-components
-export { isOrphanAssistantMessage } from './messageList/messagePredicates';
+export { isOrphanAssistantMessage } from './messageList/turnProjection';

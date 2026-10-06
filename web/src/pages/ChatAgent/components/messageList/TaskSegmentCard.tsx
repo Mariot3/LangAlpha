@@ -29,6 +29,12 @@ export function TaskSegmentCard({
 }): React.ReactElement | null {
   if (!task) return null;
 
+  const launchFailed = task.status === 'error' && !!task.launchFailed;
+  // A launch that never ran has nothing to open: opening it would mint a tab
+  // and a sidebar row for a subagent that does not exist. A refused follow-up
+  // still names the task it was aimed at, which does.
+  const open = launchFailed && !task.resumeTargetId ? undefined : onOpen;
+
   if (task.type === WORKFLOW_TASK_TYPE) {
     return (
       <WorkflowRunCard
@@ -36,7 +42,8 @@ export function TaskSegmentCard({
         description={task.description}
         status={task.status}
         launchReply={task.result}
-        onOpen={onOpen}
+        launchFailed={launchFailed}
+        onOpen={open}
       />
     );
   }
@@ -49,7 +56,9 @@ export function TaskSegmentCard({
       status={task.status}
       action={task.action}
       resumeTargetId={task.resumeTargetId}
-      onOpen={onOpen}
+      launchReply={launchFailed ? task.result : undefined}
+      launchFailed={launchFailed}
+      onOpen={open}
       onDetailOpen={onDetailOpen}
       toolCallProcess={toolCallProcess}
     />

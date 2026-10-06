@@ -27,22 +27,12 @@ interface TokenUsage {
 
 /** Pending HITL interrupt state. */
 interface PendingInterrupt {
-  type?: string;
+  type: string;
   interruptId?: string;
   assistantMessageId?: string;
-  planApprovalId?: string;
   questionId?: string;
   proposalId?: string;
-  planMode?: boolean;
-  actionRequests?: ActionRequest[];
-  threadId?: string;
   toolCallId?: string;
-}
-
-/** Pending rejection (user rejected a plan). */
-interface PendingRejection {
-  interruptId: string;
-  planMode: boolean;
 }
 
 /** Loosely-typed SSE event — all event shapes merged. */
@@ -140,6 +130,11 @@ interface ModelOptions {
    * chat renders read-only pills below the user bubble (like widgetSnapshots).
    */
   chartSelections?: import('@/pages/MarketView/stores/chartSelectionStore').ChartSelectionSnapshot[];
+  /**
+   * The subagents setting for the thread this send creates. A send on a live
+   * thread carries none: the row's PATCH is its only writer.
+   */
+  subagentsAllowed?: boolean;
 }
 
 /** Offload batch ref state. */
@@ -207,7 +202,6 @@ interface TaskRefs {
 interface HistoryInterruptInfo {
   type: string;
   assistantMessageId: string;
-  planApprovalId?: string;
   questionId?: string;
   proposalId?: string;
   interruptId?: string;
@@ -264,7 +258,7 @@ interface PairState {
 
 
 export type {
-  SetMessages, TokenUsage, PendingInterrupt, PendingRejection,
+  SetMessages, TokenUsage, PendingInterrupt,
   SSEEvent, ModelOptions, OffloadBatch, ContextWindowCallbacks,
   SubagentHistoryEntry, TaskRefs, HistoryInterruptInfo, SubagentHistoryData,
   StreamProcessorRefs, PairState,

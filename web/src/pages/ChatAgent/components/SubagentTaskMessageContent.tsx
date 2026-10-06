@@ -136,6 +136,10 @@ interface SubagentTaskMessageContentProps {
    *  raw status rather than inventing a state. */
   action?: string;
   resumeTargetId?: string;
+  /** The call's reply was itself a failure, so nothing ran: the card says
+   *  Failed whatever its verb, and shows the reply as the reason. */
+  launchFailed?: boolean;
+  launchReply?: string;
   onOpen?: (info: SubagentInfo) => void;
   /** Opens the spawn's detail by its call id, which is this card's `subagentId`. */
   onDetailOpen?: (toolCallId: string) => void;
@@ -159,6 +163,8 @@ function SubagentTaskMessageContent({
   status = 'unknown',
   action = 'init',
   resumeTargetId,
+  launchFailed = false,
+  launchReply,
   onOpen,
   onDetailOpen,
   toolCallProcess,
@@ -197,8 +203,11 @@ function SubagentTaskMessageContent({
   const hasTelemetry = toolCalls > 0 || (tokenUsage?.total ?? 0) > 0;
 
   // Status discriminator — drives icon, label, and accent color via STATUS_UI.
+  // A refused follow-up never reached its task, so its verb would claim a
+  // change that did not happen.
   const statusKind: TaskCardStatusKind =
-    action === 'update' ? 'updated'
+    launchFailed ? 'error'
+    : action === 'update' ? 'updated'
     : action === 'resume' ? 'resumed'
     : action === 'init' ? taskCardStatusKind(status, pausing)
     : 'unknown';
@@ -223,7 +232,8 @@ function SubagentTaskMessageContent({
       hint={
         onOpen
           ? t(
-              action === 'update' ? 'chat.subagentCard.openUpdated'
+              launchFailed ? 'chat.subagentCard.openDetails'
+              : action === 'update' ? 'chat.subagentCard.openUpdated'
               : action === 'resume' ? 'chat.subagentCard.openResumed'
               : isRunning ? 'chat.subagentCard.openRunning'
               : 'chat.subagentCard.openDetails'
@@ -281,12 +291,15 @@ function SubagentTaskMessageContent({
           )}
         </div>
       )}
-      {/* Terminal only: a reason on a card still claiming to run would read as
-          a prediction. `running` covers `pausing`, which is a running task.
-          A credit stop is excluded here because it gets the notice at the foot
-          of the message instead; saying it twice would make the notice look
-          optional. */}
-      {stopReason
+      {/* A launch that never ran has only its reply to explain it (a
+          "Refused: ..." with subagents off). Otherwise, terminal only: a
+          reason on a card still claiming to run would read as a prediction.
+          `running` covers `pausing`, which is a running task. A credit stop is
+          excluded here because it gets the notice at the foot of the message
+          instead; saying it twice would make the notice look optional. */}
+      {launchFailed && launchReply ? (
+        <TaskStopReason reason={launchReply} />
+      ) : stopReason
         && stopReasonType !== CREDIT_STOP_ERROR_TYPE
         && statusKind !== 'running'
         && statusKind !== 'pausing' && (

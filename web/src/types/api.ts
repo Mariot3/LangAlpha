@@ -272,6 +272,9 @@ export interface Thread {
   archived_at?: string | null;
   /** The model this thread runs on; null follows the account default for its mode. */
   llm_model?: string | null;
+  /** Whether the agent may hand work to subagents; null (or absent, from an older
+   *  server) follows the user's subagents default. */
+  subagents_allowed?: boolean | null;
   /** Turn count (list responses only). */
   turn_count?: number;
   created_at?: string;
@@ -559,7 +562,6 @@ export interface ChatMessageBody {
   workspace_id: string;
   messages: Array<{ role: string; content: string }>;
   agent_mode: string;
-  plan_mode: boolean;
   locale: string;
   timezone: string;
   additional_context?: unknown;

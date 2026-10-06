@@ -214,6 +214,8 @@
     "outputFormatHtml": "HTML",
     "outputFormatDescriptionDefault": "Answers come back as clean, easy-to-read text — the standard format.",
     "outputFormatDescriptionHtml": "In-depth answers come back as a polished visual report — with charts, tables, and interactive views you can explore — instead of plain text. It's easier to read and more engaging, but takes a little longer to prepare and uses more credits.",
+    "subagentsDefault": "Subagents",
+    "subagentsDefaultDesc": "Let the agent hand work to subagents. Threads follow this unless you switch one the other way in its chat input.",
     "resetPreferences": "Reset Preferences",
     "resetConfirmMsg": "This will clear all your preferences: risk tolerance, investment style, agent settings, your default models and other model settings (custom models and providers, quick-access models, per-model settings), and your dashboard layout. Conversations keep the models they use. You can set everything up again anytime in Settings or via the agent. Are you sure?",
     "resetting": "Resetting...",
@@ -1487,8 +1489,10 @@
       "replyPending": "Working"
     },
     "pills": {
-      "plan": "Plan",
-      "planTitle": "Plan mode — agent creates a plan for approval before executing",
+      "subagents": "Subagents",
+      "subagentsOn": "Subagents on",
+      "subagentsOff": "Subagents off",
+      "subagentsFailed": "Couldn't change this thread's subagents setting",
       "watch": "Watch",
       "watchTitle": "Market watch — live prices for tickers the agent tracks"
     },
@@ -1511,7 +1515,6 @@
     "initializing": "Initializing",
     "worker": "Worker",
     "agentNotFound": "Agent not found",
-    "planFeedbackHint": "Type your feedback to revise the plan, then send.",
     "stoppedChip": "Stopped",
     "workingFor": "Working for {{duration}}",
     "workedFor": "Worked for {{duration}}",
@@ -1580,6 +1583,12 @@
     },
     "modelTroubleSuggestion": "{{from}} is having trouble — this answer came from {{to}}",
     "switchToModel": "Switch to {{model}}",
+    "threadSubagents": {
+      "offerOff": "Subagents are off in this thread. Your default has them on.",
+      "offerOn": "Subagents are on in this thread. Your default has them off.",
+      "makeOffDefault": "Turn off by default",
+      "makeOnDefault": "Turn on by default"
+    },
     "threadModel": {
       "pickFailed": "Couldn't change this thread's model",
       "retired": "{{model}} is no longer available. This thread now uses {{fallback}}.",
@@ -1704,6 +1713,11 @@
     "agents": "Agents",
     "questionStarted": "Question started",
     "questionDeclined": "Question declined",
+    "pastPlan": {
+      "approved": "Plan approved",
+      "rejected": "Plan rejected",
+      "unreviewed": "Plan not reviewed"
+    },
     "startQuestion": "Start a Question",
     "letsGo": "Let's Go",
     "skip": "Skip",
@@ -1729,7 +1743,6 @@
     "stop": "Stop",
     "stopping": "Stopping…",
     "placeholderDefault": "Type / for skills, @ for files",
-    "placeholderPendingRejection": "Describe how to revise the plan...",
     "placeholderStopped": "Stopped — send a message to continue",
     "placeholderLoading": "Type a follow-up to steer the agent...",
     "placeholderSubagentsRunning": "Workers still running. Send a message or click a worker to instruct it.",
@@ -1952,7 +1965,6 @@
       "memo": "Memo",
       "status": "Status"
     },
-    "planTab": "Plan",
     "sourcesTab": "Sources ({{count}})",
     "changedSinceRead": "Changed since you opened it",
     "closeTab": "Close {{name}}",
@@ -2609,8 +2621,6 @@
     "noAutomationsFound": "No automations found.",
     "viewInAutomations": "View in Automations",
     "status": "Status",
-    "planDetails": "Plan Details",
-    "noPlanDescription": "No plan description.",
     "toolCallGone": "This tool call is no longer in the chat. Close the tab, or open the call again from the conversation.",
     "toolCallGoneDialog": "This tool call is no longer in the chat. Open the call again from the conversation.",
     "subagentTask": "Subagent Task",

@@ -497,10 +497,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
    */
   const handleSendMessage = async (
     message: string,
-    planMode = false,
     attachments: Array<{ file: File; type: string; preview: string | null; dataUrl: string | null }> = [],
     slashCommands: Array<{ type: string; skillName?: string; name?: string }> = [],
-    { model, reasoningEffort }: { model?: string; reasoningEffort?: string } = {},
+    { model, reasoningEffort, subagentsAllowed }: { model?: string; reasoningEffort?: string; subagentsAllowed?: boolean } = {},
   ) => {
     if ((!message.trim() && (!attachments || attachments.length === 0)) || isSendingMessage || !workspaceId) {
       return;
@@ -536,8 +535,8 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
         state: {
           workspaceId,
           initialMessage: message.trim(),
-          planMode: planMode,
           ...(isFlash ? FLASH_ROUTE_STATE : {}),
+          ...(subagentsAllowed !== undefined ? { subagentsAllowed } : {}),
           ...(additionalContext ? { additionalContext } : {}),
           ...(attachmentMeta ? { attachmentMeta } : {}),
           ...(model ? { model } : {}),

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ALWAYS_LIVE_TOOLS, HIDDEN_TOOL_CALL_NAMES, MAX_IN_PROGRESS_MS } from './buildRenderBlocks';
+import { isPlanTool } from './pastPlan';
 import type { ToolCallProcessRecord } from './types';
 
 /**
@@ -52,7 +53,7 @@ export function useLiveToolRunning(
     for (const p of Object.values(processes ?? {})) {
       if (!p.isInProgress) continue;
       const toolName = p.toolName as string;
-      if (HIDDEN_TOOL_CALL_NAMES.has(toolName)) continue;
+      if (HIDDEN_TOOL_CALL_NAMES.has(toolName) || isPlanTool(toolName)) continue;
       if (ALWAYS_LIVE_TOOLS.has(toolName)) {
         running = true;
         continue;

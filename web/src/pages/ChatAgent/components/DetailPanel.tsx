@@ -1,60 +1,29 @@
 import React from 'react';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { Zap, XCircle } from 'lucide-react';
+import { XCircle } from 'lucide-react';
 import { getDisplayName, isTaskTool } from './toolDisplayConfig';
 import { ToolIcon } from './ToolIcon';
-import Markdown from './Markdown';
 import iconRobo from '../../../assets/img/icon-robo.png';
 import iconRoboSing from '../../../assets/img/icon-robo-sing.png';
 import { useTranslation } from 'react-i18next';
 import ToolCallDetailView, { type ToolCallProcessRecord, type SubagentInfo } from './ToolCallDetailView';
 import { taskCardStatusKind } from './taskStatusUi';
 import { isToolCallFailed } from './filePanel/toolCallFailure';
-import type { PlanData } from './filePanel/types';
 
 interface DetailPanelProps {
   toolCallProcess: ToolCallProcessRecord | null;
-  planData?: PlanData | null;
   onOpenFile?: (filePath: string, workspaceId?: string) => void;
   onOpenSubagentTask?: (info: SubagentInfo) => void;
 }
 
 /**
- * A tool call's result or a plan's text. On desktop it is the body of a Files
- * tab, whose strip already names it; on mobile it is the body of a bottom
- * sheet, which has no strip, so the header names it here and the sheet owns
- * dismissal.
+ * A tool call's result. On desktop it is the body of a Files tab, whose strip
+ * already names it; on mobile it is the body of a bottom sheet, which has no
+ * strip, so the header names it here and the sheet owns dismissal.
  */
-function DetailPanel({ toolCallProcess, planData, onOpenFile, onOpenSubagentTask }: DetailPanelProps): React.ReactElement | null {
+function DetailPanel({ toolCallProcess, onOpenFile, onOpenSubagentTask }: DetailPanelProps): React.ReactElement | null {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
-
-  // Plan detail view
-  if (planData) {
-    return (
-      <div className={isMobile ? '' : 'h-full flex flex-col'} style={{ backgroundColor: 'transparent' }}>
-        {isMobile && (
-          <div className="flex items-center justify-between px-4 py-3 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <Zap className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-              <span
-                className="font-semibold truncate"
-                style={{ color: 'var(--color-text-primary)', fontSize: '0.875rem' }}
-              >
-                {t('toolArtifact.planDetails')}
-              </span>
-            </div>
-          </div>
-        )}
-        <div
-          className={`${isMobile ? '' : 'flex-1 overflow-y-auto'} px-4 py-4`}
-          style={!isMobile ? { minHeight: 0 } : undefined}
-        >
-          <Markdown variant="panel" content={planData.description || t('toolArtifact.noPlanDescription')} className="text-sm" />
-        </div>
-      </div>
-    );
-  }
 
   if (!toolCallProcess) return null;
 

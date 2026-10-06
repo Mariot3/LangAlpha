@@ -31,10 +31,10 @@ export function nextPanelOverride(
  */
 export function usePanelAsks() {
   // Single source of truth for what the file panel is pointed at. Exactly one
-  // target is ever set (file/preview/chart/tool/plan/sources/memory/memo/
-  // status); the panel opens or focuses the tab that owns `.kind`. Each
-  // self-clears once consumed (the handled callbacks): on arrival for most
-  // kinds, once the entry is selected for memory and memo.
+  // target is ever set (file/preview/chart/tool/sources/memory/memo/status);
+  // the panel opens or focuses the tab that owns `.kind`. Each self-clears once
+  // consumed (the handled callbacks): on arrival for most kinds, once the entry
+  // is selected for memory and memo.
   const [panelTarget, setPanelTarget] = useState<PanelTarget | null>(null);
   // Counts every ask, so the same folder, port or symbol asked for twice
   // arrives twice. See `PanelTarget`.

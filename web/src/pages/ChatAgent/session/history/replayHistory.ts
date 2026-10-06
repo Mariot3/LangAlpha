@@ -334,7 +334,7 @@ export async function loadConversationHistory(
       }
 
       // Handle user_message events from history
-      // Note: event.content may be empty for HITL resume pairs (plan approval/rejection)
+      // Note: event.content may be empty for HITL resume pairs (an approval carries no text)
       if (eventType === 'user_message' && hasPairIndex) {
         if (typeof event.run_id === 'string' && event.run_id) {
           replayedRunIds.push(event.run_id);
@@ -357,24 +357,11 @@ export async function loadConversationHistory(
         // the same evidence for the interrupts still ahead of us.
         recordApprovalEvidence(evidence, event);
 
-        // Resolve pending plan_approval interrupt from content (empty = approved, non-empty = rejected).
-        resolvePendingHistoryInterrupt(
-          pendingHistoryInterrupts,
-          (p) => p.type === 'plan_approval',
-          (m) => ({
-            bucket: 'planApprovals',
-            key: m.planApprovalId!,
-            fields: {
-              status: typeof event.content === 'string' && event.content.trim() ? 'rejected' : 'approved',
-            },
-          }),
-          rt.setMessages,
-        );
-
-        // Resolve tool_approval interrupts the way the plan resolver does, with
-        // one more signal: a reject that carried no reason leaves the content
-        // empty, so it is told apart from an approve by its null `hitl_answers`
-        // entry (the only reject shape the server records there).
+        // Resolve tool_approval interrupts from the resume's content (empty =
+        // approved, non-empty = rejected), with one more signal: a reject that
+        // carried no reason leaves the content empty, so it is told apart from
+        // an approve by its null `hitl_answers` entry (the only reject shape the
+        // server records there).
         {
           const hitlAnswers = event.metadata?.hitl_answers as Record<string, unknown> | undefined;
           const hitlDecisions = readHitlDecisions(event.metadata);

@@ -34,14 +34,15 @@ interface SendOptions {
   reasoningEffort?: string | null;
   fastMode?: boolean;
   widgetSnapshots?: WidgetContextSnapshot[];
+  subagentsAllowed?: boolean;
 }
 
 const MAX_LOCATION_STATE_BYTES = 5 * 1024 * 1024; // ~5MB structured-clone safety net
 
 /**
  * Manages dashboard chat input state: mode (fast/ptc), workspace selection,
- * loading, and the send handler. Message and planMode are owned by ChatInput
- * and passed through via handleSend.
+ * loading, and the send handler. The message and the Subagents pick are owned
+ * by ChatInput and passed through via handleSend.
  *
  * Under the all-workspaces agent the composer picks a scope instead of a mode:
  * All workspaces (the user's flash row, which the server runs as Home) or the
@@ -115,13 +116,12 @@ export function useChatInput({ composing = false }: { composing?: boolean } = {}
    */
   const handleSend = async (
     message: string,
-    planMode = false,
     attachments: ChatAttachment[] = [],
     // Slash commands are accepted to match ChatInput.onSend's signature but
     // dropped here — they apply only inside an active chat session, not on
     // the dashboard handoff.
     _slashCommands: SlashCommand[] = [],
-    { model, reasoningEffort, widgetSnapshots }: SendOptions = {},
+    { model, reasoningEffort, widgetSnapshots, subagentsAllowed }: SendOptions = {},
   ): Promise<void> => {
     const hasContent = message.trim() || (attachments && attachments.length > 0) || (widgetSnapshots && widgetSnapshots.length > 0);
     if (!hasContent || isLoading) {
@@ -169,8 +169,9 @@ export function useChatInput({ composing = false }: { composing?: boolean } = {}
         }
       }
 
-      // The flash row is Home under the all-workspaces agent, where plan mode
-      // works as in any workspace; Flash has none.
+      // The flash row is Home under the all-workspaces agent, which runs the
+      // full agent, so the Subagents pick rides there as to any workspace. A
+      // Flash composer names none.
       const toFlashRow = allWorkspaces ? scope === 'all' : mode === 'fast';
       const workspaceId = toFlashRow
         ? (await queryClient.ensureQueryData(flashWorkspaceQuery(queryClient))).workspace_id
@@ -190,7 +191,7 @@ export function useChatInput({ composing = false }: { composing?: boolean } = {}
           workspaceId,
           ...(toFlashRow ? FLASH_ROUTE_STATE : {}),
           initialMessage: message.trim(),
-          planMode: toFlashRow && !allWorkspaces ? false : planMode,
+          ...(subagentsAllowed !== undefined ? { subagentsAllowed } : {}),
           ...(additionalContext ? { additionalContext } : {}),
           ...(attachmentMeta ? { attachmentMeta } : {}),
           ...(model ? { model } : {}),

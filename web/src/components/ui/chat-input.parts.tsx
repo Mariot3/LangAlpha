@@ -3,6 +3,7 @@ import { FileText, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Loader } from '@/components/ui/loader';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 import type { WidgetContextSnapshot } from '@/pages/Dashboard/widgets/framework/contextSnapshot';
@@ -71,8 +72,8 @@ export const FilePreviewCard = ({ file, onRemove }: { file: FileAttachment; onRe
 
 /**
  * The single composer pill: every labeled control in the action bar (mode,
- * workspace, plan, watch) is one of these, so pill geometry exists once and
- * the hidden measure row can render the very same component.
+ * workspace, watch) is one of these, so pill geometry exists once and the
+ * hidden measure row can render the very same component.
  *
  * Always transparent with a transient hover fill; active state is signaled by
  * the amber accent alone (icon + label), never a fill or border ring.
@@ -171,6 +172,106 @@ export function PillToggle({
     >
       {body}
     </button>
+  );
+}
+
+/**
+ * The agent with three seats around it. On, an agent leaves the core for each
+ * seat and fills it; off, they return and the seats stay as empty rings, so the
+ * state reads from the shape and not from color alone. Seats take a lighter
+ * stroke than the core, which keeps them secondary and still leaves an empty one
+ * a visible hole at 16px. The figure is centered on its box rather than on the
+ * core, to sit level with the lucide icons beside it (24 box, 2 stroke).
+ */
+const CORE = { x: 12, y: 14.25 };
+const SEATS = [[12, 5.25], [19.79, 18.75], [4.21, 18.75]] as const;
+
+export function SubagentsGlyph({ on, className, style }: { on: boolean; className?: string; style?: CSSProperties }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={cn('subagents-glyph', className)}
+      style={style}
+      data-on={on}
+      aria-hidden="true"
+    >
+      <circle cx={CORE.x} cy={CORE.y} r="3.5" />
+      {SEATS.map(([x, y]) => <circle key={`seat-${x}`} cx={x} cy={y} r="2.25" strokeWidth={1.5} />)}
+      {/* A filled disc the size of a seat's outer edge, so a landed agent
+          covers its ring exactly. It starts on the core, small and clear. */}
+      {SEATS.map(([x, y], i) => (
+        <circle
+          key={x}
+          className="subagents-glyph-node"
+          cx={x}
+          cy={y}
+          r="3"
+          stroke="none"
+          fill="currentColor"
+          style={{
+            '--dx': `${CORE.x - x}px`,
+            '--dy': `${CORE.y - y}px`,
+            transitionDelay: on ? `${i * 60}ms` : undefined,
+          } as CSSProperties}
+        />
+      ))}
+    </svg>
+  );
+}
+
+/**
+ * A composer toggle with no label: the glyph carries the state and a tooltip
+ * names the control. Sized and colored like a PillToggle, so it sits in the
+ * same row and the hidden measure row renders the very same element.
+ */
+export function IconToggle({
+  active,
+  onToggle,
+  label,
+  tooltip,
+  children,
+  measureOnly = false,
+}: {
+  active: boolean;
+  onToggle: () => void;
+  /** The control's name, for assistive tech. */
+  label: string;
+  /** What hovering says, including the current state. */
+  tooltip: string;
+  children: ReactNode;
+  measureOnly?: boolean;
+}) {
+  const className = 'inline-flex flex-none items-center justify-center h-8 w-8 rounded-full border-none bg-transparent';
+  const style: CSSProperties = {
+    color: active ? 'var(--color-accent-light)' : 'var(--color-text-muted)',
+    transition: 'background 0.2s, color 0.2s',
+  };
+  if (measureOnly) {
+    return <button type="button" tabIndex={-1} className={className} style={style}>{children}</button>;
+  }
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn(className, 'hover:bg-(--color-border-muted) cursor-pointer')}
+            style={style}
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            aria-label={label}
+            aria-pressed={active}
+          >
+            {children}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top">{tooltip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

@@ -214,6 +214,8 @@
     "outputFormatHtml": "HTML",
     "outputFormatDescriptionDefault": "回答以简洁易读的纯文本呈现，即最常见的标准格式。",
     "outputFormatDescriptionHtml": "较为深入的回答会以图文报告的形式呈现，包含图表、表格以及可交互浏览的内容，而非纯文本。阅读体验更直观，但生成时间稍长，消耗的积分也更多。",
+    "subagentsDefault": "子 Agent",
+    "subagentsDefaultDesc": "允许 Agent 将工作分派给子 Agent。所有对话都遵循此设置，除非你在某个对话的聊天输入框中将其切换为相反设置。",
     "resetPreferences": "重置偏好",
     "resetConfirmMsg": "这将清除您所有的偏好设置：风险偏好、投资风格、Agent 设置、默认模型及其他模型设置（自定义模型与服务商、快速切换模型、按模型设置），以及仪表盘布局。已有对话会继续使用各自的模型。您可以随时在设置中或通过 Agent 重新设置。确定吗？",
     "resetting": "重置中...",
@@ -1485,8 +1487,10 @@
       "replyPending": "处理中"
     },
     "pills": {
-      "plan": "计划",
-      "planTitle": "计划模式：Agent 先生成计划，经确认后再执行",
+      "subagents": "子 Agent",
+      "subagentsOn": "子 Agent 已开启",
+      "subagentsOff": "子 Agent 已关闭",
+      "subagentsFailed": "无法更改此对话的子 Agent 设置",
       "watch": "盯盘",
       "watchTitle": "盯盘模式：实时跟踪 Agent 关注的股票价格"
     },
@@ -1509,7 +1513,6 @@
     "initializing": "初始化中",
     "worker": "工作者",
     "agentNotFound": "未找到 Agent",
-    "planFeedbackHint": "输入您的反馈意见来修改计划，然后发送。",
     "stoppedChip": "已停止",
     "workingFor": "工作中 {{duration}}",
     "workedFor": "已工作 {{duration}}",
@@ -1576,6 +1579,12 @@
     },
     "modelTroubleSuggestion": "{{from}} 出现问题 — 本次回答由 {{to}} 完成",
     "switchToModel": "切换到 {{model}}",
+    "threadSubagents": {
+      "offerOff": "此对话已关闭子 Agent，你的默认设置是开启。",
+      "offerOn": "此对话已开启子 Agent，你的默认设置是关闭。",
+      "makeOffDefault": "设为默认关闭",
+      "makeOnDefault": "设为默认开启"
+    },
     "threadModel": {
       "pickFailed": "无法更改此对话的模型",
       "retired": "{{model}} 已不再可用，此对话现在使用 {{fallback}}。",
@@ -1700,6 +1709,11 @@
     "agents": "Agent",
     "questionStarted": "问题已开始",
     "questionDeclined": "问题已跳过",
+    "pastPlan": {
+      "approved": "计划已批准",
+      "rejected": "计划已拒绝",
+      "unreviewed": "计划未审阅"
+    },
     "startQuestion": "开始提问",
     "letsGo": "开始",
     "skip": "跳过",
@@ -1725,7 +1739,6 @@
     "stop": "停止",
     "stopping": "正在停止…",
     "placeholderDefault": "输入 / 调用技能，@ 引用文件",
-    "placeholderPendingRejection": "说说希望怎么调整...",
     "placeholderStopped": "已停止，发送消息即可继续",
     "placeholderLoading": "可以继续输入，消息会排队发送...",
     "placeholderSubagentsRunning": "工作者仍在运行，可输入消息或点击工作者单独指令",
@@ -1948,7 +1961,6 @@
       "memo": "备忘录",
       "status": "状态"
     },
-    "planTab": "计划",
     "sourcesTab": "来源（{{count}}）",
     "changedSinceRead": "打开后文件已变更",
     "closeTab": "关闭 {{name}}",
@@ -2588,8 +2600,6 @@
     "noAutomationsFound": "未找到自动化。",
     "viewInAutomations": "在自动化页面查看",
     "status": "状态",
-    "planDetails": "计划详情",
-    "noPlanDescription": "暂无计划描述。",
     "toolCallGone": "此工具调用已不在对话中。请关闭标签页，或从对话中重新打开该调用。",
     "toolCallGoneDialog": "此工具调用已不在对话中。请从对话中重新打开该调用。",
     "subagentTask": "子 Agent 任务",

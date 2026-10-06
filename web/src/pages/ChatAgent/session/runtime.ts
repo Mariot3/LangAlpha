@@ -149,7 +149,6 @@ export interface StreamRuntime {
   currentToolCallIdRef: Ref<string | null>;
   currentMessageRef: Ref<string | null>;
   currentRunIdRef: Ref<string | null>;
-  currentPlanModeRef: Ref<boolean>;
   steeringAtOrderRef: Ref<number | null>;
   pendingPTCBackfillRef: Ref<Map<string, string>>;
   // stable containers, ref-current reads — shared with other lanes

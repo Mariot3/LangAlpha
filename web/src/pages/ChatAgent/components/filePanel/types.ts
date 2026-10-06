@@ -117,22 +117,6 @@ export interface ToolTabSpec {
   toolCallId: string;
 }
 
-export interface PlanData {
-  description?: string;
-  [key: string]: unknown;
-}
-
-/**
- * What a plan tab is opened with. Plans are one per approval interrupt, so a
- * thread with a rejected plan and its successor has two, and the id keeps a
- * pinned one from being retargeted. The text itself never changes once
- * proposed, so it can travel with the ask.
- */
-export interface PlanTabSpec {
-  planId: string;
-  plan: PlanData;
-}
-
 /**
  * What the chat last asked the panel to show: one discriminated value, set by
  * the landing, consumed by `usePanelTarget` and cleared by the handled
@@ -161,8 +145,6 @@ export type PanelTarget =
   | ({ kind: 'chart'; seq: number } & ChartTabSpec)
   /** A tool call's result, opened as a tab in the Files panel. */
   | ({ kind: 'tool'; seq: number } & ToolTabSpec)
-  /** A plan's text, opened as a tab in the Files panel. */
-  | ({ kind: 'plan'; seq: number } & PlanTabSpec)
   /** A turn's provenance, opened as a tab in the Files panel. */
   | { kind: 'sources'; seq: number; messageId: string }
   /** An entry in the reader's memory store, opened in the singleton Memory tab. */
@@ -178,7 +160,7 @@ export type PanelTarget =
  * once the store's list resolves, and clears the target itself then. Either
  * way the clear names the ask's `seq`, so an ask landed in between is kept.
  */
-export const ONE_SHOT_KINDS = ['file', 'preview', 'chart', 'tool', 'plan', 'sources', 'status'] as const satisfies readonly PanelTarget['kind'][];
+export const ONE_SHOT_KINDS = ['file', 'preview', 'chart', 'tool', 'sources', 'status'] as const satisfies readonly PanelTarget['kind'][];
 export type OneShotKind = (typeof ONE_SHOT_KINDS)[number];
 
 export function isOneShotKind(kind: PanelTarget['kind'] | null | undefined): kind is OneShotKind {

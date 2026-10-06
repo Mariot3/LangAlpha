@@ -7,7 +7,8 @@
  * still occupy their turn. Visibility filtering happens afterwards, and only
  * the tail scan (a render affordance) reads the filtered list.
  */
-import { isSteeringContinuation, isOrphanAssistantMessage } from './messagePredicates';
+import { isSteeringContinuation } from './messagePredicates';
+import { projectMessageContent } from './contentProjection';
 import type { MessageRecord } from './types';
 
 export interface ProjectedMessage {
@@ -53,9 +54,40 @@ export function projectTurns(messages: MessageRecord[]): ProjectedMessage[] {
   return projected;
 }
 
+/**
+ * An assistant bubble that settled with nothing to paint. Some turns legitimately
+ * finalize empty in STATE (a HITL resume whose content landed on another bubble,
+ * a history turn whose only event was a re-raised interrupt deduped by
+ * interrupt_id, a turn whose only call was a hidden tool) and they must stay in
+ * state because edit/regenerate map UI position → backend turn_index by counting
+ * assistant bubbles. But painting them shows an orphan avatar + action row, so
+ * the list skips rendering them.
+ *
+ * Empty is judged on the render blocks the bubble would draw, not on its raw
+ * segments: the builder drops hidden tool calls (TodoWrite's list floats
+ * outside the bubble) and todo-list segments, so a turn of only those has
+ * segments and still paints a blank column. Beyond the blocks, the Sources
+ * pill, the Stopped chip, an error, and a live stream keep the bubble.
+ *
+ * INVARIANT: everything an assistant bubble can render must surface through
+ * its content projection / provenanceRecords / error / stopped / isStreaming.
+ * A future assistant field that renders OUTSIDE those (e.g. assistant-side
+ * attachments) must be added to this guard or its bubbles will be hidden.
+ * `isSubagentView` only keys the projection cache the bubble itself reads.
+ */
+export function isOrphanAssistantMessage(message: MessageRecord, isSubagentView = false): boolean {
+  if (message.role !== 'assistant') return false;
+  if (message.isStreaming) return false;
+  const provenance = message.provenanceRecords as Record<string, unknown> | undefined;
+  if (provenance && Object.keys(provenance).length > 0) return false;
+  if (message.error || message.stopped) return false;
+  const projection = projectMessageContent(message, isSubagentView);
+  return projection.textCount === 0 && projection.blocks.every((block) => block.type === 'text');
+}
+
 /** Drop bubbles the list must not paint (see `isOrphanAssistantMessage`). */
-export function visibleProjection(projected: ProjectedMessage[]): ProjectedMessage[] {
-  return projected.filter((p) => !isOrphanAssistantMessage(p.message));
+export function visibleProjection(projected: ProjectedMessage[], isSubagentView = false): ProjectedMessage[] {
+  return projected.filter((p) => !isOrphanAssistantMessage(p.message, isSubagentView));
 }
 
 /**

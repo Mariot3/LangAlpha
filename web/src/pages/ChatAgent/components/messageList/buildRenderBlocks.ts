@@ -5,15 +5,15 @@ import { isUserDataReadmePath } from '../../utils/agentPaths';
 import { MIN_LIVE_EXPOSURE_MS } from './liveZoneTiming';
 import { inChunkOrder } from '../../session/stream/textChunks';
 import { preapprovedCardOf, type PreapprovedCard } from '../../utils/preapprovedCards';
+import { isPlanTool, readPastPlan, type PastPlanOutcome } from './pastPlan';
 import type { ContentSegmentRecord, ToolCallProcessRecord } from './types';
 import type { ActivityItem, ToolActivityItem, LiveState, ToolCallData, ToolCallResultData } from './activityTypes';
 
 export const MAX_IN_PROGRESS_MS = 15000; // max time a tool call can stay in-progress in live view before archiving (independent of MIN_LIVE_EXPOSURE_MS)
 /** Tools that should stay in the live zone for their entire duration (no MAX_IN_PROGRESS_MS cap) */
 export const ALWAYS_LIVE_TOOLS = new Set(['TaskOutput', 'WebFetch']);
-/** Tool calls that are never rendered as visible activity items — they have dedicated UI or are internal */
 /** Tools the transcript never draws a card for; the spinner gate skips them too. */
-export const HIDDEN_TOOL_CALL_NAMES = new Set(['TodoWrite', 'task', 'Task', 'SubmitPlan', 'AskUserQuestion', 'manage_workspaces', 'ptc_agent', 'agent_output', 'manage_threads', 'ShowWidget', 'delegate_to_analyst']);
+export const HIDDEN_TOOL_CALL_NAMES = new Set(['TodoWrite', 'task', 'Task', 'AskUserQuestion', 'manage_workspaces', 'ptc_agent', 'agent_output', 'manage_threads', 'ShowWidget', 'delegate_to_analyst']);
 
 /** Render block types for the inline activity grouping */
 export interface ActivityRenderBlock {
@@ -34,11 +34,6 @@ export interface CompactArtifactRenderBlock {
 }
 export interface SubagentTaskRenderBlock {
   type: 'subagent_task';
-  key: string;
-  segment: ContentSegmentRecord;
-}
-export interface PlanApprovalRenderBlock {
-  type: 'plan_approval';
   key: string;
   segment: ContentSegmentRecord;
 }
@@ -83,6 +78,13 @@ export interface ToolApprovalRenderBlock {
   key: string;
   segment: ContentSegmentRecord;
 }
+/** A plan from an older thread, read off its `SubmitPlan` call. */
+export interface PastPlanRenderBlock {
+  type: 'past_plan';
+  key: string;
+  description: string;
+  outcome: PastPlanOutcome;
+}
 export interface NotificationRenderBlock {
   type: 'notification';
   key: string;
@@ -99,7 +101,6 @@ export type RenderBlock =
   | TextRenderBlock
   | CompactArtifactRenderBlock
   | SubagentTaskRenderBlock
-  | PlanApprovalRenderBlock
   | UserQuestionRenderBlock
   | CreateWorkspaceRenderBlock
   | StartQuestionRenderBlock
@@ -107,6 +108,7 @@ export type RenderBlock =
   | SecretaryActionRenderBlock
   | CreditPauseRenderBlock
   | ToolApprovalRenderBlock
+  | PastPlanRenderBlock
   | NotificationRenderBlock
   | HtmlWidgetRenderBlock;
 
@@ -186,7 +188,6 @@ export function buildRenderBlocks(
         if (s.type === 'text' || s.type === 'reasoning') return true;
         if (s.type === 'notification') return true;
         if (s.type === 'subagent_task') return true;
-        if (s.type === 'plan_approval') return true;
         if (s.type === 'user_question') return true;
         if (s.type === 'create_workspace') return true;
         if (s.type === 'start_question') return true;
@@ -299,6 +300,15 @@ export function buildRenderBlocks(
             continue;
           }
 
+          if (isPlanTool(proc.toolName)) {
+            const pastPlan = readPastPlan(proc);
+            if (pastPlan) {
+              flushActivity();
+              blocks.push({ type: 'past_plan', key: `plan-${seg.toolCallId}`, ...pastPlan });
+            }
+            continue;
+          }
+
           const createdAt = proc._createdAt as number | undefined;
           const age = createdAt ? now - createdAt : Infinity;
 
@@ -376,9 +386,6 @@ export function buildRenderBlocks(
         } else if (seg.type === 'subagent_task') {
           flushActivity();
           blocks.push({ type: 'subagent_task', key: `subagent-${seg.subagentId}`, segment: seg });
-        } else if (seg.type === 'plan_approval') {
-          flushActivity();
-          blocks.push({ type: 'plan_approval', key: `plan-${seg.planApprovalId}`, segment: seg });
         } else if (seg.type === 'user_question') {
           flushActivity();
           blocks.push({ type: 'user_question', key: `question-${seg.questionId}`, segment: seg });

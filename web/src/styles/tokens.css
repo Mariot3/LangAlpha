@@ -335,7 +335,7 @@ html {
   --color-success-soft: rgba(26, 127, 55, 0.08);
   --color-accent-light: #E09A57;
   /* Confirm/approve buttons in chat — deliberately ink, not the accent, so
-     approving a plan never reads as the same affordance as a brand action. */
+     approving a request never reads as the same affordance as a brand action. */
   --color-btn-primary-bg: #1F1D1A;
   --color-btn-primary-text: #FAF9F7;
   --color-btn-stop-hover-bg: #3A211E;

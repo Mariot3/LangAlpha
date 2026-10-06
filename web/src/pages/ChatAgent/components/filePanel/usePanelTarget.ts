@@ -69,11 +69,6 @@ export function usePanelTarget({
         tabs.openTool(target);
         onTargetHandled?.(target.seq);
         return;
-      case 'plan':
-        cancelPending();
-        tabs.openPlan(target);
-        onTargetHandled?.(target.seq);
-        return;
       case 'sources':
         cancelPending();
         tabs.openSources(target.messageId);

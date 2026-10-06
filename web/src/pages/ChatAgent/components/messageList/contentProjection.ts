@@ -32,8 +32,8 @@ export interface ContentProjection {
 }
 
 const RETAINED_TYPES = new Set<RenderBlock['type']>([
-  'subagent_task', 'html_widget', 'plan_approval', 'user_question', 'create_workspace', 'start_question', 'ptc_agent',
-  'delete_workspace', 'stop_workspace', 'delete_thread', 'credit_pause', 'tool_approval',
+  'subagent_task', 'html_widget', 'user_question', 'create_workspace', 'start_question', 'ptc_agent',
+  'delete_workspace', 'stop_workspace', 'delete_thread', 'credit_pause', 'tool_approval', 'past_plan',
 ]);
 
 /** Outcomes stay; lookups fold. A collapsed turn shows the answer and what the
