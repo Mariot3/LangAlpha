@@ -15,6 +15,7 @@ import uuid
 from src.server.services.report_back.flash import leases, pointer, wake
 from src.server.services.report_back.flash.keys import (
     decode,
+    flash_rb_run_key,
     flash_watch_key,
     ptc_origin_key,
 )
@@ -49,6 +50,9 @@ async def execute_report_back(job: dict) -> None:
     payload = job.get("payload") or {}
     ptc_thread_id = payload["ptc_thread_id"]
     dispatch_gen = payload.get("dispatch_gen")
+    # Rows enqueued before the field existed carry none, and only completed
+    # runs were enqueued then.
+    final_status = payload.get("final_status") or "completed"
     job_id = str(job["hook_outbox_id"])
     attempts = job["attempts"]
     # One deterministic request identity per job: dedups the POST at the DB
@@ -106,6 +110,12 @@ async def execute_report_back(job: dict) -> None:
             f"for {ptc_thread_id} on flash thread {flash_thread_id} (no re-dispatch)"
         )
     else:
+        async def _still_due() -> bool:
+            return not await _superseded(
+                cache, job.get("run_id"), ptc_thread_id, flash_thread_id,
+                job_request_key,
+            )
+
         outcome, rb_run_id = await _post_report_back(
             cache,
             flash_thread_id,
@@ -114,12 +124,20 @@ async def execute_report_back(job: dict) -> None:
             request_key=job_request_key,
             heartbeat=_fence,
             dispatch_gen=dispatch_gen,
+            final_status=final_status,
+            still_due=_still_due,
         )
 
         if outcome == "lost":
             # Lease lost inside the POST defer loop: the reclaiming owner is
             # (or will be) executing this job; do nothing further. The
             # drainer's fenced ack no-ops.
+            return
+        if outcome == "superseded":
+            # A newer run on the thread owes its own report-back under the
+            # same pair, so this job releases nothing and wakes nothing: the
+            # pair is still pending, and a clear here would drop that run's
+            # report. Acking only advances the chain, which needs no fence.
             return
         if outcome in ("deleted", "drop", "cap"):
             # Key-lock + row-lock fence held ACROSS the teardown (not just
@@ -157,6 +175,14 @@ async def execute_report_back(job: dict) -> None:
                             f"report-back drop for {ptc_thread_id} refused: a "
                             f"live run pointer on flash thread {flash_thread_id} "
                             f"may still be mid-admission; nacking to retry"
+                        )
+                    if cleared and final_status != "completed":
+                        # No summary will tell the user about the stop or the
+                        # failure, so the card has to: the wake a failed
+                        # dispatch always sent before it got a summary.
+                        await wake.publish_wake(
+                            cache, flash_thread_id,
+                            error="background_workflow_failed",
                         )
             return
 
@@ -269,6 +295,53 @@ async def _await_run_terminal(
             )
 
 
+async def _workspace_label(workspace_id: str | None) -> str:
+    """The workspace as the summary turn should name it to the user.
+
+    The agent repeats this label in its summary, and the user knows a
+    workspace by its name, never its id; the thread id alone reads the result.
+    A failed read names no workspace rather than hold the report-back.
+    """
+    if workspace_id:
+        from src.server.database.workspace import get_workspace_name_and_description
+
+        try:
+            row = await get_workspace_name_and_description(workspace_id)
+        except Exception:
+            logger.debug(
+                f"[FLASH_REPORT_BACK] Could not read the name of workspace "
+                f"{workspace_id}",
+                exc_info=True,
+            )
+            row = None
+        if row and row.get("name"):
+            return f'the "{row["name"]}" workspace'
+    return "a workspace"
+
+
+# How the summary turn is told the run ended. A run that did not complete
+# must never be summarized as finished work: the agent would hand the user a
+# deliverable that does not exist. So an unknown status raises rather than
+# reading as completed: the job nacks, and once dead its compensation tears
+# the pair down with an error wake.
+_OUTCOME_INSTRUCTIONS = {
+    "completed": (
+        "has completed. Use agent_output to retrieve and summarize the results "
+        "for the user."
+    ),
+    "cancelled": (
+        "was stopped before it finished. Use agent_output to see how far it "
+        "got, then tell the user it was stopped and what, if anything, it "
+        "produced. Do not present partial work as finished."
+    ),
+    "error": (
+        "failed before it finished. Use agent_output to see how far it got, "
+        "then tell the user it failed. Do not present its work as finished; "
+        "offer to hand it off again if they still need it."
+    ),
+}
+
+
 async def _post_report_back(
     cache,
     flash_thread_id: str,
@@ -278,6 +351,8 @@ async def _post_report_back(
     request_key: str | None = None,
     heartbeat=None,
     dispatch_gen: str | None = None,
+    final_status: str,
+    still_due=None,
 ) -> tuple[str, str | None]:
     """POST the synthetic report-back message to the flash thread.
 
@@ -286,16 +361,15 @@ async def _post_report_back(
     shared ``post_notification_turn``. Returns its ``(outcome, run_id)``:
     ``"dispatched"`` / ``"drop"``/``"cap"`` (caller clears the member) /
     ``"deleted"`` (caller discards the watch) / ``"lost"`` (caller stops,
-    no teardown).
+    no teardown) / ``"superseded"`` (no turn started, nothing to tear down).
     """
     from src.server.services.report_back.notify_turn import post_notification_turn
 
-    ws_label = origin.get("ptc_workspace_id") or "an auto-created workspace"
+    ws_label = await _workspace_label(origin.get("ptc_workspace_id"))
     message = (
         "<system>\n"
-        f"The analysis you dispatched (thread {ptc_thread_id} in workspace "
-        f"{ws_label}) has completed. Use agent_output to retrieve and "
-        f"summarize the results for the user.\n"
+        f"The analysis you dispatched (thread {ptc_thread_id} in {ws_label}) "
+        f"{_OUTCOME_INSTRUCTIONS[final_status]}\n"
         "</system>"
     )
     body = {
@@ -320,7 +394,43 @@ async def _post_report_back(
         heartbeat=heartbeat,
         log_prefix="[FLASH_REPORT_BACK]",
         subject=f"PTC thread {ptc_thread_id}",
+        still_due=still_due,
     )
+
+
+async def _superseded(
+    cache,
+    run_id,
+    ptc_thread_id: str,
+    flash_thread_id: str,
+    request_key: str,
+) -> bool:
+    """Whether a newer run on the thread has taken over this run's report-back.
+
+    The summary turn names only the thread, and ``agent_output`` reads its
+    latest turns, so a summary posted after a newer run starts would describe
+    that run's output as this one's. The newer run carries the same pair and
+    reports back when it ends. A summary this job already started (a run row
+    or a pointer claim under its request key) is due regardless: it is past
+    admission and must be awaited, not abandoned.
+    """
+    from src.server.database.runs import lifecycle as tl_db
+
+    if not run_id:
+        return False
+    latest = await tl_db.get_latest_attempt(ptc_thread_id)
+    if not latest or str(latest["conversation_response_id"]) == str(run_id):
+        return False
+    if await tl_db.find_run_by_request_key(request_key):
+        return False
+    claim = await cache.get_strict(flash_rb_run_key(flash_thread_id, ptc_thread_id))
+    if claim and claim.get("request_key") == request_key:
+        return False
+    logger.info(
+        f"[FLASH_REPORT_BACK] Run {run_id} on {ptc_thread_id} is superseded by "
+        f"run {latest['conversation_response_id']}; its report-back is owed there"
+    )
+    return True
 
 
 async def _discard_flash_thread(cache, flash_thread_id: str) -> None:

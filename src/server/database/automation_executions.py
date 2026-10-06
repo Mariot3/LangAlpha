@@ -308,6 +308,24 @@ async def list_executions(
             return rows[:limit], len(rows) > limit
 
 
+async def list_settled_since(
+    user_id: str, since: datetime, *, limit: int = 10
+) -> List[Dict[str, Any]]:
+    """A user's runs that finished or failed at or after ``since``, newest first."""
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(f"""
+                SELECT {EXECUTION_COLUMNS}, a.name AS automation_name
+                FROM automation_executions e
+                JOIN automations a ON a.automation_id = e.automation_id
+                WHERE a.user_id = %s AND e.completed_at >= %s
+                  AND e.status IN ('completed', 'failed', 'timeout')
+                ORDER BY e.completed_at DESC, e.automation_execution_id DESC
+                LIMIT %s
+            """, (user_id, since, limit))
+            return [dict(row) for row in await cur.fetchall()]
+
+
 async def count_executions(automation_id: str) -> int:
     """How many runs an automation has: one index range, unlike a count
     across every automation of a user."""

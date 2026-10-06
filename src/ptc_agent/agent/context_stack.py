@@ -21,6 +21,7 @@ from ptc_agent.agent.middleware.runtime_context import (
     TurnContextMiddleware,
     resolve_preferred_market,
 )
+from ptc_agent.agent.roles import AgentRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,7 @@ def build_context_middleware(
     blocks: dict[str, BlockReader] | None = None,
     user_data_counts: dict[str, Any] | None = None,
     files_mounted: bool | None = None,
+    role: AgentRole = "analyst",
 ) -> ContextMiddleware:
     """Wire the turn row, the per-thread baseline and the tail envelope.
 
@@ -64,7 +66,8 @@ def build_context_middleware(
     where the two flavors differ: PTC reads a workspace and a sandbox, Flash
     carries the user's identity and the memory index alone. ``blocks`` is the
     same split for the harness-authored text: both flavors state their skills
-    manifest, only PTC has an MCP roster to state.
+    manifest, only PTC has an MCP roster to state. ``role`` reaches the blocks
+    whose wording differs by role; a build that names none is the analyst.
     """
     turn = turn_context or TurnContext()
     # Both platform reads answer None on failure, and a market or a zone
@@ -105,6 +108,7 @@ def build_context_middleware(
             guidance=guidance,
             model_name=model_name,
             files_mounted=files_mounted,
+            role=role,
         ),
         tail=TailEnvelopeMiddleware(
             now=now,

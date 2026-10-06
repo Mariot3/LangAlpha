@@ -1,27 +1,31 @@
-"""
-Secretary tools: workspace management, PTC dispatch, agent monitoring, thread management.
+"""Flash's secretary tools: its workspaces, its hand-offs, and their threads.
 
-These tools use interrupt() to pause the graph and wait for user approval
-via the frontend, following the same HITL pattern as onboarding tools.
+The workspace and thread actions are shared with the Chief of Staff, whose own
+tools are in ``chief_of_staff``; a hand-off runs through ``dispatch``.
 """
 
-import asyncio
 import json
 import logging
-import os
-import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
+from langchain.tools import InjectedState
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
-from langgraph.types import Command, interrupt
+from langgraph.types import Command
 
-try:
-    from langchain.tools import InjectedToolCallId
-except ImportError:
-    from langchain_core.tools import InjectedToolCallId
-
+from src.tools.secretary._commands import (
+    InjectedToolCallId,
+    decline_command,
+    decline_routing_command,
+    error_command,
+    hitl_confirm,
+    success_command,
+    verify_thread_owner,
+    verify_workspace_owner,
+)
+from src.tools.secretary.approvals import preapproved
+from src.tools.secretary.dispatch import dispatch
 from src.utils.nested import without_keys
 
 logger = logging.getLogger(__name__)
@@ -31,221 +35,37 @@ logger = logging.getLogger(__name__)
 # it does pass back, stay.
 _OWNER_ID = frozenset({"user_id"})
 
+_STOPPING = (
+    "Stopping; the turn ends within a few seconds. If it was a hand-off with "
+    "a report-back, that report will say how far it got: tell the user it is "
+    "stopping and do not read the thread now."
+)
 
-# ---------------------------------------------------------------------------
-# Shared HITL helper
-# ---------------------------------------------------------------------------
-
-
-def _hitl_confirm(
-    action_type: str, payload: dict[str, Any]
-) -> tuple[bool, dict]:
-    """Pause the graph for user confirmation via interrupt().
-
-    Args:
-        action_type: The action type string (e.g. "create_workspace")
-        payload: Additional data to include in the action request
-
-    Returns:
-        Tuple of (approved, response_dict)
-    """
-    response = interrupt(
-        {"action_requests": [{"type": action_type, **payload}]}
-    )
-
-    approved = False
-    if isinstance(response, dict):
-        decisions = response.get("decisions", [])
-        if decisions and decisions[0].get("type") == "approve":
-            approved = True
-
-    return approved, response if isinstance(response, dict) else {}
+# A workspace as a listing shows it: what a hand-off is routed by, and the
+# status a stop or a "what is running" answer reads. A listing comes before
+# every hand-off, so the row's settings, artifacts and machine bindings stay out.
+_LISTED_WORKSPACE_FIELDS = (
+    "workspace_id",
+    "name",
+    "description",
+    "dir_name",
+    "status",
+    "created_at",
+    "last_activity_at",
+)
 
 
-def _decline_command(message: str, tool_call_id: str) -> Command:
-    """Return a Command for a declined HITL action."""
-    return Command(
-        update={
-            "messages": [
-                ToolMessage(content=message, tool_call_id=tool_call_id),
-            ],
-        }
-    )
-
-
-def _success_command(data: dict[str, Any], tool_call_id: str) -> Command:
-    """Return a Command with JSON-serialized success data."""
-    return Command(
-        update={
-            "messages": [
-                ToolMessage(
-                    content=json.dumps(data), tool_call_id=tool_call_id
-                ),
-            ],
-        }
-    )
-
-
-def _error_command(error: str, tool_call_id: str) -> Command:
-    """Return a Command with a JSON error response."""
-    return Command(
-        update={
-            "messages": [
-                ToolMessage(
-                    content=json.dumps({"success": False, "error": error}),
-                    tool_call_id=tool_call_id,
-                ),
-            ],
-        }
-    )
-
-
-_DISPATCH_CONFIRM_GRACE_S = 6.0
-_DISPATCH_CONFIRM_POLL_S = 0.5
-
-
-async def _confirm_dispatch_admission(
-    thread_id: str, expected_gen: str | None
-) -> bool:
-    """Probe the durable run ledger after an ambiguous dispatch exchange.
-
-    The dispatched branch commits the run's in_progress row — its metadata
-    stamped with the POST's dispatch generation — BEFORE replying (v4 2.4c
-    eager START), and every rejection path exits without a row. POSITIVE-
-    ONLY oracle: True means an attempt row provably belongs to THIS
-    dispatch — an exact generation match when the dispatch carries one, or
-    any attempt when it doesn't (callers pass ``expected_gen=None`` only
-    for a thread id minted by this very call, so nobody else can have run
-    on it). False settles NOTHING: a foreign row may predate our own
-    admission (so it keeps polling to the deadline, never returns early),
-    and no finite absence proves a delivered, still-processing request
-    won't admit later. The caller must treat False as unproven and retain.
-    """
-    from src.server.database.runs import lifecycle as tl_db
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + _DISPATCH_CONFIRM_GRACE_S
-    while True:
-        try:
-            row = await tl_db.get_latest_attempt(thread_id)
-        except Exception:
-            row = None
-        if row is not None:
-            if expected_gen is None:
-                return True
-            row_gen = (row.get("metadata") or {}).get("origin_dispatch_gen")
-            if row_gen == expected_gen:
-                return True
-        if loop.time() >= deadline:
-            return False
-        await asyncio.sleep(_DISPATCH_CONFIRM_POLL_S)
-
-
-def _unknown_dispatch_command(
-    error: str, thread_id: str, workspace_id: str | None, tool_call_id: str
-) -> Command:
-    """Ambiguous dispatch outcome: the reservation is retained and the run may
-    already be live on ``thread_id`` — surface that id so the model checks
-    agent_output before re-dispatching (a blind retry would occupy a second
-    cap slot and can produce a duplicate report-back)."""
-    return Command(
-        update={
-            "messages": [
-                ToolMessage(
-                    content=json.dumps(
-                        {
-                            "success": False,
-                            "error": error,
-                            "outcome": "unknown_retained",
-                            "thread_id": thread_id,
-                            "workspace_id": workspace_id,
-                            "note": (
-                                "Dispatch outcome unknown — the analysis may "
-                                "already be running on this thread. Check "
-                                "agent_output with this thread_id before "
-                                "re-dispatching."
-                            ),
-                        }
-                    ),
-                    tool_call_id=tool_call_id,
-                ),
-            ],
-        }
-    )
-
-
-# ---------------------------------------------------------------------------
-# Shared ownership verification helpers
-# ---------------------------------------------------------------------------
-
-
-async def _verify_workspace_owner(
-    workspace_id: str, user_id: str, tool_call_id: str
-) -> Command | None:
-    """Return error Command if user doesn't own workspace, else None."""
-    from src.server.database.workspace import get_workspace
-
-    ws = await get_workspace(workspace_id)
-    if not ws or str(ws.get("user_id")) != user_id:
-        return _error_command("workspace not found", tool_call_id)
-    return None
-
-
-async def _cleanup_auto_created_workspace(workspace_id: str) -> None:
-    """Best-effort delete of a just-created, provably-unused workspace."""
-    try:
-        from src.server.services.workspace_manager import WorkspaceManager
-
-        await WorkspaceManager.get_instance().delete_workspace(workspace_id)
-    except Exception as cleanup_err:
-        logger.warning(
-            f"Failed to delete auto-created workspace {workspace_id} "
-            f"after failed dispatch: {cleanup_err}"
-        )
-
-
-async def _resolve_workspace_name(
-    workspace_id: str | None, user_id: str
-) -> str | None:
-    """Display name for a workspace OWNED by ``user_id`` (else None).
-
-    Ownership-scoped so the new-thread dispatch HITL card can't surface another
-    user's workspace name before the ownership check runs.
-    """
-    if not workspace_id:
-        return None
-    from src.server.database.workspace import get_workspace
-
-    try:
-        ws = await get_workspace(workspace_id)
-        if not ws or str(ws.get("user_id")) != user_id:
-            return None
-        return ws.get("name")
-    except Exception as e:
-        logger.warning(f"Failed to resolve workspace name for {workspace_id}: {e}")
-        return None
-
-
-async def _verify_thread_owner(
-    thread_id: str, user_id: str, tool_call_id: str
-) -> Command | None:
-    """Return error Command if user doesn't own thread, else None."""
-    from src.server.database.conversation.threads_read import get_thread_owner_id
-
-    try:
-        owner_id = await get_thread_owner_id(thread_id)
-        if owner_id != user_id:
-            return _error_command(
-                "thread not found or not owned by user", tool_call_id
-            )
-    except Exception as e:
-        logger.error(f"Failed to verify thread ownership: {e}")
-        return _error_command("thread not found", tool_call_id)
-    return None
+def _timezone(configurable: dict) -> str:
+    """The user's zone, which a run's label states its start time in."""
+    return configurable.get("timezone") or "UTC"
 
 
 async def _get_thread_output(
-    user_id: str, thread_id: str, tool_call_id: str, turns: int = 1
+    user_id: str,
+    thread_id: str,
+    tool_call_id: str,
+    turns: int = 1,
+    timezone: str = "UTC",
 ) -> Command:
     """Verify ownership and extract thread output.
 
@@ -254,16 +74,16 @@ async def _get_thread_output(
     """
     from src.tools.secretary.utils import extract_text_from_thread
 
-    if err := await _verify_thread_owner(thread_id, user_id, tool_call_id):
+    if err := await verify_thread_owner(thread_id, user_id, tool_call_id):
         return err
 
     try:
-        result = await extract_text_from_thread(thread_id, turns)
+        result = await extract_text_from_thread(thread_id, turns, timezone=timezone)
     except Exception as e:
         logger.error(f"Failed to extract text from thread {thread_id}: {e}")
-        return _error_command("failed to retrieve thread output", tool_call_id)
+        return error_command("failed to retrieve thread output", tool_call_id)
 
-    return _success_command(result, tool_call_id)
+    return success_command(result, tool_call_id)
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +95,7 @@ async def _get_thread_output(
 async def manage_workspaces(
     action: str,
     config: RunnableConfig,
+    state: Annotated[dict, InjectedState],
     name: str | None = None,
     description: str | None = None,
     workspace_id: str | None = None,
@@ -291,37 +112,58 @@ async def manage_workspaces(
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id")
     if not user_id:
-        return _error_command("user_id not found in config", tool_call_id)
+        return error_command("user_id not found in config", tool_call_id)
 
     if action == "list":
-        return await _workspaces_list(user_id, tool_call_id)
+        return await workspaces_list(user_id, tool_call_id)
     elif action == "create":
-        return await _workspaces_create(
-            user_id, name, description, tool_call_id
+        return await workspaces_create(
+            user_id, name, description, tool_call_id,
+            preapproved=preapproved(state, tool_call_id),
         )
     elif action == "delete":
         return await _workspaces_delete(user_id, workspace_id, tool_call_id)
     elif action == "stop":
         return await _workspaces_stop(user_id, workspace_id, tool_call_id)
     else:
-        return _error_command(
+        return error_command(
             f"Unknown action: {action}. Use list, create, delete, or stop.",
             tool_call_id,
         )
 
 
-async def _workspaces_list(user_id: str, tool_call_id: str) -> Command:
-    """List workspaces for the user."""
-    try:
-        from src.server.database.workspace import get_workspaces_for_user
+async def workspaces_list(
+    user_id: str, tool_call_id: str, *, home_id: str | None = None
+) -> Command:
+    """List workspaces for the user.
 
+    With ``home_id``, the Chief of Staff's listing: a row names its folder only
+    when the workspace is on Home's computer, the one whose folders it reads.
+    """
+    try:
+        from src.server.database.workspace import get_workspace, get_workspaces_for_user
+
+        # Pinned, then most recently used: past the 20th the list stops, and
+        # the workspace a hand-off is for is far likelier to be recent than
+        # early in the user's custom order.
         workspaces, total = await get_workspaces_for_user(
-            user_id=user_id, limit=20
+            user_id=user_id, limit=20, sort_by="activity"
         )
+        if home_id is not None:
+            from src.tools.secretary.activity import folder_on
+
+            home = await get_workspace(home_id)
+            computer_id = home.get("computer_id") if home else None
+            workspaces = [
+                {**ws, "dir_name": folder_on(ws, computer_id)} for ws in workspaces
+            ]
         content = json.dumps(
             {
                 "success": True,
-                "workspaces": without_keys(workspaces, _OWNER_ID),
+                "workspaces": [
+                    {field: ws.get(field) for field in _LISTED_WORKSPACE_FIELDS}
+                    for ws in workspaces
+                ],
                 "total": total,
             },
             default=str,
@@ -339,54 +181,29 @@ async def _workspaces_list(user_id: str, tool_call_id: str) -> Command:
     )
 
 
-# Concurrent dispatches that planned one name each take the next free number.
-_AUTO_NAME_ATTEMPTS = 5
-
-
-async def _free_workspace_name(user_id: str, name: str) -> str:
-    """A name for a workspace nobody named, numbered past the ones the user has."""
-    from src.server.database.workspace import get_workspace_name_keys
-    from src.server.database.workspace_names import (
-        WorkspaceNameInvalid,
-        checked_workspace_name,
-        first_free_name,
-    )
-
-    try:
-        name = checked_workspace_name(name)
-    except WorkspaceNameInvalid:
-        name = "Research"
-    try:
-        taken = await get_workspace_name_keys(user_id)
-    except Exception as e:
-        # Only the number is lost: creation still refuses a taken name, and
-        # the caller's retry asks again.
-        logger.warning(f"Failed to read workspace names for {user_id}: {e}")
-        return name
-    return first_free_name(name, taken)
-
-
-async def _workspaces_create(
+async def workspaces_create(
     user_id: str,
     name: str | None,
     description: str | None,
     tool_call_id: str,
+    preapproved: bool = False,
 ) -> Command:
-    """Create a new workspace with HITL confirmation."""
+    """Create a new workspace, once the user confirms unless ``preapproved``."""
     if not name:
-        return _error_command(
+        return error_command(
             "name is required for create action", tool_call_id
         )
 
-    approved, _ = _hitl_confirm(
-        "create_workspace",
-        {"workspace_name": name, "workspace_description": description or ""},
-    )
-
-    if not approved:
-        return _decline_command(
-            "User declined workspace creation.", tool_call_id
+    if not preapproved:
+        approved, response = hitl_confirm(
+            "create_workspace",
+            {"workspace_name": name, "workspace_description": description or ""},
         )
+
+        if not approved:
+            return decline_routing_command(
+                "workspace creation", response, tool_call_id
+            )
 
     from src.server.database.workspace_names import (
         WorkspaceNameInvalid,
@@ -403,15 +220,16 @@ async def _workspaces_create(
             description=description,
         )
 
-        workspace_id = str(workspace["workspace_id"])
-        return _success_command(
-            {
-                "success": True,
-                "workspace_id": workspace_id,
-                "workspace_name": workspace["name"],
-            },
-            tool_call_id,
-        )
+        result = {
+            "success": True,
+            "workspace_id": str(workspace["workspace_id"]),
+            "workspace_name": workspace["name"],
+        }
+        if preapproved:
+            # The card for it is drawn from this result.
+            result["preapproved"] = True
+            result["workspace_description"] = description or ""
+        return success_command(result, tool_call_id)
     except WorkspaceNameTaken as e:
         if e.workspace_id is None:
             # The holder was renamed or deleted before it could be named.
@@ -421,12 +239,12 @@ async def _workspaces_create(
                 f"Its workspace_id is {e.workspace_id}: use that workspace, "
                 "or create this one under a different name."
             )
-        return _error_command(f"{e} {hint}", tool_call_id)
+        return error_command(f"{e} {hint}", tool_call_id)
     except WorkspaceNameInvalid as e:
-        return _error_command(str(e), tool_call_id)
+        return error_command(str(e), tool_call_id)
     except Exception as e:
         logger.error(f"Failed to create workspace: {e}")
-        return _error_command("failed to create workspace", tool_call_id)
+        return error_command("failed to create workspace", tool_call_id)
 
 
 async def _workspaces_delete(
@@ -434,20 +252,20 @@ async def _workspaces_delete(
 ) -> Command:
     """Delete a workspace with HITL confirmation."""
     if not workspace_id:
-        return _error_command(
+        return error_command(
             "workspace_id is required for delete action", tool_call_id
         )
 
-    if err := await _verify_workspace_owner(workspace_id, user_id, tool_call_id):
+    if err := await verify_workspace_owner(workspace_id, user_id, tool_call_id):
         return err
 
-    approved, _ = _hitl_confirm(
+    approved, _ = hitl_confirm(
         "delete_workspace",
         {"workspace_id": workspace_id},
     )
 
     if not approved:
-        return _decline_command(
+        return decline_command(
             "User declined workspace deletion.", tool_call_id
         )
 
@@ -456,13 +274,13 @@ async def _workspaces_delete(
 
         workspace_manager = WorkspaceManager.get_instance()
         await workspace_manager.delete_workspace(workspace_id)
-        return _success_command(
+        return success_command(
             {"success": True, "workspace_id": workspace_id},
             tool_call_id,
         )
     except Exception as e:
         logger.error(f"Failed to delete workspace: {e}")
-        return _error_command("failed to delete workspace", tool_call_id)
+        return error_command("failed to delete workspace", tool_call_id)
 
 
 async def _workspaces_stop(
@@ -470,20 +288,20 @@ async def _workspaces_stop(
 ) -> Command:
     """Stop a workspace with HITL confirmation."""
     if not workspace_id:
-        return _error_command(
+        return error_command(
             "workspace_id is required for stop action", tool_call_id
         )
 
-    if err := await _verify_workspace_owner(workspace_id, user_id, tool_call_id):
+    if err := await verify_workspace_owner(workspace_id, user_id, tool_call_id):
         return err
 
-    approved, _ = _hitl_confirm(
+    approved, _ = hitl_confirm(
         "stop_workspace",
         {"workspace_id": workspace_id},
     )
 
     if not approved:
-        return _decline_command(
+        return decline_command(
             "User declined workspace stop.", tool_call_id
         )
 
@@ -492,13 +310,13 @@ async def _workspaces_stop(
 
         workspace_manager = WorkspaceManager.get_instance()
         await workspace_manager.stop_workspace(workspace_id)
-        return _success_command(
+        return success_command(
             {"success": True, "workspace_id": workspace_id},
             tool_call_id,
         )
     except Exception as e:
         logger.error(f"Failed to stop workspace: {e}")
-        return _error_command("failed to stop workspace", tool_call_id)
+        return error_command("failed to stop workspace", tool_call_id)
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +328,7 @@ async def _workspaces_stop(
 async def ptc_agent(
     question: str,
     config: RunnableConfig,
+    state: Annotated[dict, InjectedState],
     workspace_id: str | None = None,
     thread_id: str | None = None,
     report_back: bool = True,
@@ -530,325 +349,10 @@ async def ptc_agent(
         report_back: If True, flash will automatically summarize results when PTC completes.
             Set to False when the user wants to check results themselves.
     """
-    import aiohttp
-
-    configurable = config.get("configurable", {})
-    user_id = configurable.get("user_id")
-    if not user_id:
-        return _error_command("user_id not found in config", tool_call_id)
-
-    # With auth enabled, the endpoint rejects an unauthenticated background
-    # dispatch (403); abort before any side effect (HITL prompt, workspace
-    # creation, cap reservation) so the user gets the specific error instead.
-    from src.config.settings import background_dispatch_requires_token
-
-    if background_dispatch_requires_token():
-        logger.error(
-            "PTC dispatch aborted: INTERNAL_SERVICE_TOKEN is not set, so the "
-            "background dispatch cannot be authenticated. Set it on the "
-            "backend service to enable dispatch."
-        )
-        return _error_command("internal_service_token_missing", tool_call_id)
-
-    is_continuation = thread_id is not None
-
-    # Resolve workspace_id from existing thread or create/verify workspace
-    if is_continuation:
-        from src.server.database.conversation.threads_read import get_thread_by_id
-        from src.server.utils.pg_sanitize import normalize_uuid
-
-        # Normalize once so the owner check and every downstream bind use the
-        # same canonical UUID (get_thread_owner_id and get_thread_by_id also
-        # normalize internally). None means not a UUID -> not found.
-        normalized_id = normalize_uuid(thread_id)
-        if normalized_id is None:
-            return _error_command(
-                "thread not found or not owned by user", tool_call_id
-            )
-        thread_id = normalized_id
-
-        # Ownership lives on workspaces.user_id (conversation_threads has no
-        # user_id column), so verify via the JOIN helper rather than reading
-        # a user_id off the thread row, which is always None.
-        if err := await _verify_thread_owner(thread_id, user_id, tool_call_id):
-            return err
-        thread = await get_thread_by_id(thread_id)
-        workspace_id = str(thread["workspace_id"])
-        workspace_name = await _resolve_workspace_name(workspace_id, user_id)
-    else:
-        # New thread: surface the existing workspace's real name; when
-        # auto-creating (no workspace_id) use the planned name (question snippet).
-        if workspace_id:
-            workspace_name = await _resolve_workspace_name(workspace_id, user_id)
-        else:
-            workspace_name = await _free_workspace_name(user_id, question[:50])
-
-    approved, response = _hitl_confirm(
-        "ptc_agent",
-        {
-            "workspace_id": workspace_id,
-            "workspace_name": workspace_name,
-            "thread_id": thread_id,
-            "question": question,
-            "report_back": report_back,
-            "tool_call_id": tool_call_id,
-        },
+    return await dispatch(
+        question, config, workspace_id, thread_id, report_back, tool_call_id,
+        preapproved=preapproved(state, tool_call_id),
     )
-
-    if not approved:
-        return _decline_command(
-            "User declined PTC agent dispatch.", tool_call_id
-        )
-
-    # Apply user overrides from HITL decision (e.g. toggling report_back)
-    decisions = response.get("decisions", [])
-    if decisions:
-        overrides = decisions[0].get("overrides", {})
-        if "report_back" in overrides:
-            report_back = overrides["report_back"]
-
-    auto_created_workspace = False
-    if not is_continuation:
-        # Create workspace or verify ownership
-        if workspace_id is None:
-            from src.server.services.report_back.flash.reserve import check_dispatch_capacity
-
-            # Advisory cap check BEFORE provisioning: a dispatch reserve() is
-            # certain to reject must not spin up a sandbox it would orphan.
-            # reserve() below remains the atomic authority.
-            cap_err = await check_dispatch_capacity(
-                configurable.get("thread_id") if report_back else None, user_id
-            )
-            if cap_err is not None:
-                return _error_command(cap_err, tool_call_id)
-            try:
-                from src.server.database.workspace_names import WorkspaceNameTaken
-                from src.server.services.workspace_manager import WorkspaceManager
-
-                workspace_manager = WorkspaceManager.get_instance()
-                name = workspace_name
-                for attempt in range(_AUTO_NAME_ATTEMPTS):
-                    try:
-                        workspace = await workspace_manager.create_workspace(
-                            user_id=user_id,
-                            name=name,
-                            description=f"Auto-created for: {question[:100]}",
-                        )
-                        break
-                    except WorkspaceNameTaken:
-                        # Another dispatch took it since the last read; the
-                        # next free one is the same name with a later number.
-                        if attempt == _AUTO_NAME_ATTEMPTS - 1:
-                            raise
-                        name = await _free_workspace_name(user_id, workspace_name)
-                workspace_id = str(workspace["workspace_id"])
-                auto_created_workspace = True
-            except Exception as e:
-                logger.error(f"Failed to create workspace for PTC dispatch: {e}")
-                return _error_command("workspace_creation_failed", tool_call_id)
-        else:
-            if err := await _verify_workspace_owner(workspace_id, user_id, tool_call_id):
-                return err
-
-        # New thread
-        thread_id = str(uuid.uuid4())
-
-    # reserve() takes a cap slot + records the PTC origin, rolling back on any
-    # non-committed exit; a no-op when flash_thread_id is None (report_back off).
-    # ``slot.wired`` (not the request flag) is echoed as report_back so we never
-    # promise a report-back the completion gate would drop.
-    from src.server.services.report_back.flash.reserve import reserve
-
-    flash_thread_id = configurable.get("thread_id") if report_back else None
-    flash_workspace_id = configurable.get("workspace_id")
-
-    # Dispatch via internal HTTP call.
-    # X-Dispatch: background tells the endpoint to run the PTC workflow in a
-    # background asyncio task and return JSON immediately, avoiding the
-    # generator-cancelled-on-client-disconnect race.
-    self_base_url = os.environ.get("GINLIXFLOW_BASE_URL", "http://localhost:8000")
-    service_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "")
-
-    async with reserve(
-        flash_thread_id, thread_id, workspace_id, flash_workspace_id, user_id
-    ) as slot:
-        # Cap rejection or a fail-closed origin write — abort (reserve rolls back).
-        if slot.error is not None:
-            # No HTTP was sent, so a workspace auto-created above is provably
-            # unused — delete it rather than leak its sandbox (the pre-check
-            # narrows this to the pre-check/reserve race).
-            if auto_created_workspace:
-                await _cleanup_auto_created_workspace(workspace_id)
-            return _error_command(slot.error, tool_call_id)
-        # ``rejected``: a definitive non-scheduling proof was observed — a
-        # cancellation arriving during the subsequent best-effort cleanup must
-        # then NOT commit. ``ambiguous_error``: delivery unproven either way;
-        # settled by the admission-marker reconciliation below the try.
-        rejected = False
-        ambiguous_error: str | None = None
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self_base_url}/api/v1/threads/{thread_id}/messages",
-                    json={
-                        "messages": [{"role": "user", "content": question}],
-                        "agent_mode": "ptc",
-                        "workspace_id": workspace_id,
-                        # Durable provenance on the thread row. Unconditional —
-                        # unlike origin_flash_thread_id below, which is a
-                        # report-back wiring token, not an initiator record.
-                        "origin": {
-                            "type": "agent",
-                            "id": configurable.get("thread_id"),
-                        },
-                        # Ordering hint for finalize hooks: only a WIRED
-                        # report-back binds the run to this flash thread's
-                        # serialization chain.
-                        "origin_flash_thread_id": (
-                            flash_thread_id if slot.wired else None
-                        ),
-                        # Incarnation token minted by reserve(): fences this
-                        # dispatch's terminal teardowns to its own generation.
-                        "origin_dispatch_gen": (
-                            slot.dispatch_gen if slot.wired else None
-                        ),
-                    },
-                    headers={
-                        "X-Service-Token": service_token,
-                        "X-User-Id": user_id,
-                        "X-Dispatch": "background",
-                    },
-                    timeout=aiohttp.ClientTimeout(connect=10, sock_read=30),
-                    allow_redirects=False,
-                ) as resp:
-                    if resp.status >= 400:
-                        # An error status proves the endpoint exited before
-                        # scheduling the run (every raise path precedes its
-                        # create_task), so an auto-created workspace is still
-                        # provably unused.
-                        rejected = True
-                        if auto_created_workspace:
-                            await _cleanup_auto_created_workspace(workspace_id)
-                        return _error_command("dispatch_failed", tool_call_id)
-                    if resp.status != 200:
-                        # Not the endpoint's reply (it answers exactly 200;
-                        # redirects are disabled): some other hop spoke —
-                        # whether the handler ran is settled below.
-                        ambiguous_error = "dispatch_failed"
-                    else:
-                        # The endpoint's exact success status IS the
-                        # scheduling proof (it replies only after its
-                        # create_task) — commit BEFORE touching the body, so
-                        # a lost/truncated body can't roll back a reservation
-                        # whose run is already live (the run's report-back
-                        # would find no origin and be dropped).
-                        slot.commit()
-                        try:
-                            body = await resp.json()
-                        except (aiohttp.ClientError, ValueError, TimeoutError):
-                            logger.warning(
-                                "PTC dispatch response body lost after "
-                                "success status 200; treating as dispatched"
-                            )
-                            body = {"status": "dispatched"}
-                        if (
-                            not isinstance(body, dict)
-                            or body.get("status") != "dispatched"
-                        ):
-                            # A 200 carrying a contradictory body: the status
-                            # proof stands (never roll back), but don't claim
-                            # success — reconcile below.
-                            ambiguous_error = "dispatch_failed"
-        except asyncio.CancelledError:
-            # Cancellation mid-exchange (flash turn cancelled, worker
-            # shutdown) is as ambiguous as a lost response: the endpoint may
-            # already have scheduled the run, so commit before propagating —
-            # UNLESS the outcome was already definitively rejected and the
-            # cancel merely landed during the best-effort cleanup.
-            if not rejected:
-                slot.commit()
-            raise
-        except (aiohttp.ClientConnectorError, aiohttp.InvalidURL) as e:
-            # The request provably never reached the endpoint — rolling the
-            # reservation back is safe and an auto-created workspace is
-            # provably unused. (A cancel during this cleanup propagates
-            # uncommitted — the rollback is exactly what's wanted.)
-            logger.error(f"PTC dispatch connection failed: {e}")
-            if auto_created_workspace:
-                await _cleanup_auto_created_workspace(workspace_id)
-            return _error_command("dispatch_failed", tool_call_id)
-        except (aiohttp.ClientError, ValueError) as e:
-            logger.error(f"PTC dispatch HTTP error: {e}")
-            ambiguous_error = "dispatch_failed"
-        except TimeoutError:
-            logger.error("PTC dispatch timed out")
-            ambiguous_error = "dispatch_timeout"
-
-        if ambiguous_error is not None:
-            # Settle the unknown against the endpoint's admission marker,
-            # scoped to THIS dispatch's generation (the endpoint stamps the
-            # POST's origin_dispatch_gen into the marker and refuses to
-            # schedule if the write fails). The oracle is POSITIVE-ONLY:
-            # confirmation upgrades to plain success; anything less retains
-            # the reservation as unknown (TTL-bounded, orphan-reaped once
-            # the origin lapses). Reconciliation NEVER rolls back — the only
-            # sound rollback receipts are a definitive HTTP status (the
-            # >=400 branch) or a provably-undelivered connection, both
-            # handled above. In particular a continuation must not roll back
-            # on a foreign/absent marker: our own admission may stamp
-            # moments later, and destroying the provisional origin then
-            # orphans a LIVE run's report-back (the retained-but-409'd
-            # alternative merely wedges one cap slot until the origin TTL).
-            if slot.wired:
-                expected_gen = slot.dispatch_gen
-            elif not is_continuation:
-                # Unwired fresh pair: the thread id was minted by this call,
-                # so ANY marker on it can only be our own admission.
-                expected_gen = None
-            else:
-                # Unwired continuation: no identity to match — a marker
-                # proves only that SOME run held the thread. Unprovable;
-                # retain without probing.
-                slot.commit()
-                return _unknown_dispatch_command(
-                    ambiguous_error, thread_id, workspace_id, tool_call_id
-                )
-            try:
-                confirmed = await _confirm_dispatch_admission(
-                    thread_id, expected_gen
-                )
-            except asyncio.CancelledError:
-                # Cancelled mid-probe: still unknown — retain.
-                slot.commit()
-                raise
-            slot.commit()
-            if confirmed:
-                # The lost reply was a real acceptance of THIS request.
-                return _success_command(
-                    {
-                        "success": True,
-                        "workspace_id": workspace_id,
-                        "thread_id": thread_id,
-                        "status": "dispatched",
-                        "report_back": slot.wired,
-                    },
-                    tool_call_id,
-                )
-            return _unknown_dispatch_command(
-                ambiguous_error, thread_id, workspace_id, tool_call_id
-            )
-
-        slot.commit()
-        return _success_command(
-            {
-                "success": True,
-                "workspace_id": workspace_id,
-                "thread_id": thread_id,
-                "status": "dispatched",
-                "report_back": slot.wired,
-            },
-            tool_call_id,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -863,24 +367,27 @@ async def agent_output(
     turns: int = 1,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> Command:
-    """Retrieve the text output of a running or completed PTC agent thread.
-
-    Use this to check on the progress or results of a dispatched PTC agent.
+    """Read what a thread's agent wrote, in any of the user's workspaces, while it runs or after.
 
     Args:
-        thread_id: The thread ID to retrieve output from
+        thread_id: The thread to read.
         turns: How many of the most-recent turns to return. Default 1 (only the
             latest turn's output). Pass a larger N for the last N turns, or 0
             for recent history (up to the 50 most recent turns); multiple turns
             are separated by '---'. A turn still streaming returns only that
             live turn.
+
+    Returns:
+        The agent's reply text, not its tool calls, each run under a line with its start time, how it ended and whether it was a report-back, and whether the thread is still running.
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id")
     if not user_id:
-        return _error_command("user_id not found in config", tool_call_id)
+        return error_command("user_id not found in config", tool_call_id)
 
-    return await _get_thread_output(user_id, thread_id, tool_call_id, turns)
+    return await _get_thread_output(
+        user_id, thread_id, tool_call_id, turns, _timezone(configurable)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -910,28 +417,30 @@ async def manage_threads(
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id")
     if not user_id:
-        return _error_command("user_id not found in config", tool_call_id)
+        return error_command("user_id not found in config", tool_call_id)
 
     if action == "list":
-        return await _threads_list(user_id, workspace_id, tool_call_id)
+        return await threads_list(user_id, workspace_id, tool_call_id)
     elif action == "get_output":
-        return await _threads_get_output(user_id, thread_id, tool_call_id, turns)
+        return await _threads_get_output(
+            user_id, thread_id, tool_call_id, turns, _timezone(configurable)
+        )
     elif action == "delete":
-        return await _threads_delete(user_id, thread_id, tool_call_id)
+        return await threads_delete(user_id, thread_id, tool_call_id)
     else:
-        return _error_command(
+        return error_command(
             f"Unknown action: {action}. Use list, get_output, or delete.",
             tool_call_id,
         )
 
 
-async def _threads_list(
+async def threads_list(
     user_id: str, workspace_id: str | None, tool_call_id: str
 ) -> Command:
     """List threads, optionally filtered by workspace."""
     try:
         if workspace_id:
-            if err := await _verify_workspace_owner(workspace_id, user_id, tool_call_id):
+            if err := await verify_workspace_owner(workspace_id, user_id, tool_call_id):
                 return err
 
             from src.server.database.conversation.threads_read import get_workspace_threads
@@ -968,36 +477,99 @@ async def _threads_list(
 
 
 async def _threads_get_output(
-    user_id: str, thread_id: str | None, tool_call_id: str, turns: int = 1
+    user_id: str,
+    thread_id: str | None,
+    tool_call_id: str,
+    turns: int = 1,
+    timezone: str = "UTC",
 ) -> Command:
     """Get output from a specific thread."""
     if not thread_id:
-        return _error_command(
+        return error_command(
             "thread_id is required for get_output action", tool_call_id
         )
 
-    return await _get_thread_output(user_id, thread_id, tool_call_id, turns)
+    return await _get_thread_output(user_id, thread_id, tool_call_id, turns, timezone)
 
 
-async def _threads_delete(
+async def threads_stop(
+    user_id: str,
+    thread_id: str | None,
+    own_thread_id: str | None,
+    tool_call_id: str,
+    run_id: str | None = None,
+) -> Command:
+    """Stop the turn ``run_id`` names on a thread, else whichever it is running.
+
+    The same cancel as ``POST /cancel``, so the run ends through the finalize
+    CAS and a hand-off with a report-back still reports that it was stopped.
+    A run_id keeps a stop meant for a hand-off from ending a turn started in
+    that thread after the hand-off finished.
+    """
+    from src.server.utils.pg_sanitize import normalize_uuid
+
+    if not thread_id:
+        return error_command("thread_id is required for stop", tool_call_id)
+    thread_id = normalize_uuid(thread_id)
+    if thread_id is None:
+        return error_command("thread not found or not owned by user", tool_call_id)
+    if thread_id == normalize_uuid(own_thread_id):
+        return error_command(
+            "That is this conversation; end your turn instead.", tool_call_id
+        )
+    # An empty run_id reads as omitted, as it does for POST /cancel.
+    if run_id:
+        run_id = normalize_uuid(run_id)
+        if run_id is None:
+            return error_command(
+                "run_id is not a run id: pass the one delegate_to_analyst "
+                "returned, or leave it out.",
+                tool_call_id,
+            )
+    if err := await verify_thread_owner(thread_id, user_id, tool_call_id):
+        return err
+
+    from src.server.services.cancel_dispatch import cancel_workflow
+
+    try:
+        outcome = await cancel_workflow(thread_id, run_id=run_id or None)
+    except Exception:
+        # cancel_workflow logs the cause and raises it as a bare 500.
+        return error_command("stop_failed", tool_call_id)
+    if outcome["cancelled"]:
+        # Said here, where the model decides what to do next: told only in the
+        # prompt, it read the thread straight away and reported the stop twice.
+        return success_command(
+            {"success": True, "cancelled": True, "message": _STOPPING},
+            tool_call_id,
+        )
+    # The stop ran and found nothing of that run to end; ``state`` says why.
+    # The model named the thread to stop; echoing its id back invites it into
+    # the reply.
+    return success_command(
+        {"success": True, **without_keys(outcome, {"thread_id"})}, tool_call_id
+    )
+
+
+async def threads_delete(
     user_id: str, thread_id: str | None, tool_call_id: str
 ) -> Command:
     """Delete a thread with HITL confirmation."""
     if not thread_id:
-        return _error_command(
+        return error_command(
             "thread_id is required for delete action", tool_call_id
         )
 
-    if err := await _verify_thread_owner(thread_id, user_id, tool_call_id):
+    if err := await verify_thread_owner(thread_id, user_id, tool_call_id):
         return err
 
-    approved, _ = _hitl_confirm(
+    approved, _ = hitl_confirm(
         "delete_thread",
         {"thread_id": thread_id},
     )
 
     if not approved:
-        return _decline_command(
+        return decline_command(
             "User declined thread deletion.", tool_call_id
         )
 
@@ -1026,14 +598,14 @@ async def _threads_delete(
                 await delete_thread(thread_id, conn=mutation.conn)
         except MutationConflict as e:
             detail = e.detail if isinstance(e.detail, dict) else {}
-            return _error_command(
+            return error_command(
                 detail.get("message")
                 or "Thread is busy (a run or mutation is in progress); "
                 "stop it first, then retry the delete.",
                 tool_call_id,
             )
         except MutationUnavailable:
-            return _error_command(
+            return error_command(
                 "Thread deletion is temporarily unavailable; retry shortly.",
                 tool_call_id,
             )
@@ -1057,10 +629,10 @@ async def _threads_delete(
             if manager is not None:
                 manager.prune_thread_dirs_soon(str(thread_row["workspace_id"]))
 
-        return _success_command(
+        return success_command(
             {"success": True, "thread_id": thread_id},
             tool_call_id,
         )
     except Exception as e:
         logger.error(f"Failed to delete thread: {e}")
-        return _error_command("failed to delete thread", tool_call_id)
+        return error_command("failed to delete thread", tool_call_id)

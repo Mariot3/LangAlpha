@@ -16,6 +16,14 @@ from collections import Counter
 import pytest
 import yaml
 
+from ptc_agent.agent.middleware.runtime_context import (
+    HARNESS_BLOCKS,
+    DurableUpdate,
+    render_update_row,
+)
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_update_kind,
+)
 from ptc_agent.agent.prompts import guidance_template_vars, init_loader
 from ptc_agent.agent.prompts.loader import PromptLoader
 
@@ -97,6 +105,10 @@ ENVELOPE_CASES: dict[str, dict] = {
     "envelope/baseline_skills.md.j2": {
         "content": "## Available Skills\n\n- **pdf**: read and write PDFs",
     },
+    "envelope/baseline_activity.md.j2": {
+        "content": "Recent threads, this one aside:\n"
+        '- "NVDA earnings" in Semis: finished, 2026-10-04 (thread_id `t1`)',
+    },
 }
 
 STATIC_CASES: dict[str, dict] = {
@@ -112,6 +124,7 @@ BASELINE_TEMPLATES = [
     "envelope/baseline_files.md.j2",
     "envelope/baseline_mcp_servers.md.j2",
     "envelope/baseline_skills.md.j2",
+    "envelope/baseline_activity.md.j2",
 ]
 
 # Baseline fragments that must render their wrapper even with nothing to put in
@@ -227,8 +240,8 @@ class TestBaselineDeterminism:
         )
 
     def test_the_harness_blocks_keep_their_wrapper_tags(self):
-        """`<mcp-servers>` and `<skills>` are what a change row names by hand,
-        and what the tool guide points the model at."""
+        """Their tags are what a change row names by hand, and what the prompt
+        points the model at."""
         servers = _render("envelope/baseline_mcp_servers.md.j2", "detailed")
         assert "<mcp-servers>" in servers and "</mcp-servers>" in servers
         assert ".agents/tools/docs/<server_name>/" in servers, "the import lead is gone"
@@ -236,10 +249,17 @@ class TestBaselineDeterminism:
         skills = _render("envelope/baseline_skills.md.j2", "detailed")
         assert "<skills>" in skills and "</skills>" in skills
         assert "## Available Skills" in skills, "the manifest is stated verbatim"
+        activity = _render("envelope/baseline_activity.md.j2", "detailed")
+        assert "<activity>" in activity and "</activity>" in activity
+        assert "NVDA earnings" in activity
 
     @pytest.mark.parametrize(
         "template",
-        ["envelope/baseline_mcp_servers.md.j2", "envelope/baseline_skills.md.j2"],
+        [
+            "envelope/baseline_mcp_servers.md.j2",
+            "envelope/baseline_skills.md.j2",
+            "envelope/baseline_activity.md.j2",
+        ],
     )
     def test_a_harness_block_with_nothing_in_it_renders_nothing(self, template):
         """Unlike a file, nobody was supposed to write these. An empty labelled
@@ -383,32 +403,32 @@ class TestUpdates:
 
 
 class TestHarnessRows:
-    """The two rows that report a harness block rather than a file."""
+    """The rows that report a harness block rather than a file.
 
-    @pytest.mark.parametrize(
-        ("kind", "subject", "block"),
-        [
-            ("mcp_servers_changed", "MCP server list", "<mcp-servers>"),
-            ("skills_changed", "skills manifest", "<skills>"),
-        ],
-    )
-    def test_the_row_names_its_subject_and_block(self, kind, subject, block):
-        rendered = init_loader().render(
-            "envelope/update_row.md.j2",
-            update={
-                "kind": kind,
-                "text": "--- a\n+++ b\n+a new server",
-                "provenance": {"source": "harness"},
-                "created_at": "2026-09-08T14:02:00+00:00",
-                "schema_version": 1,
-            },
+    Parametrized over the registry, so a block added there is held to the
+    same prose without a test of its own.
+    """
+
+    @pytest.mark.parametrize("kind", list(HARNESS_BLOCKS))
+    def test_the_row_names_its_subject_and_block(self, kind):
+        block = HARNESS_BLOCKS[kind]
+        rendered = render_update_row(
+            DurableUpdate(
+                kind=harness_update_kind(kind),
+                schema_version=1,
+                text="--- a\n+++ b\n+a new server",
+                provenance={"source": "harness"},
+            )
         )
-        assert f"The {subject} changed after the copy in {block} was frozen" in rendered
+        assert rendered.splitlines()[0] == (
+            f"The {block.subject} changed after the copy in {block.label} was frozen"
+        )
+        assert f"compares it with the frozen copy in {block.label}" in rendered
         assert "+a new server" in rendered
         # No writer to credit, and no file to send the model off to read.
         assert "last edit by" not in rendered
         assert "the file" not in rendered
-        assert f"**{kind}**" not in rendered, "the labelled fallback, not the prose"
+        assert "**" not in rendered, "the labelled fallback, not the prose"
 
 
 class TestTheRosterSplit:

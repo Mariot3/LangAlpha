@@ -58,9 +58,14 @@ from ptc_agent.agent.middleware.runtime_context.epoch import (
     advance_epoch,
     compaction_fingerprint,
 )
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    HARNESS_BLOCKS,
+    harness_update_kind,
+)
 from ptc_agent.agent.middleware.runtime_context.profile import ProfileSnapshot
 from ptc_agent.agent.middleware.runtime_context.state import STATE_BASELINE, state_get
 from ptc_agent.agent.middleware.runtime_context.templates import render_template
+from ptc_agent.agent.roles import AgentRole
 from ptc_agent.agent.tools.context_file_policy import MAX_AGENT_MD_SIZE, MAX_MEMORY_BLOCK_SIZE
 from ptc_agent.core.paths import (
     MEMO_INDEX_FILENAME,
@@ -123,15 +128,8 @@ NamespaceFactory = Callable[[], tuple[str, ...]]
 #: and marks the epoch incomplete; a string, empty included, is the text.
 BlockReader = Callable[[Any], str | None]
 
-# The harness-authored blocks, in the order they render. The label is what a
-# change row names: an element rather than a path, because neither one is a
-# file. Adding a third is an entry here plus its template.
-_BLOCKS: dict[str, tuple[str, str]] = {
-    "mcp_servers": ("envelope/baseline_mcp_servers.md.j2", "<mcp-servers>"),
-    "skills": ("envelope/baseline_skills.md.j2", "<skills>"),
-}
-
-BLOCK_KINDS: tuple[str, ...] = tuple(_BLOCKS)
+# The harness-authored blocks, in the order they render (see harness_blocks.py).
+BLOCK_KINDS: tuple[str, ...] = tuple(HARNESS_BLOCKS)
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +204,8 @@ class BaselineContextMiddleware(AgentMiddleware):
         files_mounted: Whether the file mount served as the agent was built,
             which a rebuild freezes for the static prompt to state. None for
             a build whose prompt says nothing about the mount.
+        role: The role the agent runs in, for the wording of the blocks that
+            differ by role. Fixed per build, so the block stays deterministic.
     """
 
     def __init__(
@@ -226,9 +226,11 @@ class BaselineContextMiddleware(AgentMiddleware):
         rebuild_after_updates: int = DEFAULT_REBUILD_AFTER_UPDATES,
         read_timeout_s: float = _READ_TIMEOUT_S,
         files_mounted: bool | None = None,
+        role: AgentRole = "analyst",
     ) -> None:
         super().__init__()
         self._session = session
+        self._role = role
         self._files_mounted = files_mounted
         # None is a read that did not answer (or a build with no workspace);
         # an empty string is a workspace with no name. Only the first is kept
@@ -255,7 +257,9 @@ class BaselineContextMiddleware(AgentMiddleware):
         )
         self._memo = resolved.memo if resolved.store is not None else None
         self._blocks: dict[str, BlockReader] = {
-            kind: reader for kind, reader in (blocks or {}).items() if kind in _BLOCKS
+            kind: reader
+            for kind, reader in (blocks or {}).items()
+            if kind in HARNESS_BLOCKS
         }
         # Both platform reads answer with a dict or None, and None is either
         # a failure or no user at all; neither is a profile the user cleared.
@@ -414,8 +418,8 @@ class BaselineContextMiddleware(AgentMiddleware):
         """One harness-authored block as this turn sees it."""
         read = SourceRead(
             kind=kind,
-            update_kind=f"{kind}_changed",
-            path=_BLOCKS[kind][1],
+            update_kind=harness_update_kind(kind),
+            path=HARNESS_BLOCKS[kind].label,
             available=False,
             provenance={"source": "harness"},
         )
@@ -570,7 +574,9 @@ class BaselineContextMiddleware(AgentMiddleware):
             if entry is None:
                 continue
             parts.append(
-                render_template(_BLOCKS[kind][0], content=entry.text, guidance=guidance)
+                render_template(
+                    HARNESS_BLOCKS[kind].template, content=entry.text, guidance=guidance
+                )
             )
 
         if epoch.has_files:
@@ -585,6 +591,7 @@ class BaselineContextMiddleware(AgentMiddleware):
                     path=epoch.agent_md.path or AGENT_MD_PATH,
                     content=epoch.agent_md.text,
                     guidance=guidance,
+                    role=self._role,
                 )
             )
 

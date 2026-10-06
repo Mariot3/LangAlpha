@@ -13,6 +13,8 @@ import { INTERVALS } from './utils/chartConstants';
 import { MARKET_VIEW_ROUTE_PARAMS, readMarketViewRoute } from './utils/marketRoute';
 import { useMarketChat } from './hooks/useMarketChat';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
+import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import type { Workspace } from '@/types/api';
 import type { StockSearchHit } from '@/lib/marketUtils';
 import { attachmentsToContexts } from '../ChatAgent/utils/fileUpload';
@@ -32,6 +34,7 @@ import { useStockData } from './hooks/useStockData';
 import { useStockQuoteModel } from './hooks/useStockQuoteModel';
 import { useChartAnnotationSync } from './hooks/useChartAnnotationSync';
 import { getOrFetchFlashWorkspaceId } from './utils/flashWorkspace';
+import { composerModeProps } from './utils/composerMode';
 import { marketViewAnnotationContext } from './constants/annotationPrompt';
 import { normalizeTimeframe, subscribeLiveAnnotationAdd } from './stores/chartAnnotationStore';
 import { chartSelectionStore, isConfirmedFor, useChartSelections } from './stores/chartSelectionStore';
@@ -192,6 +195,15 @@ function MarketViewInner() {
     savePref('mode', mode);
   }, [mode]);
 
+  // Under the all-workspaces agent 'fast' is All workspaces, which is always
+  // there. A stored workspace side with no workspace left to select would
+  // leave the chat panel with nothing to send to, so it falls back.
+  const allWorkspaces = useAllWorkspacesAgent();
+  useEffect(() => {
+    if (!allWorkspaces || mode !== 'ptc' || workspacePending) return;
+    if (isFetchedAfterMount && isSuccess && selectableWorkspaces.length === 0) setMode('fast');
+  }, [allWorkspaces, mode, workspacePending, isFetchedAfterMount, isSuccess, selectableWorkspaces.length]);
+
   // Indices, not text: the picks survive a language switch and only the words re-translate.
   const [quickQueryPicks, setQuickQueryPicks] = useState<number[]>(pickQuickQueryIndices);
   const quickQueries = useMemo(
@@ -231,7 +243,10 @@ function MarketViewInner() {
   // a new thread in the chat view, and its pick goes with that navigation.
   const flashThreadModel = useThreadModel({ threadId: flashThreadId, mode: 'fast', isLoading });
   const ptcThreadModel = useThreadModel({ threadId: null, mode: 'ptc', isLoading });
-  const threadModel = mode === 'fast' ? flashThreadModel : ptcThreadModel;
+  // Under the all-workspaces agent All workspaces opens a thread in Home, which
+  // runs the default model as a workspace does, so it takes the PTC side.
+  const modelMode = mode === 'fast' && !allWorkspaces ? 'fast' : 'ptc';
+  const threadModel = modelMode === 'fast' ? flashThreadModel : ptcThreadModel;
 
   // Resolve the user's flash workspace id once so we can scope chart
   // annotations to the workspace the chat is actually running in.
@@ -517,18 +532,27 @@ function MarketViewInner() {
     metaItems.push(...selectionAttachments);
     const attachmentMeta = metaItems.length > 0 ? metaItems : null;
 
-    if (mode === 'fast') {
+    if (mode === 'fast' && !allWorkspaces) {
       handleFastModeSend(outgoingMessage, imageContext, attachmentMeta, model);
       chartSelectionStore.clearAll();
     } else {
-      // PTC mode: use selected workspace or fall back to default
+      // PTC mode: use selected workspace or fall back to default. Under the
+      // all-workspaces agent, All workspaces hands off the same way on the
+      // flash row, which the server runs as Home on the full agent.
+      const toHome = mode === 'fast';
       try {
-        let workspaceId = selectedWorkspaceId;
+        const workspaceId = toHome
+          ? flashWorkspaceId ?? await getOrFetchFlashWorkspaceId()
+          : selectedWorkspaceId;
+        if (toHome && !workspaceId) {
+          toast({ variant: 'destructive', title: t('common.error'), description: t('agents.market.setupFailed') });
+          return;
+        }
         if (!workspaceId) {
           toast({
             variant: 'destructive',
             title: t('marketView.chatHistory.noWorkspace'),
-            description: t('marketView.chatPanel.noWorkspaceToast'),
+            description: allWorkspaces ? t('agents.market.noWorkspaceToast') : t('marketView.chatPanel.noWorkspaceToast'),
           });
           return;
         }
@@ -536,6 +560,7 @@ function MarketViewInner() {
         navigate(`/chat/t/__default__`, {
           state: {
             workspaceId,
+            ...(toHome ? FLASH_ROUTE_STATE : {}),
             initialMessage: outgoingMessage,
             planMode: planMode || false,
             additionalContext: imageContext,
@@ -554,13 +579,13 @@ function MarketViewInner() {
         toast({
           variant: 'destructive',
           title: t('common.error'),
-          description: t('marketView.chatPanel.ptcSetupFailed'),
+          description: allWorkspaces ? t('agents.market.setupFailed') : t('marketView.chatPanel.ptcSetupFailed'),
         });
       }
     }
     setChartImage(null);
     setChartImageDesc(null);
-  }, [handleFastModeSend, navigate, toast, t, chartImage, chartImageDesc, mode, selectedWorkspaceId, selectedStock, selectedInterval]);
+  }, [handleFastModeSend, navigate, toast, t, chartImage, chartImageDesc, mode, selectedWorkspaceId, selectedStock, selectedInterval, allWorkspaces, flashWorkspaceId]);
 
   const handleSidebarSymbolClick = useCallback((symbol: string) => {
     setSelectedStock(symbol);
@@ -674,7 +699,7 @@ function MarketViewInner() {
                 <ThreadModelNotices
                   retired={threadModel.retired}
                   offer={threadModel.offer}
-                  mode={mode}
+                  mode={modelMode}
                   onDismiss={threadModel.dismissOffer}
                 />
               </div>
@@ -682,10 +707,9 @@ function MarketViewInner() {
             <ChatInput
               onSend={(...args: any[]) => { (handleSendMessage as any)(...args); setChatExpanded(false); }}
               isLoading={isLoading}
-              mode={mode}
+              {...composerModeProps(allWorkspaces, mode, setMode)}
               model={threadModel.model}
               onPickModel={threadModel.pickModel}
-              onModeChange={setMode as any}
               workspaces={selectableWorkspaces}
               selectedWorkspaceId={selectedWorkspaceId}
               onWorkspaceChange={selectWorkspace}

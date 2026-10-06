@@ -10,6 +10,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
 import { cn } from '@/lib/utils';
 import { useOnboarding as usePersonalizationNav } from '@/pages/Dashboard/hooks/useOnboarding';
 import { useOnboarding } from '../OnboardingProvider';
@@ -21,6 +22,8 @@ import { useOnboarding } from '../OnboardingProvider';
  */
 export function GettingStartedCard() {
   const { gettingStarted } = useOnboarding();
+  // Words the tasks for a user on the all-workspaces agent.
+  const allWorkspaces = useAllWorkspacesAgent();
   const navigate = useNavigate();
   // Same flow as the dashboard banner: resolve the flash workspace and pass it
   // as router state — /chat/t/__default__ without state bounces back to /chat.
@@ -135,14 +138,14 @@ export function GettingStartedCard() {
                     color: done ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)',
                   }}
                 >
-                  {t(def.titleKey)}
+                  {t((allWorkspaces && def.allWorkspaces?.titleKey) || def.titleKey)}
                 </span>
                 {!done && (
                   <span
                     className="mt-0.5 block text-xs leading-relaxed"
                     style={{ color: 'var(--color-text-tertiary)' }}
                   >
-                    {t(def.descKey)}
+                    {t((allWorkspaces && def.allWorkspaces?.descKey) || def.descKey)}
                   </span>
                 )}
               </span>

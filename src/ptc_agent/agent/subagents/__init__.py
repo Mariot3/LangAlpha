@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ptc_agent.agent.roles import AgentRole
+
 from .builtins import BUILTIN_SUBAGENTS
 from .compiler import SubagentCompiler
 from .definition import SubagentDefinition, SubagentMode
@@ -23,6 +25,7 @@ def create_subagents(
     enabled_names: list[str],
     compiler: SubagentCompiler,
     event_capture_middleware: Any | None = None,
+    role: AgentRole | None = None,
 ) -> list[dict[str, Any]]:
     """Compile enabled subagents into SubAgent TypedDicts.
 
@@ -32,11 +35,13 @@ def create_subagents(
         compiler: The compiler with runtime context (sandbox, tools, etc.).
         event_capture_middleware: Optional middleware injected into every subagent
             for event capture (SSE streaming) and tool-call metrics.
+        role: The role of the agent the subagents serve; leaves out the ones
+            that role is not listed for. None keeps every enabled subagent.
 
     Returns:
         List of SubAgent TypedDicts ready for ``SubAgentMiddleware``.
     """
-    definitions = registry.get_enabled(enabled_names)
+    definitions = registry.get_enabled(enabled_names, role=role)
     subagents = compiler.compile_many(definitions)
 
     if event_capture_middleware is not None:

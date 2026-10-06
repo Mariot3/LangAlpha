@@ -19,9 +19,12 @@ from src.server.database.computer import (
     COMPUTER_STATUSES,
     get_computer,
 )
+from src.server.database.home_fold import fold_former_homes
 from src.server.database.livefs_links import drop_workspace_links
 from src.server.database.mcp_servers import start_new_workspace_selection
 from src.server.database.pool import get_db_connection
+from src.server.database.home_workspace import get_flash_workspace_id
+from src.server.database.runs.lifecycle import workspace_has_live_runs
 from src.server.database.sql_fences import (
     FENCE_LIVE_WORKSPACE,
     FENCE_NOT_DELETED,
@@ -50,8 +53,6 @@ from src.server.services.workspace_status_pubsub import publish_status_change
 from src.server.utils.pg_sanitize import normalize_uuid
 
 logger = logging.getLogger(__name__)
-
-FLASH_WORKSPACE_NAMESPACE = uuid.UUID("f1a50000-0000-5000-e000-f1a500000000")
 
 # A shared literal column list keeps dict_row shapes consistent and interpolation safe.
 _WS_COLUMNS: tuple[str, ...] = (
@@ -103,10 +104,6 @@ def _ws_cols(alias: str = "") -> str:
 
 _WS_COLS = _ws_cols()
 
-# Whitelist column names because SQL identifiers cannot be bound parameters.
-_SETTABLE_SCALAR_COLUMNS = frozenset({"resource_tier", "is_always_on"})
-
-
 def _mirrors_to_computer(status: str) -> bool:
     """Deleting a project must not delete a shared machine; ComputerManager owns machine teardown."""
     return status in COMPUTER_STATUSES and status != "deleted"
@@ -131,8 +128,16 @@ async def _ws_transaction(conn=None):
             yield cur
 
 
-def get_flash_workspace_id(user_id: str) -> str:
-    return str(uuid.uuid5(FLASH_WORKSPACE_NAMESPACE, user_id))
+class FlashWorkspaceTaken(RuntimeError):
+    """The user's flash id names a row another account owns.
+
+    An account merge moves an account's rows onto the account it joins, flash
+    row included, so a merged id that signs in again finds its flash id held by
+    the account it joined.
+    """
+
+    def __init__(self, workspace_id: str, user_id: str) -> None:
+        super().__init__(f"flash workspace {workspace_id} for user {user_id} is owned by another user")
 
 
 async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, Any]:
@@ -141,6 +146,11 @@ async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, An
     Every Flash turn lands here, so a row that exists is touched in one
     statement with no lock. Only a miss opens a transaction and takes the
     lock, so the workspace commits with the MCP selection it starts with.
+    Both statements match the owner as well as the id: the row is the one a
+    turn runs in and Home binds, so another account's must never come back.
+    An account merge can leave a former flash row beside it, which every
+    resolve tries to fold in; a row with a run in progress, or a fold that
+    fails, waits for a later resolve.
     """
     from psycopg.types.json import Json
 
@@ -152,10 +162,10 @@ async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, An
             await cur.execute(
                 f"""
                 UPDATE workspaces SET updated_at = NOW(), is_pinned = TRUE
-                WHERE workspace_id = %s
+                WHERE workspace_id = %s AND user_id = %s
                 RETURNING {_WS_COLS}
                 """,
-                (workspace_id,),
+                (workspace_id, user_id),
             )
             result = await cur.fetchone()
         if result is None:
@@ -166,6 +176,7 @@ async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, An
                     INSERT INTO workspaces (workspace_id, user_id, name, description, config, status, is_pinned)
                     VALUES (%s, %s, %s, %s, %s, %s, TRUE)
                     ON CONFLICT (workspace_id) DO UPDATE SET updated_at = NOW(), is_pinned = TRUE
+                    WHERE workspaces.user_id = EXCLUDED.user_id
                     RETURNING {_WS_COLS}, (xmax = 0) AS inserted
                     """,
                     (
@@ -177,18 +188,27 @@ async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, An
                         "flash",
                     ),
                 )
-                result = dict(await cur.fetchone())
+                row = await cur.fetchone()
+                if row is None:
+                    raise FlashWorkspaceTaken(workspace_id, user_id)
+                result = dict(row)
                 # False when a concurrent first turn inserted it while this
                 # one waited on the lock; that one started the selection.
                 if result.pop("inserted"):
                     await start_new_workspace_selection(cur, user_id, workspace_id)
 
         logger.info(f"Upserted flash workspace: {workspace_id} for user: {user_id}")
-        return dict(result)
 
     except Exception as e:
         logger.error(f"Error upserting flash workspace for user {user_id}: {e}")
         raise
+
+    try:
+        await fold_former_homes(user_id, workspace_id, conn)
+    except Exception:
+        # Home itself resolved; the fold retries on the next resolve.
+        logger.exception(f"[home_fold] fold into {workspace_id} failed")
+    return dict(result)
 
 
 async def create_workspace(
@@ -406,7 +426,9 @@ async def bind_workspace_to_computer(
     is what the edge resolve passes; the CAS is what stops two concurrent binds
     from each creating a machine for it. The shadow columns come from the
     machine, as create_workspace_on_computer's insert does: a row left naming
-    the old machine's lifecycle is what wedges the idle reaper.
+    the old machine's lifecycle is what wedges the idle reaper. A flash row
+    passes the fence because this is how it becomes the user's Home; the
+    callers decide which rows may be bound.
     """
     from psycopg.errors import UniqueViolation
 
@@ -453,7 +475,7 @@ async def bind_workspace_to_computer(
                 FROM comp
                 WHERE w.workspace_id = %(workspace_id)s
                   AND w.computer_id IS NOT DISTINCT FROM %(expected)s
-                  AND w.{FENCE_LIVE_WORKSPACE}
+                  AND w.{FENCE_NOT_DELETED}
                 RETURNING {_ws_cols("w")}
                 """,
                 {
@@ -511,6 +533,30 @@ async def get_live_workspace_ids_for_computer(
             SELECT workspace_id
             FROM workspaces
             WHERE computer_id = %s AND status <> 'deleted'
+            ORDER BY created_at
+            """,
+            (computer_id,),
+        )
+        return [str(r["workspace_id"]) for r in await cur.fetchall()]
+
+
+async def get_restore_owed_workspace_ids_for_computer(
+    computer_id: str,
+    *,
+    conn=None,
+) -> List[str]:
+    """Live workspaces on a computer whose files a recreate has not restored yet."""
+    computer_id = normalize_uuid(computer_id)
+    if computer_id is None:
+        return []
+
+    async with _ws_cursor(conn) as cur:
+        await cur.execute(
+            """
+            SELECT workspace_id
+            FROM workspaces
+            WHERE computer_id = %s AND status <> 'deleted'
+              AND files_restore_incomplete_at IS NOT NULL
             ORDER BY created_at
             """,
             (computer_id,),
@@ -852,10 +898,21 @@ async def get_workspaces_for_user(
 ) -> Tuple[List[Dict[str, Any]], int]:
     try:
         status_filter = "" if include_deleted else "AND status != 'deleted'"
-        flash_filter = "" if include_flash else "AND status != 'flash'"
+        # The flash row by its id too: bound as Home it reads its computer's status.
+        flash_filter = (
+            ""
+            if include_flash
+            else "AND status != 'flash' AND workspace_id <> %(flash_id)s"
+        )
+        params = {"user_id": user_id, "flash_id": get_flash_workspace_id(user_id)}
 
+        # Every order ends on workspace_id, appended below: rows that tie would
+        # otherwise come back in any order, which shifts an offset page and
+        # rewrites the Chief of Staff's activity block with nothing changed.
         if sort_by == "activity":
             order_clause = "is_pinned DESC, COALESCE(last_activity_at, updated_at) DESC"
+        elif sort_by == "recent":
+            order_clause = "COALESCE(last_activity_at, updated_at) DESC"
         elif sort_by == "name":
             order_clause = "is_pinned DESC, name ASC"
         else:
@@ -866,9 +923,9 @@ async def get_workspaces_for_user(
                 f"""
                 SELECT COUNT(*) as total
                 FROM workspaces
-                WHERE user_id = %s {status_filter} {flash_filter}
+                WHERE user_id = %(user_id)s {status_filter} {flash_filter}
                 """,
-                (user_id,),
+                params,
             )
             count_result = await cur.fetchone()
             total = count_result["total"] if count_result else 0
@@ -877,11 +934,11 @@ async def get_workspaces_for_user(
                 f"""
                 SELECT {_WS_COLS}
                 FROM workspaces
-                WHERE user_id = %s {status_filter} {flash_filter}
-                ORDER BY {order_clause}
-                LIMIT %s OFFSET %s
+                WHERE user_id = %(user_id)s {status_filter} {flash_filter}
+                ORDER BY {order_clause}, workspace_id DESC
+                LIMIT %(limit)s OFFSET %(offset)s
                 """,
-                (user_id, limit, offset),
+                {**params, "limit": limit, "offset": offset},
             )
             results = await cur.fetchall()
         return [dict(r) for r in results], total
@@ -1078,71 +1135,6 @@ class SandboxIdentityLostError(SandboxTransientError):
         )
 
 
-async def _set_workspace_scalar(
-    workspace_id: str,
-    column: str,
-    value: Any,
-    *,
-    conn=None,
-) -> Optional[Dict[str, Any]]:
-    """Whitelist interpolated columns with _SETTABLE_SCALAR_COLUMNS to prevent injection.
-
-    Update both machine and shadow atomically because platform entitlements count
-    these columns on workspaces.
-    """
-    if column not in _SETTABLE_SCALAR_COLUMNS:
-        raise ValueError(f"Column not settable via _set_workspace_scalar: {column!r}")
-
-    try:
-        now = datetime.now(timezone.utc)
-
-        async with _ws_cursor(conn) as cur:
-            await cur.execute(
-                shadowed_write(
-                    authority="workspace",
-                    computer_set=f"{column} = %(value)s",
-                    workspace_set=f"{column} = %(value)s",
-                    workspace_fence=FENCE_NOT_DELETED,
-                    computer_returning="c.computer_id AS mirrored_computer_id",
-                    workspace_returning=_WS_COLS,
-                    select=(
-                        "SELECT * FROM shadow WHERE workspace_id = %(workspace_id)s"
-                    ),
-                    fan_out=True,
-                    now="%(now)s",
-                ),
-                {"value": value, "now": now, "workspace_id": workspace_id},
-            )
-            result = await cur.fetchone()
-
-        if result:
-            logger.info(f"Set workspace {workspace_id} {column} to: {value}")
-            return dict(result)
-        return None
-
-    except Exception as e:
-        logger.error(f"Error setting workspace {workspace_id} {column}: {e}")
-        raise
-
-
-async def set_workspace_resource_tier(
-    workspace_id: str,
-    tier: str,
-    *,
-    conn=None,
-) -> Optional[Dict[str, Any]]:
-    return await _set_workspace_scalar(workspace_id, "resource_tier", tier, conn=conn)
-
-
-async def set_workspace_always_on(
-    workspace_id: str,
-    enabled: bool,
-    *,
-    conn=None,
-) -> Optional[Dict[str, Any]]:
-    return await _set_workspace_scalar(workspace_id, "is_always_on", enabled, conn=conn)
-
-
 ANY_SANDBOX: Any = object()
 """Skip the identity guard on the completeness flag, for a runtime with no id."""
 
@@ -1157,9 +1149,8 @@ async def set_files_restore_incomplete(
     """Fence restore bookkeeping by sandbox identity, including None, across provisional binds.
 
     A raise names the CAS replacement target; a clear names the certified sandbox,
-    so neither changes a row another provisioner bound. Avoid _set_workspace_scalar:
-    its user-settings allowlist and updated_at bump would reshuffle the gallery
-    after a failed restore.
+    so neither changes a row another provisioner bound. It leaves updated_at
+    alone: a bump would reshuffle the gallery after a failed restore.
     """
     guarded = sandbox_id is not ANY_SANDBOX
     guard = "AND sandbox_id IS NOT DISTINCT FROM %s" if guarded else ""
@@ -1339,23 +1330,7 @@ async def delete_workspace(
                     "SELECT workspace_id FROM workspaces WHERE workspace_id = %s FOR UPDATE",
                     (workspace_id,),
                 )
-                await cur.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1 FROM conversation_responses r
-                        JOIN conversation_threads t
-                          ON t.conversation_thread_id = r.conversation_thread_id
-                        WHERE t.workspace_id = %s AND r.status = 'in_progress'
-                        UNION ALL
-                        SELECT 1 FROM subagent_runs r
-                        JOIN conversation_threads t
-                          ON t.conversation_thread_id = r.thread_id
-                        WHERE t.workspace_id = %s AND r.status = 'in_progress'
-                    ) AS busy
-                    """,
-                    (workspace_id, workspace_id),
-                )
-                if (await cur.fetchone())["busy"]:
+                if await workspace_has_live_runs(cur, workspace_id):
                     raise WorkspaceBusyError(
                         "This workspace has active work. Stop it or wait for it to finish before deleting."
                     )

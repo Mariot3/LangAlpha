@@ -15,11 +15,10 @@ Actions emitted via context_window events (values preserved as wire protocol):
 import asyncio
 import warnings
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from langchain_core.messages import AIMessage, AnyMessage
-from langchain_core.messages.utils import trim_messages
 from langchain_core.exceptions import ContextOverflowError
 from langgraph.config import get_config, get_stream_writer
 from langgraph.types import Command
@@ -47,7 +46,6 @@ from ptc_agent.agent.middleware.compaction.types import (
     ContextSize,
     TruncateArgsSettings,
     TokenCounter,
-    _DEFAULT_FALLBACK_MESSAGE_COUNT,
     _DEFAULT_MESSAGES_TO_KEEP,
     _DEFAULT_TRIM_TOKEN_LIMIT,
 )
@@ -61,6 +59,11 @@ from ptc_agent.agent.middleware.compaction.utils import (
     partition_at_cutoff,
     truncate_message_args,
     truncate_read_results,
+)
+from ptc_agent.agent.middleware.compaction.model import (
+    max_input_tokens,
+    summary_trim_budget,
+    trim_for_summary,
 )
 from ptc_agent.agent.middleware.compaction.offloading import (
     aoffload_base64_content,
@@ -224,6 +227,11 @@ class CompactionMiddleware(AgentMiddleware):
         self.token_counter = token_counter
         self.summary_prompt = summary_prompt
         self.trim_tokens_to_summarize = trim_tokens_to_summarize
+        # One failed summary stops summarizing for the life of this instance,
+        # which is one turn: the agent is built per turn and its subagents
+        # share it. A hung summary model would otherwise hold every later call
+        # over the threshold for the whole timeout.
+        self._summary_failed = False
 
         # Backend for offloading conversation history to sandbox (immutable config)
         self._backend = backend
@@ -249,7 +257,7 @@ class CompactionMiddleware(AgentMiddleware):
         )
         if self.keep[0] == "fraction":
             requires_profile = True
-        if requires_profile and self._get_profile_limits() is None:
+        if requires_profile and max_input_tokens(self.model) is None:
             msg = (
                 "Model profile information is required to use fractional token limits, "
                 "and is unavailable for the specified model. Please use absolute token "
@@ -415,6 +423,9 @@ class CompactionMiddleware(AgentMiddleware):
                     ),
                 )
             except ContextOverflowError:
+                if self._summary_failed:
+                    # The fallback is the summary that already failed this turn.
+                    raise
                 # Fall through to summarization as emergency fallback
                 logger.warning(
                     "[Compaction] ContextOverflowError caught, triggering emergency summarization"
@@ -464,6 +475,31 @@ class CompactionMiddleware(AgentMiddleware):
                 self._backend, self._transcript_target(), request.messages
             ),
         )
+        if summary is None:
+            # A failed summary must not stand in for the history it was to
+            # replace, so this compaction is dropped and the next turn retries
+            # it on the same history.
+            self._summary_failed = True
+            logger.warning(
+                "[Compaction] Summary failed, no further compaction this turn"
+            )
+            response = await handler(request.override(messages=truncated_messages))
+            cached_input_tokens, cached_output_tokens = self._extract_token_usage(
+                response
+            )
+            return ExtendedModelResponse(
+                model_response=response,
+                command=Command(
+                    update=self._build_state_update(
+                        offloaded_tool_call_ids=offloaded_tool_call_ids,
+                        offloaded_read_result_ids=offloaded_read_result_ids,
+                        last_truncation_msg_count=last_truncation_msg_count,
+                        cached_input_tokens=cached_input_tokens,
+                        cached_output_tokens=cached_output_tokens,
+                        offloads_changed=state_changed,
+                    )
+                ),
+            )
 
         # Create summarization event with an id anchor (cutoff grounded in raw list)
         new_event = build_summary_event(
@@ -603,6 +639,8 @@ class CompactionMiddleware(AgentMiddleware):
                     ),
                 )
             except ContextOverflowError:
+                if self._summary_failed:
+                    raise
                 logger.warning(
                     "[Compaction] ContextOverflowError caught, triggering emergency summarization"
                 )
@@ -641,6 +679,29 @@ class CompactionMiddleware(AgentMiddleware):
         summary = self._create_summary(
             messages_to_summarize, original_count=len(truncated_messages)
         )
+        if summary is None:
+            # Dropped like the async path's: the next turn retries it.
+            self._summary_failed = True
+            logger.warning(
+                "[Compaction] Summary failed, no further compaction this turn"
+            )
+            response = handler(request.override(messages=truncated_messages))
+            cached_input_tokens, cached_output_tokens = self._extract_token_usage(
+                response
+            )
+            return ExtendedModelResponse(
+                model_response=response,
+                command=Command(
+                    update=self._build_state_update(
+                        offloaded_tool_call_ids=offloaded_tool_call_ids,
+                        offloaded_read_result_ids=offloaded_read_result_ids,
+                        last_truncation_msg_count=last_truncation_msg_count,
+                        cached_input_tokens=cached_input_tokens,
+                        cached_output_tokens=cached_output_tokens,
+                        offloads_changed=state_changed,
+                    )
+                ),
+            )
         new_event = build_summary_event(
             summary,
             None,
@@ -768,10 +829,10 @@ class CompactionMiddleware(AgentMiddleware):
         if trigger_type == "tokens":
             return total_tokens >= trigger_value
         if trigger_type == "fraction":
-            max_input_tokens = self._get_profile_limits()
-            if max_input_tokens is None:
+            window = max_input_tokens(self.model)
+            if window is None:
                 return False
-            threshold = int(max_input_tokens * trigger_value)
+            threshold = int(window * trigger_value)
             if threshold <= 0:
                 threshold = 1
             return total_tokens >= threshold
@@ -799,13 +860,13 @@ class CompactionMiddleware(AgentMiddleware):
 
         if keep_type in {"tokens", "fraction"}:
             if keep_type == "fraction":
-                max_input_tokens = self._get_profile_limits()
-                if max_input_tokens is None:
+                window = max_input_tokens(self.model)
+                if window is None:
                     messages_to_keep = 20
                     if len(messages) <= messages_to_keep:
                         return len(messages)
                     return len(messages) - messages_to_keep
-                target_token_count = int(max_input_tokens * keep_value)
+                target_token_count = int(window * keep_value)
             else:
                 target_token_count = int(keep_value)
 
@@ -953,7 +1014,7 @@ class CompactionMiddleware(AgentMiddleware):
 
     def _should_summarize(self, messages: list[AnyMessage], total_tokens: int) -> bool:
         """Determine whether summarization should run for the current token usage."""
-        if not self._trigger_conditions:
+        if not self._trigger_conditions or self._summary_failed:
             return False
 
         for kind, value in self._trigger_conditions:
@@ -965,10 +1026,10 @@ class CompactionMiddleware(AgentMiddleware):
                 )
                 return True
             if kind == "fraction":
-                max_input_tokens = self._get_profile_limits()
-                if max_input_tokens is None:
+                window = max_input_tokens(self.model)
+                if window is None:
                     continue
-                threshold = int(max_input_tokens * value)
+                threshold = int(window * value)
                 if threshold <= 0:
                     threshold = 1
                 if total_tokens >= threshold:
@@ -992,10 +1053,10 @@ class CompactionMiddleware(AgentMiddleware):
 
         kind, value = self.keep
         if kind == "fraction":
-            max_input_tokens = self._get_profile_limits()
-            if max_input_tokens is None:
+            window = max_input_tokens(self.model)
+            if window is None:
                 return None
-            target_token_count = int(max_input_tokens * value)
+            target_token_count = int(window * value)
         elif kind == "tokens":
             target_token_count = int(value)
         else:
@@ -1030,23 +1091,6 @@ class CompactionMiddleware(AgentMiddleware):
             cutoff_candidate = len(messages) - 1
 
         return find_group_safe_cutoff(messages, cutoff_candidate)
-
-    def _get_profile_limits(self) -> int | None:
-        """Retrieve max input token limit from the model profile."""
-        try:
-            profile = self.model.profile
-        except AttributeError:
-            return None
-
-        if not isinstance(profile, Mapping):
-            return None
-
-        max_input_tokens = profile.get("max_input_tokens")
-
-        if not isinstance(max_input_tokens, int):
-            return None
-
-        return max_input_tokens
 
     def _validate_context_size(
         self, context: ContextSize, parameter_name: str
@@ -1175,14 +1219,18 @@ class CompactionMiddleware(AgentMiddleware):
 
     def _create_summary(
         self, messages_to_summarize: list[AnyMessage], *, original_count: int = 0
-    ) -> str:
-        """Generate summary for the given messages (sync version)."""
+    ) -> str | None:
+        """Generate summary for the given messages (sync version).
+
+        None means the call failed or came back empty, as in the async version.
+        """
         if not messages_to_summarize:
             return "No previous conversation history."
 
         trimmed_messages = self._trim_messages_for_summary(messages_to_summarize)
         if not trimmed_messages:
-            return "Previous conversation was too long to summarize."
+            # Nothing new fits the summary budget: a failed summary.
+            return None
 
         # Strip base64 blobs so the summarization LLM doesn't receive them
         trimmed_messages = strip_base64_from_messages(trimmed_messages)
@@ -1198,10 +1246,12 @@ class CompactionMiddleware(AgentMiddleware):
                 _build_summary_request(self.summary_prompt, trimmed_messages)
             )
             summary = self._extract_summary_text(response)
+            if not summary:
+                raise RuntimeError("Compaction LLM returned empty summary")
         except BaseException as e:
             self._emit_context_signal("summarize", "error", error=str(e))
             if isinstance(e, Exception):
-                return f"Error generating summary: {e!s}"
+                return None
             raise
 
         self._emit_context_signal(
@@ -1219,11 +1269,12 @@ class CompactionMiddleware(AgentMiddleware):
         *,
         original_count: int = 0,
         trimmed: list[AnyMessage] | None = None,
-    ) -> str:
+    ) -> str | None:
         """Generate summary for the given messages (async version with custom events).
 
         ``trimmed`` is the already-trimmed list, for a caller that also needs
-        to know what trimming dropped.
+        to know what trimming dropped. None means the call failed or came back
+        empty, as manual compaction treats it, and its error signal is out.
         """
         if not messages_to_summarize:
             return "No previous conversation history."
@@ -1234,7 +1285,8 @@ class CompactionMiddleware(AgentMiddleware):
             else self._trim_messages_for_summary(messages_to_summarize)
         )
         if not trimmed_messages:
-            return "Previous conversation was too long to summarize."
+            # Nothing new fits the summary budget: a failed summary.
+            return None
 
         # Offload base64 blobs to sandbox (or strip if no backend)
         trimmed_messages = await aoffload_base64_content(
@@ -1256,9 +1308,9 @@ class CompactionMiddleware(AgentMiddleware):
             #
             # Wall-clock budget: a hung summarize raises TimeoutError, which the
             # except below treats like any LLM failure — emits the error signal
-            # (closing the window so the admission guard releases) and returns a
-            # fallback string. The timeout lives on the call so it fails
-            # naturally instead of blocking the in-flight turn forever.
+            # (closing the window so the admission guard releases) and returns
+            # None. The timeout lives on the call so it fails naturally instead
+            # of blocking the in-flight turn forever.
             response = await asyncio.wait_for(
                 self.model.ainvoke(
                     _build_summary_request(self.summary_prompt, trimmed_messages)
@@ -1266,10 +1318,12 @@ class CompactionMiddleware(AgentMiddleware):
                 timeout=get_compaction_timeout(),
             )
             summary = self._extract_summary_text(response)
+            if not summary:
+                raise RuntimeError("Compaction LLM returned empty summary")
         except BaseException as e:
             self._emit_context_signal("summarize", "error", error=str(e))
             if isinstance(e, Exception):
-                return f"Error generating summary: {e!s}"
+                return None
             raise
 
         self._emit_context_signal(
@@ -1285,40 +1339,11 @@ class CompactionMiddleware(AgentMiddleware):
         self, messages: list[AnyMessage]
     ) -> list[AnyMessage]:
         """Trim messages to fit within summary generation limits."""
-        if not messages:
-            return messages
-
-        # If no trim limit set, return all messages
         if self.trim_tokens_to_summarize is None:
             return messages
-
-        try:
-            trimmed = cast(
-                "list[AnyMessage]",
-                trim_messages(
-                    messages,
-                    max_tokens=self.trim_tokens_to_summarize,
-                    token_counter=self.token_counter,
-                    start_on="human",
-                    strategy="last",
-                    allow_partial=True,
-                    include_system=True,
-                ),
-            )
-
-            # If trim_tokens_to_summarize is too restrictive and returns empty,
-            # fall back to keeping the last N messages instead of failing
-            if not trimmed:
-                logger.warning(
-                    f"[Compaction] trim_tokens_to_summarize={self.trim_tokens_to_summarize} "
-                    f"is too restrictive, falling back to last {_DEFAULT_FALLBACK_MESSAGE_COUNT} messages"
-                )
-                return messages[-_DEFAULT_FALLBACK_MESSAGE_COUNT:]
-
-            return trimmed
-        except Exception as e:
-            logger.warning(f"[Compaction] trim_messages failed: {e}, using fallback")
-            return messages[-_DEFAULT_FALLBACK_MESSAGE_COUNT:]
+        return trim_for_summary(
+            messages, self.trim_tokens_to_summarize, self.token_counter
+        )
 
     # =========================================================================
     # Factory
@@ -1377,7 +1402,7 @@ class CompactionMiddleware(AgentMiddleware):
             model=compaction_model,
             trigger=("tokens", token_threshold),
             keep=("messages", keep_messages),
-            trim_tokens_to_summarize=token_threshold + 50000,
+            trim_tokens_to_summarize=summary_trim_budget(compaction_model, token_threshold),
             summary_prompt=DEFAULT_SUMMARY_PROMPT,
             backend=backend,
             truncate_args_settings=truncate_args_settings,

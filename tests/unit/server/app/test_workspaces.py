@@ -80,6 +80,18 @@ async def client():
         yield c
 
 
+def test_home_answers_as_the_flash_row_while_bound():
+    """Clients know Home by this status alone. Bound to a computer, its row
+    carries the computer's status, and reporting that would make Home an
+    ordinary workspace on every surface."""
+    from src.server.app.workspaces import _workspace_to_response
+    from src.server.database.home_workspace import get_flash_workspace_id
+
+    home = _ws(workspace_id=get_flash_workspace_id("test-user-123"), name="Flash")
+    assert _workspace_to_response(home).status == "flash"
+    assert _workspace_to_response(_ws()).status == "running"
+
+
 # ---------------------------------------------------------------------------
 # POST /api/v1/workspaces — create workspace
 # ---------------------------------------------------------------------------
@@ -259,6 +271,22 @@ async def test_get_flash_workspace_error(client):
         resp = await client.post("/api/v1/workspaces/flash")
 
     assert resp.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_a_flash_id_another_account_holds_is_forbidden(client):
+    """An account merge carries the merged account's flash row onto the account
+    it joins. Every app load asks for it, and no retry makes it the caller's."""
+    from src.server.database.workspace import FlashWorkspaceTaken
+
+    with patch(
+        "src.server.app.workspaces.get_or_create_flash_workspace",
+        new_callable=AsyncMock,
+        side_effect=FlashWorkspaceTaken("flash-ws", "test-user-123"),
+    ):
+        resp = await client.post("/api/v1/workspaces/flash")
+
+    assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +755,29 @@ async def test_start_workspace_not_found(client):
         )
 
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_starting_a_former_flash_row_that_home_folded_in_is_not_found(client):
+    """Binding Home folds the user's other flash rows into it and retires
+    them, so the row this start named is gone by the time it is read again."""
+    former = _ws(status="flash", computer_id=None)
+    ensure_home = AsyncMock()
+    with (
+        patch(
+            "src.server.app.workspaces.db_get_workspace",
+            AsyncMock(side_effect=[former, None]),
+        ),
+        patch("src.server.app.workspaces.home_enabled", AsyncMock(return_value=True)),
+        patch("src.server.app.workspaces.ensure_home", ensure_home),
+        patch("src.server.app.workspaces.WorkspaceManager") as MockWM,
+    ):
+        MockWM.get_instance.return_value = AsyncMock()
+
+        resp = await client.post(f"/api/v1/workspaces/{former['workspace_id']}/start")
+
+    assert resp.status_code == 404
+    ensure_home.assert_awaited_once_with("test-user-123", former)
 
 
 @pytest.mark.asyncio

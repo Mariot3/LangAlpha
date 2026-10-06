@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from src.server.database.home_workspace import get_flash_workspace_id
 from src.server.database.runs.lifecycle import RunSlotBusyError
 from src.server.handlers.chat.admission_gate import (
     ADMISSION_CONFLICT_CODES,
@@ -126,7 +127,11 @@ def _firing(turns, *, runs=None, busy=(), fresh=None, is_byok=(False,)):
         patch(f"{_MOD}.has_any_oauth_token", new=AsyncMock(return_value=False)),
         patch(f"{_MOD}.enforce_credit_limit", new=fx.credit),
         patch(
-            f"{_MOD}.get_or_create_flash_workspace",
+            "src.server.services.turn_runtime.home_enabled",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "src.server.database.workspace.get_or_create_flash_workspace",
             new=AsyncMock(return_value={"workspace_id": "ws-1"}),
         ),
         patch(f"{_MOD}.WebhookClient", return_value=MagicMock(fire_event=fx.started)),
@@ -362,3 +367,38 @@ async def test_an_automation_turn_runs_its_own_model_not_the_threads(llm_model):
     assert kwargs["request"].llm_model == llm_model
     assert kwargs.get("named_model") is None
     turn_model.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flag", "agent", "role"),
+    [(False, "flash", None), (True, "ptc", "chief_of_staff")],
+    ids=["flag_off", "flag_on"],
+)
+async def test_a_chief_of_staff_automation_follows_the_flag(flag, agent, role):
+    """The Chief of Staff files its automations as PTC in Home.
+
+    With the flag off they run on Flash like every other turn there, so the
+    rollback starts no computer; they once went straight to the full agent.
+    """
+    home_id = get_flash_workspace_id(_USER)
+    home = {"workspace_id": home_id, "user_id": _USER, "status": "running", "computer_id": "c-1"}
+    manager = MagicMock(ensure_home_bound=AsyncMock())
+    with (
+        _firing([_streams]) as fx,
+        patch("src.server.services.turn_runtime.home_enabled", new=AsyncMock(return_value=flag)),
+        patch("src.server.database.workspace.get_workspace", new=AsyncMock(return_value=home)),
+        patch(
+            "src.server.services.workspace_manager.WorkspaceManager.get_instance",
+            return_value=manager,
+        ),
+    ):
+        await AutomationExecutor().execute(
+            _automation(agent_mode="ptc", workspace_id=home_id), _EXEC
+        )
+
+    turn = fx.astream.call_args.kwargs
+    assert turn["request"].agent_mode == agent
+    assert turn["request"].workspace_id == home_id
+    assert turn.get("role") == role
+    assert manager.ensure_home_bound.await_count == int(flag)

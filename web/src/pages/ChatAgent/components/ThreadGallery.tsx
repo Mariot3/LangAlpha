@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { ArrowLeft, Folder, FileText, Zap, Archive } from 'lucide-react';
+import { ArrowLeft, Folder, FileText, Archive } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useAllWorkspacesAgent, useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
+import { FLASH_ROUTE_STATE, FlashRowIcon } from '@/hooks/useFlashWorkspace';
 import { useNavigate, useParams, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,7 +25,10 @@ import { clampPanelWidth as clampPanelWidthUtil } from '@/lib/panelUtils';
 import SandboxSettingsPanel from './SandboxSettingsPanel';
 import { deleteThread, updateThreadTitle, updateThread } from '../utils/api';
 import { isValidUuid } from '../utils/uuid';
-import { useWorkspaceFiles } from '../hooks/useWorkspaceFiles';
+import { WorkspaceProvider } from '../contexts/WorkspaceContext';
+import { useComputerFolders } from '../hooks/useComputerFolders';
+import { usePanelFiles } from './chatView/usePanelFiles';
+import { usePanelAsks, usePanelLinkOpen } from './chatView/usePanelLinks';
 import { getStoredThreadId, removeStoredThreadId } from '../hooks/utils/threadStorage';
 import { saveChatSession } from '../hooks/utils/chatSessionRestore';
 import iconComputerLight from '../../../assets/img/icon-computer.svg';
@@ -75,9 +80,15 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   const { data: wsData, error: wsError } = useWorkspace(workspaceId);
   // Keep location.state values as instant display fallbacks during navigation
   const locationState = location.state as Record<string, unknown> | null;
-  const workspaceName = (wsData?.name || locationState?.workspaceName || '') as string;
   const workspaceStatus = (wsData?.status || locationState?.workspaceStatus || null) as string | null;
+  const label = useWorkspaceLabel();
+  const workspaceName = (label(wsData) || locationState?.workspaceName || '') as string;
+  const allWorkspaces = useAllWorkspacesAgent();
   const isFlash = workspaceStatus === 'flash';
+  // Under the all-workspaces agent the flash row is Home: the full agent with
+  // a folder of its own, so its threads open without Flash's mode and its
+  // files show. It still has no machine controls of its own.
+  const flashMode = isFlash && !allWorkspaces;
 
   // Archived view toggle. Both views live under the byWorkspace prefix
   // (queryKeys.threads.gallery), so prefix invalidations refresh both — and
@@ -152,7 +163,6 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   const [showFilePanel, setShowFilePanel] = useState(false);
   const [showSandboxPanel, setShowSandboxPanel] = useState(false);
   const [filePanelWidth, setFilePanelWidth] = useState(850);
-  const [filePanelTargetFile, setFilePanelTargetFile] = useState<string | null>(null);
   // Show system files in FilePanel (.agents/, code/, tools/, etc.)
   const [showSystemFiles, setShowSystemFiles] = useState(
     () => localStorage.getItem('filePanel.showSystemFiles') === 'true'
@@ -181,13 +191,54 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   // no overflow the sentinel is simply already on screen.
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
-  // Shared workspace files for the FilePanel (skip for flash workspaces -- no sandbox)
+  // Shared workspace files for the FilePanel (skip for Flash -- no sandbox).
+  // A link in one of them can open a sibling's files read-only in their
+  // place; the composer and the Files card keep listing the workspace's own.
   const {
+    override: panelOverride,
+    setOverride: setPanelOverride,
+    shownWorkspaceId,
     files: panelFiles,
     loading: panelFilesLoading,
     error: panelFilesError,
     refresh: refreshPanelFiles,
-  } = useWorkspaceFiles(isFlash ? null : workspaceId, { includeSystem: showSystemFiles });
+    mentionFiles: ownFiles,
+    panelAccess,
+  } = usePanelFiles({
+    isHome: isFlash && allWorkspaces,
+    isFlashMode: flashMode,
+    workspaceId,
+    workspaceName,
+    includeSystem: showSystemFiles,
+  });
+  // A path names a sibling by its folder from the workspace it was written
+  // in: the gallery's own for the link router, the shown one's for the
+  // documents the panel renders.
+  const folders = useComputerFolders(workspaceId);
+  const panelFolders = useComputerFolders(shownWorkspaceId);
+  const {
+    panelTarget,
+    askPanel,
+    handleTargetHandled,
+    handleTargetMemoryHandled,
+    handleTargetMemoHandled,
+    handleFilesLeaveGuardChange,
+    leaveFiles,
+  } = usePanelAsks();
+  const handleOpenFile = usePanelLinkOpen({
+    workspaceId,
+    folders,
+    override: panelOverride,
+    setOverride: setPanelOverride,
+    ownFiles: !flashMode,
+    land: askPanel,
+    leave: leaveFiles,
+  });
+  // The gallery stays mounted from one workspace to the next, and a sibling
+  // the last one's panel showed need not be a sibling of this one.
+  useEffect(() => {
+    setPanelOverride(null);
+  }, [workspaceId, setPanelOverride]);
 
   const navigate = useNavigate();
   const { threadId: currentThreadId } = useParams();
@@ -234,11 +285,11 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
 
   // Derive sorted file list from hook data
   useEffect(() => {
-    if (panelFiles.length > 0) {
-      const sorted = sortFiles(panelFiles);
+    if (ownFiles.length > 0) {
+      const sorted = sortFiles(ownFiles);
       setFiles(sorted);
     }
-  }, [panelFiles, sortFiles]);
+  }, [ownFiles, sortFiles]);
 
   // Save workspace-level session on unmount so tab switching restores to this workspace
   useEffect(() => {
@@ -268,9 +319,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   // closure per render would defeat the memo for the whole list.
   const handleThreadClick = useCallback((thread: Record<string, unknown>) => {
     if (onThreadSelect) {
-      onThreadSelect(workspaceId, thread.thread_id as string, isFlash ? 'flash' : null);
+      onThreadSelect(workspaceId, thread.thread_id as string, flashMode ? 'flash' : null);
     }
-  }, [onThreadSelect, workspaceId, isFlash]);
+  }, [onThreadSelect, workspaceId, flashMode]);
 
   /**
    * Handles delete icon click - opens confirmation modal
@@ -486,7 +537,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
           workspaceId,
           initialMessage: message.trim(),
           planMode: planMode,
-          ...(isFlash ? { agentMode: 'flash' } : {}),
+          ...(isFlash ? FLASH_ROUTE_STATE : {}),
           ...(additionalContext ? { additionalContext } : {}),
           ...(attachmentMeta ? { attachmentMeta } : {}),
           ...(model ? { model } : {}),
@@ -507,10 +558,13 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
     if (showFilePanel) {
       setShowFilePanel(false);
     } else {
+      // The card is the workspace's own files; a sibling shown before the
+      // panel closed was reached through a link.
+      setPanelOverride(null);
       setFilePanelWidth(clampPanelWidth(850));
       setShowFilePanel(true);
     }
-  }, [showFilePanel, clampPanelWidth]);
+  }, [showFilePanel, clampPanelWidth, setPanelOverride]);
 
   /**
    * Handle drag panel width
@@ -636,7 +690,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                 onClick={!isFlash ? () => setShowSandboxPanel(true) : undefined}
               >
                 {isFlash ? (
-                  <Zap className="w-10 h-10" style={{ color: 'var(--color-accent-primary)' }} />
+                  <FlashRowIcon className="w-10 h-10" style={{ color: 'var(--color-accent-primary)' }} />
                 ) : (
                   <img src={iconComputer} alt="Workspace" className="w-10 h-10" />
                 )}
@@ -660,9 +714,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                 ref={chatInputRef}
                 onSend={handleSendMessage as any} // TODO: type properly — ChatInput expects strict ReadyAttachment[]
                 disabled={isSendingMessage || !workspaceId}
-                files={panelFiles}
+                files={ownFiles}
                 dropdownDirection="down"
-                mode={isFlash ? 'fast' : 'ptc'}
+                mode={flashMode ? 'fast' : 'ptc'}
                 // The turn this composer sends lands in this workspace, so the
                 // slash menu has to be scoped to it too: without this it lists
                 // the account-level skills, hiding the workspace's own and
@@ -672,8 +726,8 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
               />
             </div>
 
-            {/* Files Card -- hidden for flash workspaces (no sandbox) */}
-            {!isFlash && <div className="w-full enter-fade-up enter-fade-up-d3">
+            {/* Files Card -- hidden for Flash (no sandbox) */}
+            {!flashMode && <div className="w-full enter-fade-up enter-fade-up-d3">
               <div
                 className="flex-1 min-w-0 flex flex-col ps-[16px] pt-[12px] pb-[14px] pe-[20px] rounded-[12px] border cursor-pointer hover:bg-foreground/5 transition-colors"
                 style={{
@@ -708,7 +762,10 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                           style={{ color: 'var(--color-text-tertiary)' }}
                           onClick={(e) => {
                             e.stopPropagation();
-                            setFilePanelTargetFile(filePath);
+                            // The card lists the workspace's own files, so a
+                            // sibling's on show gives way to them.
+                            setPanelOverride(null);
+                            askPanel({ kind: 'file', path: filePath });
                             setFilePanelWidth(clampPanelWidth(850));
                             setShowFilePanel(true);
                           }}
@@ -820,9 +877,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
         </div>
       </div>
 
-      {/* Right Side: File Panel -- hidden for flash workspaces */}
+      {/* Right Side: File Panel -- hidden for Flash */}
       <AnimatePresence>
-        {showFilePanel && !isFlash && (
+        {showFilePanel && !flashMode && (
           <motion.div
             initial={isMobile ? { x: '100%' } : { width: 0, opacity: 0 }}
             animate={isMobile ? { x: 0 } : { width: filePanelWidth + DIVIDER_WIDTH, opacity: 1 }}
@@ -838,11 +895,16 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
               />
             )}
             <div className="shrink-0" style={{ width: isMobile ? '100%' : filePanelWidth }}>
+              <WorkspaceProvider workspaceId={shownWorkspaceId} downloadFile={null} folders={panelFolders}>
               <FilePanel
-                workspaceId={workspaceId}
+                workspaceId={shownWorkspaceId ?? workspaceId}
                 onClose={() => setShowFilePanel(false)}
-                target={filePanelTargetFile ? { kind: 'file', path: filePanelTargetFile } : null}
-                onTargetHandled={() => setFilePanelTargetFile(null)}
+                onLeaveGuardChange={handleFilesLeaveGuardChange}
+                target={panelTarget}
+                onTargetHandled={handleTargetHandled}
+                onTargetMemoryHandled={handleTargetMemoryHandled}
+                onTargetMemoHandled={handleTargetMemoHandled}
+                onOpenFile={handleOpenFile}
                 persistTabs={false}
                 files={panelFiles}
                 filesLoading={panelFilesLoading}
@@ -856,7 +918,12 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                     return !v;
                   });
                 }}
+                readOnly={panelAccess.readOnly}
+                singleFileMode={panelAccess.singleFileMode}
+                onReturnHome={panelAccess.onReturnHome}
+                returnLabel={panelAccess.returnLabel}
               />
+              </WorkspaceProvider>
             </div>
           </motion.div>
         )}

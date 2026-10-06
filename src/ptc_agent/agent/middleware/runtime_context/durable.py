@@ -22,6 +22,9 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_block_for,
+)
 from ptc_agent.agent.middleware.runtime_context.templates import render_template
 
 #: ``lc_source`` tag on a persisted row. Registered in the shared message
@@ -152,5 +155,11 @@ def render_update_row(update: DurableUpdate) -> str:
     not knowable at write time. Every word of the row, the writer attribution
     included, is the template's: a row is prompt surface, and a second renderer
     of the same bytes makes what a thread carries depend on how it was packaged.
+    A harness block's words come from its registry entry, so the template has
+    one branch for all of them rather than one per block.
     """
-    return render_template("envelope/update_row.md.j2", update=update.to_dict())
+    return render_template(
+        "envelope/update_row.md.j2",
+        update=update.to_dict(),
+        harness=harness_block_for(update.kind),
+    )

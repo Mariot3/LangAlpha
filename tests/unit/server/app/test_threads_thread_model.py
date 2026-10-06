@@ -50,7 +50,7 @@ def _app():
 
 
 @contextmanager
-def _send_stubs(*, owner_id, stored_model=None, turn_model=None):
+def _send_stubs(*, owner_id, stored_model=None, turn_model=None, msg_type="ptc"):
     """Everything past the route stubbed; yields the mocks a test asserts on.
 
     ``turn_model`` is what ``thread_model.turn_model`` answers.
@@ -63,7 +63,7 @@ def _send_stubs(*, owner_id, stored_model=None, turn_model=None):
         {
             "user_id": owner_id,
             "is_shared": False,
-            "msg_type": "ptc",
+            "msg_type": msg_type,
             "workspace_id": "ws-placeholder",
             "llm_model": stored_model,
         }
@@ -133,6 +133,45 @@ async def test_a_turn_naming_no_model_runs_the_threads_own():
     assert _resolved_model(m["resolve"]) == "m-pin"
     # Nothing new was named, so there is nothing to keep.
     assert m["astream"].call_args.kwargs["named_model"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_flash_thread_the_full_agent_takes_over_passes_over_flashs_model():
+    """Its promotion forgets the model only once the turn runs, so the first
+    turn already runs the full agent's default."""
+    with _send_stubs(
+        owner_id=USER, stored_model="m-flash", turn_model=None, msg_type="flash"
+    ) as m:
+        resp = await _send()
+
+    assert resp.status_code == 200
+    m["turn_model"].assert_awaited_once_with(USER, "tid-mine", named=None, held=None)
+    assert _resolved_model(m["resolve"]) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admitted", [True, False], ids=["admitted", "refused"])
+async def test_home_is_bound_only_once_the_admission_gates_pass(admitted):
+    from fastapi import HTTPException
+
+    from src.server.services.turn_runtime import TurnRoute
+
+    credit = AsyncMock(
+        side_effect=None if admitted else HTTPException(status_code=402, detail="quota")
+    )
+    route = AsyncMock(return_value=TurnRoute("ptc", "home-ws", role="chief_of_staff"))
+    bind = AsyncMock(return_value="home-ws")
+    with (
+        _send_stubs(owner_id=USER),
+        patch("src.server.dependencies.usage_limits.enforce_credit_limit", new=credit),
+        patch("src.server.services.turn_runtime.resolve_turn_route", new=route),
+        patch("src.server.services.turn_runtime.ensure_home", new=bind),
+    ):
+        resp = await _send()
+
+    assert resp.status_code == (200 if admitted else 402)
+    assert route.await_args.kwargs == {"bind_home": False}
+    assert bind.await_count == (1 if admitted else 0)
 
 
 @pytest.mark.asyncio

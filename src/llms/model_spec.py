@@ -75,6 +75,24 @@ def reasoning_block(entry: dict | None) -> dict:
     return flat
 
 
+def profile_overrides(entry: dict) -> dict[str, Any]:
+    """Map a model entry onto ``ModelProfile`` keys (the entry is the SoT)."""
+    overrides: dict[str, Any] = {}
+    context = entry.get("context")
+    if isinstance(context, int):
+        overrides["max_input_tokens"] = context
+    max_tokens = (entry.get("parameters") or {}).get("max_tokens")
+    if isinstance(max_tokens, int):
+        overrides["max_output_tokens"] = max_tokens
+    modalities = entry.get("input_modalities")
+    if isinstance(modalities, list):
+        overrides["text_inputs"] = "text" in modalities
+        overrides["image_inputs"] = "image" in modalities
+        overrides["audio_inputs"] = "audio" in modalities
+        overrides["video_inputs"] = "video" in modalities
+    return overrides
+
+
 def clamp_reasoning_effort(
     efforts: tuple[str, ...] | list[str], default: str | None, requested: str
 ) -> str | None:
@@ -184,6 +202,10 @@ class ModelSpec:
     sdk_fallback: str | None = None
     #: Response-API opt-in the entry states outright, overriding the provider's.
     use_response_api_override: bool | None = None
+    #: ``ModelProfile`` keys the entry declares, laid over the SDK's own table,
+    #: which most models are missing from. Compaction sizes its summary input
+    #: to ``max_input_tokens``.
+    profile: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_manifest(cls, model_config: ManifestSource, model_name: str) -> "ModelSpec":
@@ -205,6 +227,7 @@ class ModelSpec:
             ),
             reasoning_surface=_checked_surface(model_name, reasoning),
             system_provider=info.get("system_provider"),
+            profile=profile_overrides(info),
         )
 
     @classmethod
@@ -269,4 +292,5 @@ class ModelSpec:
             use_response_api_override=(
                 None if declared_response_api is None else bool(declared_response_api)
             ),
+            profile=profile_overrides(declared),
         )

@@ -24,6 +24,7 @@ const navigateToPersonalization = vi.fn(async () => {});
 vi.mock('@/pages/Dashboard/hooks/useOnboarding', () => ({
   useOnboarding: () => ({ navigateToPersonalization }),
 }));
+vi.mock('@/hooks/useAllWorkspacesAgent', () => ({ useAllWorkspacesAgent: () => false }));
 
 import { GettingStartedCard } from '../engine/GettingStartedCard';
 

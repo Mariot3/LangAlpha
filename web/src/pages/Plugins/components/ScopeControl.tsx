@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import { ArrowRightLeft, Check, ChevronDown, FolderOpen, Globe, Zap } from 'lucide-react';
+import { ArrowRightLeft, Check, ChevronDown, FolderOpen, Globe } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -13,6 +13,8 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
+import { FlashGlyph } from '@/hooks/useFlashWorkspace';
 
 /**
  * The scope control on a Plugins row: where a skill / MCP server lives and
@@ -184,6 +186,9 @@ export function ScopeControl({
   onMove?: (toWorkspaceId: string | null) => void;
 }) {
   const { t } = useTranslation();
+  // Under the all-workspaces agent the flash row is the Chief of Staff's
+  // Home, the full agent, so it carries a house and no Flash-only caveat.
+  const allWorkspaces = useAllWorkspacesAgent();
   if (loading) return null;
   const isUserTier = scopeWorkspaceId === null;
   const scopeWorkspace = workspaces.find((w) => w.id === scopeWorkspaceId);
@@ -265,13 +270,13 @@ export function ScopeControl({
                     style={{ opacity: active ? 1 : 0 }}
                   />
                   {ws === flashWorkspace ? (
-                    <Zap className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                    <FlashGlyph allWorkspaces={allWorkspaces} home className="h-3.5 w-3.5 mr-1.5 shrink-0" />
                   ) : null}
                   <span className="truncate">{ws.name}</span>
                 </DropdownMenuCheckboxItem>
               );
             })}
-            {flashWorkspace && (
+            {flashWorkspace && !allWorkspaces && (
               <DropdownMenuLabel
                 className="font-normal pt-0 max-w-[16rem] whitespace-normal"
                 style={{ color: 'var(--color-text-tertiary)' }}

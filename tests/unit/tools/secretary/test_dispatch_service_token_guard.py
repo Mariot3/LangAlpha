@@ -30,7 +30,8 @@ _ORIGIN = {
 
 
 def _tool_call(args: dict, call_id: str = "call_test") -> dict:
-    return {"name": "ptc_agent", "args": args, "id": call_id, "type": "tool_call"}
+    # ``state`` is what the graph injects; nothing here was approved in advance.
+    return {"name": "ptc_agent", "args": {**args, "state": {}}, "id": call_id, "type": "tool_call"}
 
 
 def _config() -> dict:
@@ -93,7 +94,7 @@ async def test_ptc_agent_aborts_when_service_token_unset(monkeypatch):
 
     # If any of these run, the guard failed to short-circuit early enough.
     with patch(
-        "src.tools.secretary.tools._hitl_confirm",
+        "src.tools.secretary.dispatch.hitl_confirm",
         side_effect=AssertionError("HITL must not be reached"),
     ), patch(
         "aiohttp.ClientSession",
@@ -117,7 +118,7 @@ async def test_ptc_agent_blank_service_token_is_treated_as_unset(monkeypatch):
     monkeypatch.setattr("src.config.settings.HOST_MODE", "platform")
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "   ")
     with patch(
-        "src.tools.secretary.tools._hitl_confirm",
+        "src.tools.secretary.dispatch.hitl_confirm",
         side_effect=AssertionError("HITL must not be reached"),
     ), patch(
         "aiohttp.ClientSession",
@@ -142,7 +143,7 @@ async def test_report_back_drops_when_service_token_unset(monkeypatch):
         MagicMock(side_effect=AssertionError("report-back HTTP must not run")),
     ):
         status, run_id = await rb_executor._post_report_back(
-            cache, FLASH_THREAD_ID, PTC_THREAD_ID, _ORIGIN
+            cache, FLASH_THREAD_ID, PTC_THREAD_ID, _ORIGIN, final_status="completed"
         )
 
     assert status == "drop"
@@ -161,14 +162,14 @@ async def test_ptc_agent_oss_mode_proceeds_without_token(monkeypatch):
     _unset_token(monkeypatch)
 
     with patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(False, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(False, {})
     ) as hitl:
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "analyze this"}), config=_config()
         )
 
     hitl.assert_called_once()
-    assert result.update["messages"][0].content == "User declined PTC agent dispatch."
+    assert result.update["messages"][0].content.startswith("User declined the hand-off.")
 
 
 @pytest.mark.asyncio
@@ -183,6 +184,7 @@ async def test_report_back_oss_mode_posts_without_token(monkeypatch):
             flash_thread_id=FLASH_THREAD_ID,
             ptc_thread_id=PTC_THREAD_ID,
             origin=_ORIGIN,
+            final_status="completed",
         )
 
     assert outcome == ("dispatched", "rid-1")

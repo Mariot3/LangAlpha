@@ -381,12 +381,15 @@ def apply_fetch_override(config) -> None:
 class PriorThread(NamedTuple):
     """The thread row as it stood before this turn stamped it.
 
-    Both fields are absent on a thread's first turn, and on any turn whose read
-    failed: they are context for the turn anchor row rather than correctness,
+    The time is absent on a thread's first turn, and every field on any turn
+    whose read failed: they are context for the turn rather than correctness,
     so a read failure degrades to nothing rather than failing the turn start.
     """
 
     last_turn_at: Optional[datetime] = None
+    # 'flash' on a thread Flash started that the full agent has not taken over
+    # yet; a missed read only defers the takeover to the next turn.
+    msg_type: Optional[str] = None
 
 
 def _fork_predecessor_turn(request: ChatRequest) -> Optional[int]:
@@ -429,7 +432,7 @@ async def _read_prior_thread(
         # A naive stamp would raise against the envelope's aware clock.
         last_turn_at = stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
-    return PriorThread(last_turn_at)
+    return PriorThread(last_turn_at, row.get("msg_type"))
 
 
 async def ensure_thread(

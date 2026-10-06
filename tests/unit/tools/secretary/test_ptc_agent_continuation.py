@@ -7,7 +7,7 @@ ownership lives on ``workspaces.user_id`` via the FK), so the value was always
 ``None`` and every continuation errored with "thread not found" before any
 dispatch could happen.
 
-The fix reuses ``_verify_thread_owner`` (which JOINs ``workspaces``). These
+The fix reuses ``verify_thread_owner`` (which JOINs ``workspaces``). These
 tests pin that a legitimate owner reaches dispatch and a non-owner is rejected.
 """
 
@@ -29,7 +29,8 @@ WORKSPACE_ID = "22222222-2222-2222-2222-222222222222"
 
 def _tool_call(args: dict, call_id: str = "call_test") -> dict:
     """Build a ToolCall-shaped dict so ``ainvoke`` injects ``tool_call_id``."""
-    return {"name": "ptc_agent", "args": args, "id": call_id, "type": "tool_call"}
+    # ``state`` is what the graph injects; nothing here was approved in advance.
+    return {"name": "ptc_agent", "args": {**args, "state": {}}, "id": call_id, "type": "tool_call"}
 
 
 def _config(user_id: str | None = USER_ID) -> dict:
@@ -87,7 +88,7 @@ async def test_continuation_owner_match_reaches_dispatch():
     ), patch(
         "src.server.database.conversation.threads_read.get_thread_by_id", by_id
     ), patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "aiohttp.ClientSession", return_value=_FakeSession(_FakeResp())
     ):
@@ -122,7 +123,7 @@ async def test_continuation_owner_mismatch_returns_thread_not_found():
     ), patch(
         "src.server.database.conversation.threads_read.get_thread_by_id", by_id
     ), patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "aiohttp.ClientSession", dispatch
     ):
@@ -154,7 +155,7 @@ async def test_continuation_normalizes_noncanonical_thread_id():
     ), patch(
         "src.server.database.conversation.threads_read.get_thread_by_id", by_id
     ), patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "aiohttp.ClientSession", return_value=_FakeSession(_FakeResp())
     ):
@@ -197,7 +198,7 @@ def _dispatch_env(store: dict, *, resp: _FakeResp | None = None):
             "workspace_id": WORKSPACE_ID,
         }),
     ), patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ), patch(
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
@@ -297,7 +298,7 @@ async def test_continuation_non_uuid_thread_id_short_circuits():
     ), patch(
         "src.server.database.conversation.threads_read.get_thread_by_id", by_id
     ), patch(
-        "src.tools.secretary.tools._hitl_confirm", return_value=(True, {})
+        "src.tools.secretary.dispatch.hitl_confirm", return_value=(True, {})
     ):
         result = await ptc_agent.ainvoke(
             _tool_call({"question": "follow up please", "thread_id": "results"}),

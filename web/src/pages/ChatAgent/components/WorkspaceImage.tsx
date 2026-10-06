@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authSessionCheck, registerAuthReset } from '@/lib/authResets';
-import { useWorkspaceId, useWorkspaceDownloadFile } from '../contexts/WorkspaceContext';
+import { useWorkspaceId, useWorkspaceDownloadFile, useWorkspaceFolders } from '../contexts/WorkspaceContext';
 import { downloadWorkspaceFile } from '../utils/api';
-import { normalizeFilePath, parseWsPath } from '../utils/filePaths';
+import { normalizeFilePath, parseSiblingHref, parseWsPath } from '../utils/filePaths';
 import ImageLightbox from './ImageLightbox';
 
 // Module-level cache: key:path → blobUrl
@@ -31,10 +31,13 @@ function WorkspaceImage({ src, alt, ...props }: WorkspaceImageProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const contextWorkspaceId = useWorkspaceId();
   const downloadFileFn = useWorkspaceDownloadFile();
+  const folders = useWorkspaceFolders();
 
-  // Support __wsref__/{workspaceId}/path for cross-workspace file references
+  // Support __wsref__/{workspaceId}/path for cross-workspace file references,
+  // and a sibling's folder (`../NVDA/chart.png`), which names its workspace the same way.
   const wsRef = src ? parseWsPath(src) : null;
-  const workspaceId = wsRef?.workspaceId || contextWorkspaceId;
+  const sibling = parseSiblingHref(src, folders);
+  const workspaceId = wsRef?.workspaceId || sibling?.workspaceId || contextWorkspaceId;
   // For __wsref__ paths the context downloadFileFn is normally skipped (it's
   // bound to the active workspace, not the referenced one). But the public
   // shared view has no authed per-workspace route — its downloadFileFn IS the
@@ -42,15 +45,16 @@ function WorkspaceImage({ src, alt, ...props }: WorkspaceImageProps) {
   // bypass it when a real workspace context exists to fall back on; otherwise a
   // logged-out share viewer would hit the authed /workspaces/{id}/files/download
   // endpoint and get a 401.
-  const effectiveDownloadFn = wsRef && contextWorkspaceId ? null : downloadFileFn;
+  const effectiveDownloadFn = (wsRef || sibling) && contextWorkspaceId ? null : downloadFileFn;
 
   const canFetch = !!(src && !isExternalUrl(src) && (workspaceId || effectiveDownloadFn));
   // The one reading of the destination, the same one a file link gets, so
-  // `/home/workspace/charts/x.png` fetches `charts/x.png` rather than a path no
-  // workspace holds. The decode is part of it and happens exactly once, so a
-  // name an LLM emitted encoded (`.../%E5%9B%BE%E8%A1%A8.png`) reaches the API
-  // as raw Unicode; callers hand over the raw destination for that reason.
-  const normalizedPath = canFetch ? normalizeFilePath(src!) : '';
+  // `/home/workspace/charts/x.png` fetches `charts/x.png`, and `../<own
+  // folder>/x.png` fetches `x.png`, rather than a path no workspace holds. The
+  // decode is part of it and happens exactly once, so a name an LLM emitted
+  // encoded (`.../%E5%9B%BE%E8%A1%A8.png`) reaches the API as raw Unicode;
+  // callers hand over the raw destination for that reason.
+  const normalizedPath = canFetch ? sibling?.path ?? normalizeFilePath(src!, folders) : '';
   const cacheKey = canFetch ? `${workspaceId || 'shared'}:${normalizedPath}` : '';
 
   const [state, setState] = useState<LoadState>(() =>

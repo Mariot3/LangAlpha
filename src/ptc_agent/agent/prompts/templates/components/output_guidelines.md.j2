@@ -1,4 +1,6 @@
 # Output Guidelines
+{% set cos = role | default("analyst") == "chief_of_staff" %}
+{% set at = (working_directory ~ "/") if cos else "" %}
 {% if guidance | default("detailed") == "detailed" %}
 
 ## Output Format
@@ -11,8 +13,8 @@ Match output to the task:
 - **Unclear scope**: Ask the user what format they prefer
 
 When creating reports:
-- Single cohesive document with embedded visuals: `![Title](<task>/charts/chart.png)`
-- Descriptive filenames: [amd_dcf_analysis.md](amd_analysis/amd_dcf_analysis.md), not [output.md](amd_analysis/output.md)
+- Single cohesive document with embedded visuals: `![Title]({{ at }}<task>/charts/chart.png)`
+- Descriptive filenames: [amd_dcf_analysis.md]({{ at }}amd_analysis/amd_dcf_analysis.md), not [output.md]({{ at }}amd_analysis/output.md)
 {% endif %}
 
 ## Citing Created Files
@@ -20,7 +22,11 @@ When creating reports:
 - **Documents/data** — clickable link: `[file name](file path)`
 - **Images/charts** — inline embed: `![title](file path)`
 
+{% if cos %}
+Write the file path as its absolute path, which names the folder the file is in: `{{ working_directory }}/amd_analysis/report.md` in Home, `{{ computer_root }}/NVDA/dcf/report.md` in a workspace's folder. Do so in your replies and in every Markdown file you write, its tables included, and never as a `file://` path.
+{% else %}
 Write the file path from the working directory, as you wrote the file (`amd_analysis/report.md`), never as an absolute or `file://` path.
+{% endif %}
 To point at a place inside a file, append it to the path: `#L42` or `#L40-L55` for lines, the heading's slug (`#wacc-inputs`) for a markdown section, `#page=3` for a PDF page.
 
 Never use `[name](path)` for images — they must be embedded with `!` prefix so they render visually.
@@ -28,18 +34,22 @@ Never use backticks to cite deliverables. Backticks are for directories or techn
 {% if guidance | default("detailed") == "detailed" %}
 
 Good:
-> Full analysis: [amd_dcf_analysis.md](amd_analysis/amd_dcf_analysis.md)
+> Full analysis: [amd_dcf_analysis.md]({{ at }}amd_analysis/amd_dcf_analysis.md)
 >
-> Discount rate: [WACC inputs](amd_analysis/amd_dcf_analysis.md#wacc-inputs), computed in [dcf.py](amd_analysis/dcf.py#L40-L55)
+> Discount rate: [WACC inputs]({{ at }}amd_analysis/amd_dcf_analysis.md#wacc-inputs), computed in [dcf.py]({{ at }}amd_analysis/dcf.py#L40-L55)
 >
-> ![Revenue Trend](amd_analysis/charts/revenue_trend.png)
+> ![Revenue Trend]({{ at }}amd_analysis/charts/revenue_trend.png)
 >
-> ![DCF Sensitivity](amd_analysis/charts/dcf_sensitivity.png)
+> ![DCF Sensitivity]({{ at }}amd_analysis/charts/dcf_sensitivity.png)
 
 Bad:
-> - [revenue_trend.png](amd_analysis/charts/revenue_trend.png)
+> - [revenue_trend.png]({{ at }}amd_analysis/charts/revenue_trend.png)
 > - The full analysis is in `amd_analysis/amd_dcf_analysis.md`.
+{% if cos %}
+> - [amd_dcf_analysis.md](amd_analysis/amd_dcf_analysis.md)
+{% else %}
 > - [amd_dcf_analysis.md]({{ working_directory }}/amd_analysis/amd_dcf_analysis.md)
+{% endif %}
 
 ## Report Structure
 

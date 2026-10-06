@@ -20,10 +20,8 @@ from fastapi import HTTPException
 from langgraph.types import Command
 
 from src.server.app import setup
-from src.server.database.workspace import (
-    get_flash_workspace_id,
-    get_or_create_flash_workspace,
-)
+from src.server.database.home_workspace import get_flash_workspace_id
+from src.server.database.workspace import get_or_create_flash_workspace
 from src.server.services.runs.sse_producer import RunSSEProducer
 from src.server.models.chat import (
     ChatRequest,
@@ -73,6 +71,7 @@ from .request_prep import (
     user_skill_commands,
 )
 from src.server.services.credit_gate_port import build_run_credit_gate
+from src.server.services.report_back.flash import carry
 from src.server.services.runs.admission import (
     RunScope,
     begin_run,
@@ -83,6 +82,7 @@ from src.config.settings import get_flash_recursion_limit
 from .admission_gate import admission_conflict_detail, steer_allowed, wait_or_steer
 from .attachments import attach_flash_request_files
 from .error_handling import handle_workflow_error
+from .flash_handover import cancel_tool_calls_it_lacks
 from src.server.services.llm.clients import is_own_key_turn
 from src.server.services.llm.config import resolve_llm_config
 from src.server.services.llm.thread_model import NamedModel
@@ -308,6 +308,7 @@ async def astream_flash_workflow(
         # projection in one transaction (begin_run owns the attempt-chain
         # derivation).
         # =================================================================
+        carried = await carry.carried_pair(request, thread_id)
         run_handle = await begin_run(
             request,
             thread_id=thread_id,
@@ -322,11 +323,15 @@ async def astream_flash_workflow(
             query_metadata=query_metadata,
             fork=fork,
             is_checkpoint_replay=is_checkpoint_replay,
+            # What the run owes when it ends is built from this row stamp
+            # alone (``build_finalize_jobs_from_run_row``): a summary run
+            # releases its pair.
             extra_run_metadata={
                 "report_back_ptc_thread_id": getattr(
                     request, "report_back_ptc_thread_id", None
                 ),
                 "origin_dispatch_gen": getattr(request, "origin_dispatch_gen", None),
+                **carried,
                 **(run_metadata or {}),
             },
         )
@@ -404,6 +409,16 @@ async def astream_flash_workflow(
             order_ledger=order_ledger,
             turn_context=turn_context,
         )
+
+        cancelled_calls = []
+        if (
+            request.hitl_response
+            and not request.checkpoint_id
+            and prior_thread.msg_type != "flash"
+        ):
+            # Home's thread, back on Flash with the all-workspaces agent off,
+            # may be waiting on a Chief of Staff step Flash cannot run.
+            cancelled_calls = await cancel_tool_calls_it_lacks(flash_graph, thread_id)
 
         messages = normalize_request_messages(request)
 
@@ -519,6 +534,7 @@ async def astream_flash_workflow(
                             graph=flash_graph,
                             input_state=input_state,
                             config=graph_config,
+                            settled_results=cancelled_calls,
                         )
                     ),
                 ),
@@ -535,16 +551,6 @@ async def astream_flash_workflow(
                     "handler": handler,
                     "token_callback": token_callback,
                     "run_handle": run_handle,
-                    # Keys the finalize outbox decision table: a report-back
-                    # flash run gets watch_clear on ANY terminal — the
-                    # consumption clear on completed, teardown + error wake
-                    # on error/cancelled (1.7; no in-process hook remains).
-                    "report_back_ptc_thread_id": getattr(
-                        request, "report_back_ptc_thread_id", None
-                    ),
-                    "origin_dispatch_gen": getattr(
-                        request, "origin_dispatch_gen", None
-                    ),
                 },
                 graph=flash_graph,
                 # Manager owns burst slot release from registration on

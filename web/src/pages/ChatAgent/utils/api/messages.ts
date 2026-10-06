@@ -216,6 +216,8 @@ export interface DispatchLiveness {
   status: string;
   run_id: string | null;
   can_reconnect: boolean;
+  /** ISO start of the live run; null once it settled. */
+  run_started_at?: string | null;
 }
 
 /**

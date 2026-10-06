@@ -1,6 +1,13 @@
 import type { LucideIcon } from 'lucide-react';
 import { FileText, FileSpreadsheet, Globe, Image, Presentation } from 'lucide-react';
-import { normalizeAgentHref, parseAgentPath } from './agentPaths';
+import {
+  parseAgentHref,
+  parseAgentPath,
+  siblingWorkspacePath,
+  workspaceScopedPath,
+  type ComputerFolders,
+  type SiblingPath,
+} from './agentPaths';
 import { hasLineSuffix, splitFileLocation } from './fileLocation';
 
 /**
@@ -82,6 +89,19 @@ export function parseWsPath(href: string | undefined): { workspaceId: string; pa
 }
 
 /**
+ * The sibling workspace a destination reaches through its folder
+ * (`agentPaths.siblingWorkspacePath`), with the path inside it read the way
+ * `normalizeFilePath` reads a destination. A `__wsref__` destination names its
+ * workspace outright and gets null here.
+ */
+export function parseSiblingHref(
+  href: string | undefined,
+  folders: ComputerFolders | null | undefined,
+): SiblingPath | null {
+  return href ? siblingWorkspacePath(parseAgentHref(href), folders) : null;
+}
+
+/**
  * Check if an href looks like a sandbox file path (not an external URL).
  *
  * Expects pre-normalized input: `normalizeFileRefs` has unwrapped `file://`,
@@ -124,10 +144,12 @@ export function isFilePath(href: string | undefined): boolean {
 
 /**
  * A markdown destination as the API wants it: workspace-relative, decoded once.
- * `agentPaths.parseAgentHref` owns the rules and documents why.
+ * `agentPaths.parseAgentHref` owns the rules and documents why. Given the
+ * workspace's folders, a path through its own folder reads from its root, as
+ * routing reads it (`agentPaths.workspaceScopedPath`).
  */
-export function normalizeFilePath(path: string): string {
-  return normalizeAgentHref(path);
+export function normalizeFilePath(path: string, folders?: ComputerFolders | null): string {
+  return workspaceScopedPath(parseAgentHref(path), folders?.dirName, folders?.previousDirNames);
 }
 
 /** Whether an href points at an image, by the same table the cards read. */

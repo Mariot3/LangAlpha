@@ -14,6 +14,7 @@ import { useUpdatePreferences } from '@/hooks/useUpdatePreferences';
 import { useTranslation } from 'react-i18next';
 import { modelPrefs, splitPreferenceWrite } from '@/lib/modelPreferences';
 import { suggestFlashModel } from './suggestFlashModel';
+import { useModelSlotCopy } from '@/components/model/useModelSlotCopy';
 
 // ---------------------------------------------------------------------------
 // DefaultsStep — Step 5: Set default primary + flash models
@@ -25,6 +26,7 @@ export default function DefaultsStep() {
   const { preferences } = usePreferences();
   const updatePreferences = useUpdatePreferences();
   const { t } = useTranslation();
+  const copy = useModelSlotCopy();
 
   // ---------------------------------------------------------------------------
   // Selection state — seed from existing preferences if available
@@ -82,9 +84,11 @@ export default function DefaultsStep() {
     setError(null);
 
     try {
-      // Compaction + fetch default to flash model if not explicitly set
-      const compaction = advancedModels.compactionModel || flashModel;
-      const fetchModel = advancedModels.fetchModel || flashModel;
+      // Leave unset rather than pinning to today's flash pick: the server
+      // resolves a blank compaction/fetch model from the flash/background
+      // model at turn time, so a later change in Settings keeps following it.
+      const compaction = advancedModels.compactionModel || null;
+      const fetchModel = advancedModels.fetchModel || null;
 
       await updatePreferences.mutateAsync(splitPreferenceWrite({
         preferred_model: primaryModel,
@@ -134,7 +138,7 @@ export default function DefaultsStep() {
           className="text-sm"
           style={{ color: 'var(--color-text-secondary)' }}
         >
-          {t('setup.chooseYourModelsDesc')}
+          {copy.chooseDesc}
         </p>
       </div>
 
@@ -203,7 +207,7 @@ export default function DefaultsStep() {
                   value={advancedModels.fetchModel}
                   onChange={(v) => handleAdvancedChange({ fetchModel: v })}
                   models={models}
-                  placeholder={t('settings.modelTuning.defaultsToFlash')}
+                  placeholder={copy.defaultsToBackground}
                   modelAccess={modelAccessMap}
                   metadata={metadata}
                 />
@@ -213,7 +217,7 @@ export default function DefaultsStep() {
                   value={advancedModels.compactionModel}
                   onChange={(v) => handleAdvancedChange({ compactionModel: v })}
                   models={models}
-                  placeholder={t('settings.modelTuning.defaultsToFlash')}
+                  placeholder={copy.defaultsToBackground}
                   modelAccess={modelAccessMap}
                   metadata={metadata}
                 />

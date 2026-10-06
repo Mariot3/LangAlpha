@@ -62,7 +62,17 @@ def selection():
 
 
 @pytest.fixture
-def ws_mock_db(mock_connection, selection):
+def fold():
+    """The fold of a former flash row into Home, which every Home resolve
+    awaits; its SQL is pinned against a real Postgres in
+    tests/integration/test_home_fold_db.py."""
+    fold = AsyncMock(return_value=[])
+    with patch("src.server.database.workspace.fold_former_homes", new=fold):
+        yield fold
+
+
+@pytest.fixture
+def ws_mock_db(mock_connection, selection, fold):
     """Patch get_db_connection where the workspace module and its folder allocation import it."""
 
     @asynccontextmanager
@@ -118,7 +128,7 @@ def _workspace_row(
 @pytest.mark.asyncio
 async def test_get_flash_workspace_id_deterministic():
     """Same user always produces the same flash workspace ID."""
-    from src.server.database.workspace import get_flash_workspace_id
+    from src.server.database.home_workspace import get_flash_workspace_id
 
     id1 = get_flash_workspace_id("user-42")
     id2 = get_flash_workspace_id("user-42")
@@ -154,10 +164,8 @@ async def test_a_first_flash_turn_upserts_and_starts_the_selection_once(
 ):
     """A concurrent first turn that inserted it first already started the
     selection; the upsert says which of the two this one was."""
-    from src.server.database.workspace import (
-        get_flash_workspace_id,
-        get_or_create_flash_workspace,
-    )
+    from src.server.database.home_workspace import get_flash_workspace_id
+    from src.server.database.workspace import get_or_create_flash_workspace
 
     row = _workspace_row(name="Flash", status="flash")
     mock_cursor.fetchone.side_effect = [None, {**row, "inserted": True}]
@@ -174,6 +182,42 @@ async def test_a_first_flash_turn_upserts_and_starts_the_selection_once(
     mock_cursor.fetchone.side_effect = [None, {**row, "inserted": False}]
     await get_or_create_flash_workspace("user-1")
     selection.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_every_resolve_folds_former_rows_into_home(
+    ws_mock_db, mock_cursor, fold
+):
+    """An account merge leaves the merged account's flash row beside Home, which
+    the account would list as a second All workspaces entry. Whether there is
+    one is the fold's own read, so a first resolve that inserts Home folds too."""
+    from src.server.database.home_workspace import get_flash_workspace_id
+    from src.server.database.workspace import get_or_create_flash_workspace
+
+    home_id = get_flash_workspace_id("user-1")
+    row = _workspace_row(workspace_id=home_id, name="Flash", status="flash")
+    mock_cursor.fetchone.return_value = row
+    await get_or_create_flash_workspace("user-1", conn=ws_mock_db)
+    fold.assert_awaited_once_with("user-1", home_id, ws_mock_db)
+
+    mock_cursor.fetchone.side_effect = [None, {**row, "inserted": True}]
+    await get_or_create_flash_workspace("user-1")
+    assert fold.await_args_list[-1].args == ("user-1", home_id, None)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fold_still_resolves_home(ws_mock_db, mock_cursor, fold):
+    """Every turn outside a workspace resolves Home here; the fold runs again
+    on the next resolve, so its failure must not take the turn with it."""
+    from src.server.database.workspace import get_or_create_flash_workspace
+
+    row = _workspace_row(name="Flash")
+    mock_cursor.fetchone.return_value = row
+    fold.side_effect = RuntimeError("unique violation")
+
+    result = await get_or_create_flash_workspace("user-1")
+
+    assert result["workspace_id"] == row["workspace_id"]
 
 
 @pytest.mark.asyncio
@@ -641,25 +685,6 @@ async def test_a_flash_workspace_has_no_machine_to_move(ws_mock_db, mock_cursor)
     await update_workspace_status("ws-1", "flash")
 
     assert "computers" not in mock_cursor.execute.call_args[0][0]
-
-
-@pytest.mark.asyncio
-async def test_the_tier_and_always_on_setters_move_both_rows(ws_mock_db, mock_cursor):
-    """The platform counts these two per user out of ``workspaces`` to enforce
-    plan entitlements, so the shadow write is not optional."""
-    from src.server.database.workspace import (
-        set_workspace_always_on,
-        set_workspace_resource_tier,
-    )
-
-    mock_cursor.fetchone.return_value = _workspace_row(resource_tier="performance")
-    await set_workspace_resource_tier("ws-1", "performance")
-    assert "resource_tier = %(value)s" in _one_write_through_statement(mock_cursor)
-
-    mock_cursor.execute.reset_mock()
-    mock_cursor.fetchone.return_value = _workspace_row(is_always_on=True)
-    await set_workspace_always_on("ws-1", True)
-    assert "is_always_on = %(value)s" in _one_write_through_statement(mock_cursor)
 
 
 @pytest.mark.asyncio

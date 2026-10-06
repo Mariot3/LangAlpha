@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import type { Automation, AutomationExecution } from '@/types/automation';
 import type { ErrorLinkSpec } from '@/utils/rateLimitError';
 import { useAutomationMutations } from '../hooks/useAutomationMutations';
+import { useAgentModeLabels, useRunsAs } from '../hooks/useAgentModeLabels';
 import { useExecutions } from '../hooks/useExecutions';
 import { useOpenThread } from '../hooks/useOpenThread';
 import type { WatchedReading } from '../hooks/useWatchedReadings';
@@ -57,6 +58,8 @@ export default function AutomationInspector({
   const { pause, resume, trigger, skip, dismiss, busy } = useAutomationMutations();
   const { executions, loading } = useExecutions(a.automation_id);
   const workspaceName = workspaceNameOf(useWorkspaceOptions(), a.workspace_id);
+  const agentModes = useAgentModeLabels();
+  const runsAs = useRunsAs();
   const deliveryMethods = a.delivery_config?.methods ?? [];
 
   const ui = automationStatusUi(a);
@@ -84,8 +87,7 @@ export default function AutomationInspector({
     reportRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }, [runId]);
 
-  const kicker = [t(ui.labelKey), t(a.agent_mode === 'ptc' ? 'automation.ptc' : 'automation.flash')];
-  if (workspaceName) kicker.push(workspaceName);
+  const kicker = [t(ui.labelKey), ...agentModes.kicker(runsAs(a.agent_mode, a.workspace_id), workspaceName)];
 
   return (
     <article className="automation-inspector">

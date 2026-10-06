@@ -211,6 +211,9 @@ interface HistoryInterruptInfo {
   questionId?: string;
   proposalId?: string;
   interruptId?: string;
+  /** The tool call the interrupt paused, when its action request names it (a
+   *  dispatch does): only that call's result may settle the card. */
+  toolCallId?: string;
   /** Where a stopped call's verdict is looked up, decided when the interrupt
    *  was read so no settler has to rebuild it from the card id. Present only on
    *  a `tool_approval` entry. */

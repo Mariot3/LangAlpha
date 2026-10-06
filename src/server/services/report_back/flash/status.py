@@ -1,12 +1,14 @@
 """Report-back read model: the ``/status?fields=report_back`` slice.
 
 ``read_report_back_slice`` routes by thread kind (flash pendingness lives in
-the Redis watch set; PTC task pendingness IS the open outbox row); the flash
-status derivation and the terminal-pointer recents union live here.
+the Redis watch set; PTC task pendingness IS the open outbox row, and a PTC
+thread that hands work to analysts holds a watch set too); the flash status
+derivation and the terminal-pointer recents union live here.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -155,18 +157,63 @@ async def read_report_back_slice(
     """Route to the right pending-registry read for this thread kind.
 
     Flash pendingness lives in the Redis watch set; PTC task report-back
-    pendingness IS the open outbox row. ``msg_type`` skips the thread lookup
-    when the caller already holds it.
+    pendingness IS the open outbox row. A PTC thread reads both: the Chief of
+    Staff runs on one, and its analysts report back through the watch set
+    while its own subagents use the outbox. ``msg_type`` skips the thread
+    lookup when the caller already holds it.
     """
     if msg_type is None:
         from src.server.database.conversation import get_thread_auth_meta
 
         meta = await get_thread_auth_meta(thread_id)
         msg_type = (meta or {}).get("msg_type")
-    if msg_type == "ptc":
-        from src.server.services.report_back.subagent import (
-            read_task_report_back_status,
-        )
+    if msg_type != "ptc":
+        return await read_report_back_status(thread_id)
+    from src.server.services.report_back.subagent import (
+        read_task_report_back_status,
+    )
 
-        return await read_task_report_back_status(thread_id)
-    return await read_report_back_status(thread_id)
+    tasks, handoffs = await asyncio.gather(
+        read_task_report_back_status(thread_id), read_report_back_status(thread_id)
+    )
+    return {
+        **tasks,
+        "pending_report_back": _either_pending(
+            tasks["pending_report_back"], handoffs["pending_report_back"]
+        ),
+        "report_back_run_id": tasks["report_back_run_id"]
+        or handoffs["report_back_run_id"],
+        "recent_report_back_run_ids": await _newest_first(
+            tasks["recent_report_back_run_ids"],
+            handoffs["recent_report_back_run_ids"],
+        ),
+    }
+
+
+def _either_pending(a: bool | None, b: bool | None) -> bool | None:
+    """Pending if either registry is; unknown if either read failed; else idle."""
+    if a or b:
+        return True
+    if a is None or b is None:
+        return None
+    return False
+
+
+async def _newest_first(a: list[str], b: list[str]) -> list[str]:
+    """Union of two newest-first recents lists, still newest first.
+
+    Both registries drain on the thread's one outbox chain, so the runs'
+    sequence on the thread is their order. A failed read keeps the
+    concatenation: the client dedups what it already rendered either way.
+    """
+    merged = list(dict.fromkeys([*a, *b]))
+    if not a or not b:
+        return merged
+    try:
+        from src.server.database.runs import lifecycle as tl_db
+
+        seqs = await tl_db.get_run_seqs(merged)
+    except Exception:
+        logger.warning("Recents ordering read failed", exc_info=True)
+        return merged
+    return sorted(merged, key=lambda r: seqs.get(r, -1), reverse=True)

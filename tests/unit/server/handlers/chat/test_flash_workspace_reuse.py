@@ -6,7 +6,7 @@ its id is the caller's canonical (deterministic UUID v5) flash workspace.
 """
 
 from src.server.handlers.chat.flash_run import _reusable_flash_workspace
-from src.server.database.workspace import get_flash_workspace_id
+from src.server.database.home_workspace import get_flash_workspace_id
 
 USER = "usr-flash-001"
 

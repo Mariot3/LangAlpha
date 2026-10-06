@@ -37,6 +37,45 @@ def test_a_folder_already_named_after_its_workspace_stays():
     assert not plan_folder_moves([row(A, "Research", "Research")])
 
 
+def home(dir_name, *, previous=()):
+    return FolderRow(A, "Flash", dir_name, False, tuple(previous), home=True)
+
+
+def test_home_keeps_the_folder_it_was_bound_to():
+    """Home is the flash row: its stored name is "Flash", its folder is not,
+    and a workspace named Home before the name was reserved stays out of it."""
+    assert not plan_folder_moves([home("Home")])
+    assert not plan_folder_moves([home("Home"), row(B, "Home", "Research")])
+
+
+def test_home_waits_on_a_placeholder_while_a_workspace_holds_its_folder():
+    """A workspace named Home before the name was reserved keeps its folder."""
+    assert not plan_folder_moves([home("Home-7d59"), row(B, "Home", "Home")])
+
+
+def test_home_moves_in_once_the_workspace_holding_its_folder_is_renamed():
+    plan = plan_folder_moves([home("Home-7d59"), row(B, "Research", "Home")])
+    assert moves(plan) == {A: ("Home-7d59", "Home"), B: ("Home", "Research")}
+
+
+def test_home_bound_on_a_placeholder_moves_in_when_nothing_holds_its_folder():
+    """A computer on the old layout, or a deleted workspace's folder since
+    cleared, left Home on a placeholder with no live workspace in the way."""
+    assert moves(plan_folder_moves([home("Home-7d59")])) == {A: ("Home-7d59", "Home")}
+    assert not plan_folder_moves([home("Home-7d59")], busy={A})
+
+
+def test_staged_home_that_cannot_land_goes_to_a_home_placeholder():
+    """Its stored name is "Flash", which names none of Home's folders."""
+    rows = [
+        home(moving_path(A), previous=["Research"]),
+        row(B, "Home", "Home"),
+        row(C, "Research", "Research"),
+    ]
+    (move,) = plan_folder_moves(rows).moves
+    assert move.target.startswith("Home-")
+
+
 def test_a_renamed_workspace_moves_to_its_new_name():
     plan = plan_folder_moves([row(A, "Macro", "Research")])
     assert moves(plan) == {A: ("Research", "Macro")}

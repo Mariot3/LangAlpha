@@ -660,6 +660,32 @@ async def workspace_has_active_run(workspace_id: str) -> bool:
             return bool((await cur.fetchone())[0])
 
 
+async def workspace_has_live_runs(cur, workspace_id: str) -> bool:
+    """Any root or background run in progress on the workspace's threads.
+
+    Read on the caller's dict-row cursor, so a caller holding the workspace
+    row FOR UPDATE sees every run admitted before it: admission holds that row
+    FOR SHARE until its run row commits.
+    """
+    await cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM conversation_responses r
+            JOIN conversation_threads t
+              ON t.conversation_thread_id = r.conversation_thread_id
+            WHERE t.workspace_id = %(workspace_id)s AND r.status = 'in_progress'
+            UNION ALL
+            SELECT 1 FROM subagent_runs r
+            JOIN conversation_threads t
+              ON t.conversation_thread_id = r.thread_id
+            WHERE t.workspace_id = %(workspace_id)s AND r.status = 'in_progress'
+        ) AS busy
+        """,
+        {"workspace_id": workspace_id},
+    )
+    return (await cur.fetchone())["busy"]
+
+
 async def computer_has_active_run(computer_id: str) -> bool:
     """Any live root run on any workspace bound to the computer.
 
@@ -805,7 +831,8 @@ async def get_latest_attempts_for_threads(
                 SELECT DISTINCT ON (cr.conversation_thread_id)
                     cr.conversation_thread_id, cr.conversation_response_id,
                     cr.status, cr.cancel_requested_at,
-                    cr.interrupt_reason, cr.run_seq
+                    cr.interrupt_reason, cr.run_seq,
+                    cr.created_at AS run_started_at
                 FROM conversation_responses cr
                 JOIN conversation_threads ct
                     ON ct.conversation_thread_id = cr.conversation_thread_id
@@ -845,6 +872,28 @@ async def get_run_statuses(run_ids: List[str]) -> Dict[str, str]:
             rows = await cur.fetchall()
             return {
                 str(r["conversation_response_id"]): str(r["status"]) for r in rows
+            }
+
+
+async def get_run_seqs(run_ids: List[str]) -> Dict[str, int]:
+    """run_id -> run_seq, for the ids that HAVE a row; orders runs a caller
+    gathered from more than one source."""
+    normalized = [nid for nid in (normalize_uuid(r) for r in run_ids) if nid]
+    if not normalized:
+        return {}
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT conversation_response_id, run_seq
+                FROM conversation_responses
+                WHERE conversation_response_id = ANY(%s)
+                """,
+                (normalized,),
+            )
+            rows = await cur.fetchall()
+            return {
+                str(r["conversation_response_id"]): int(r["run_seq"]) for r in rows
             }
 
 

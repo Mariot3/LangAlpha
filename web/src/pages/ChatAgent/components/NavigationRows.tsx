@@ -12,7 +12,7 @@
 import React, { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronRight, Folder, FolderOpen, Zap, Pin,
+  ChevronRight, Folder, FolderOpen, Pin,
   X, ChevronsDown, MoreHorizontal, SquarePen, Archive,
 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
@@ -22,6 +22,8 @@ import { Loader } from '@/components/ui/loader';
 import { useTitleFade } from '@/hooks/useTitleFade';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
+import { useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
+import { FlashRowIcon } from '@/hooks/useFlashWorkspace';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
 import type { SidebarAgentRow } from '../session/subagents/subagentStatus';
 import { SubagentStatusIcon } from './taskStatusUi';
@@ -53,7 +55,7 @@ export interface ThreadsData {
 function workspaceGlyph(ws: NavWorkspace, expanded: boolean) {
   const style = { color: 'var(--color-text-tertiary)' };
   const className = 'h-4 w-4 shrink-0';
-  if (ws.status === 'flash') return <Zap className={className} style={style} />;
+  if (ws.status === 'flash') return <FlashRowIcon className={className} style={style} />;
   if (ws.is_pinned) return <Pin className={className} style={style} />;
   return expanded ? <FolderOpen className={className} style={style} /> : <Folder className={className} style={style} />;
 }
@@ -440,6 +442,7 @@ function WorkspaceTreeRowImpl({
   onArchiveThread,
 }: WorkspaceTreeRowProps) {
   const { t } = useTranslation();
+  const label = useWorkspaceLabel();
   const { kit } = useNavTree();
   const wsId = ws.workspace_id;
   const isFlash = ws.status === 'flash';
@@ -496,7 +499,7 @@ function WorkspaceTreeRowImpl({
                 className="text-sm font-medium truncate"
                 style={{ color: isCurrent ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}
               >
-                {ws.name || t('nav.workspaceFallback')}
+                {label(ws) || t('nav.workspaceFallback')}
               </span>
               {/* Chevron + row actions float over the name's tail on hover
                   (as thread rows do), so the name keeps the full row width
@@ -627,12 +630,13 @@ function WorkspaceTreeRowImpl({
 /** Content-hugging lift preview for a dragged workspace section. */
 export function WorkspaceDragChip({ ws, expanded }: { ws: NavWorkspace; expanded: boolean }) {
   const { t } = useTranslation();
+  const label = useWorkspaceLabel();
   return (
     <div className="nav-panel nav-panel-drag-chip">
       <div className="nav-panel-row" style={{ paddingLeft: 10 }}>
         {workspaceGlyph(ws, expanded)}
         <span className="text-sm font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-          {ws.name || t('nav.workspaceFallback')}
+          {label(ws) || t('nav.workspaceFallback')}
         </span>
       </div>
     </div>

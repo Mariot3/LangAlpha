@@ -40,3 +40,38 @@ def test_a_profile_zone_the_turn_skipped_is_not_stated():
     identity block states the one the stamp uses, not the stale one."""
     stack = _stack(timezone="America/Chicago", user_profile={"timezone": "Not/AZone"})
     assert stack.baseline._identity().timezone == "America/Chicago"
+
+
+def _agentmd_kwargs(monkeypatch, stack) -> dict:
+    """What the agent.md block is rendered with, from a frozen empty epoch."""
+    from ptc_agent.agent.middleware.runtime_context import baseline
+    from ptc_agent.agent.middleware.runtime_context.epoch import (
+        BaselineEpoch,
+        FileEntry,
+    )
+
+    seen: dict = {}
+    real = baseline.render_template
+
+    def spy(name, /, **kwargs):
+        if name == "envelope/baseline_agentmd.md.j2":
+            seen.update(kwargs)
+        return real(name, **kwargs)
+
+    monkeypatch.setattr(baseline, "render_template", spy)
+    stack.baseline._render_block(
+        BaselineEpoch(agent_md=FileEntry(path="/agent.md"), stored=True)
+    )
+    return seen
+
+
+def test_the_role_reaches_the_agentmd_block(monkeypatch):
+    """Its empty state tells the Chief of Staff to start one in Home, not in a
+    workspace, and the role is fixed per build, so the block stays frozen."""
+    stack = _stack(timezone=None, role="chief_of_staff")
+    assert _agentmd_kwargs(monkeypatch, stack)["role"] == "chief_of_staff"
+
+
+def test_a_build_that_names_no_role_is_the_analyst(monkeypatch):
+    """Subagents, Flash and the CLI build the stack without a role."""
+    assert _agentmd_kwargs(monkeypatch, _stack(timezone=None))["role"] == "analyst"

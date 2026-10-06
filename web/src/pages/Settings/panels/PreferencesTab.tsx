@@ -10,9 +10,11 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
 import { getFlashWorkspace } from '@/pages/ChatAgent/utils/api';
+import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import ConfirmDialog from '@/pages/Dashboard/components/ConfirmDialog';
 import { useOnboarding } from '@/pages/Onboarding';
 import type { Preferences } from './types';
+import { AutoApproveSettings } from './AutoApproveSettings';
 
 /** Preferences tab: investment-preference summary, output format, onboarding
  * replay/reset entry points, and the reset-preferences flow. */
@@ -65,8 +67,7 @@ export function PreferencesTab() {
         state: {
           workspaceId: flashWs.workspace_id,
           isModifyingPreferences: true,
-          agentMode: 'flash',
-          workspaceStatus: 'flash',
+          ...FLASH_ROUTE_STATE,
         },
       });
     } catch (err) {
@@ -86,8 +87,7 @@ export function PreferencesTab() {
         state: {
           workspaceId: flashWs.workspace_id,
           isOnboarding: true,
-          agentMode: 'flash',
-          workspaceStatus: 'flash',
+          ...FLASH_ROUTE_STATE,
         },
       });
     } catch (err) {
@@ -258,6 +258,8 @@ export function PreferencesTab() {
           </div>
         );
       })()}
+
+      <AutoApproveSettings />
 
       {/* Column until there is room for a row. The two actions are a fixed
           ~259px whatever the viewport, so side-by-side on a phone leaves the

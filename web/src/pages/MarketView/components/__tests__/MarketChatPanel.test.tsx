@@ -38,6 +38,7 @@ const h = vi.hoisted(() => ({
   threadId: 'thread-xyz', // mutated per-test to exercise the new-chat case
   pendingInterrupt: null as unknown, // mutated per-test to exercise input gating
   preferences: null as unknown, // the user's preferences, set per-test
+  allWorkspaces: false, // the all_workspaces_agent flag, set per-test
 }));
 
 // API spies — compaction calls straight into the ChatAgent api module. (Stop is
@@ -53,6 +54,7 @@ const api = vi.hoisted(() => ({
 const ml = vi.hoisted(() => ({
   props: null as Record<string, unknown> | null,
   actions: null as Record<string, unknown> | null,
+  folders: null as { dirName?: string | null; previousDirNames?: readonly string[] | null } | null,
 }));
 const ci = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 
@@ -60,8 +62,13 @@ vi.mock('@/hooks/usePreferences', () => ({
   usePreferences: () => ({ preferences: h.preferences, isLoading: false, isLoaded: true }),
 }));
 
+vi.mock('@/hooks/useAllWorkspacesAgent', () => ({
+  useAllWorkspacesAgent: () => h.allWorkspaces,
+}));
+
 vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
-  useChatMessages: () => ({
+  // A spy, so a test can read the scope the panel hands the chat engine.
+  useChatMessages: vi.fn(() => ({
     messages: h.messages, // non-empty → MessageList renders
     liveMessages: { get: () => h.messages, set: () => {}, subscribe: () => () => {} },
     isLoading: h.isLoading,
@@ -99,16 +106,18 @@ vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
     handleThumbUp: h.handleThumbUp,
     handleThumbDown: h.handleThumbDown,
     feedbackByTurn: h.feedbackByTurn,
-  }),
+  })),
 }));
 
 // The transcript action surface arrives through MessageActionsContext now, so
 // the stand-in reads the provided value from inside the provider.
 vi.mock('@/pages/ChatAgent/components/MessageList', async () => {
   const { useMessageActions } = await import('@/pages/ChatAgent/components/messageList/MessageActionsContext');
+  const { useWorkspaceFolders } = await import('@/pages/ChatAgent/contexts/WorkspaceContext');
   function MessageListStub(props: Record<string, unknown>) {
     ml.props = props;
     ml.actions = useMessageActions() as unknown as Record<string, unknown>;
+    ml.folders = useWorkspaceFolders();
     // Bubbles carry the markers a turn-end landing looks for.
     const messages = (props.messages ?? []) as Array<{ id: string; role: string }>;
     return (
@@ -148,6 +157,7 @@ vi.mock('@/pages/ChatAgent/utils/api', async (importActual) => ({
 }));
 
 import MarketChatPanel from '../MarketChatPanel';
+import { useChatMessages } from '@/pages/ChatAgent/hooks/useChatMessages';
 import { chartSelectionStore } from '../../stores/chartSelectionStore';
 import { userLocalStorage } from '@/lib/userStorage';
 
@@ -269,8 +279,10 @@ describe('MarketChatPanel', () => {
     h.isLoading = false;
     h.messages = [{ id: 'm1', role: 'assistant' }];
     h.preferences = null;
+    h.allWorkspaces = false;
     ml.props = null;
     ml.actions = null;
+    ml.folders = null;
     ci.props = null;
     localStorage.clear();
   });
@@ -527,9 +539,9 @@ describe('MarketChatPanel', () => {
     renderPanel({
       workspaces: [{ workspace_id: 'ws-1', name: 'Old Name', dir_name: 'Old Name', previous_dir_names: [] }],
     });
-    await vi.waitFor(() => expect(ml.props?.workspaceDirName).toBe('New Name'));
+    await vi.waitFor(() => expect(ml.folders?.dirName).toBe('New Name'));
     expect(api.getWorkspace).toHaveBeenCalledWith('ws-1');
-    expect(ml.props?.previousDirNames).toEqual(['Old Name']);
+    expect(ml.folders?.previousDirNames).toEqual(['Old Name']);
   });
 
   it('provides every HITL handler through MessageActionsContext so plan/question cards work', () => {
@@ -722,5 +734,54 @@ describe('MarketChatPanel', () => {
     const open = ml.actions!.onToolCallDetailClick as (toolCallId: string) => void;
     act(() => open('tc-missing'));
     expect(screen.getByText(/no longer in the chat/i)).toBeInTheDocument();
+  });
+
+  describe('the all-workspaces agent flag', () => {
+    beforeEach(() => {
+      h.allWorkspaces = true;
+    });
+
+    it('runs All workspaces as the full agent on the flash row', async () => {
+      renderPanel({ mode: 'fast' });
+      await screen.findByTestId('chat-input');
+      const args = vi.mocked(useChatMessages).mock.lastCall!;
+      expect(args[0]).toBe('flash-ws');
+      // The agent mode the chat engine sends with.
+      expect(args[8]).toBe('ptc');
+    });
+
+    it("reads Home's folder from the workspace detail, which a turn re-reads once Home is bound", async () => {
+      // The flash row (mocked above) was read before Home had a folder.
+      api.getWorkspace.mockResolvedValueOnce({ workspace_id: 'flash-ws', dir_name: 'Home', previous_dir_names: [] });
+      renderPanel({ mode: 'fast' });
+      await vi.waitFor(() => expect(ml.folders?.dirName).toBe('Home'));
+      expect(api.getWorkspace).toHaveBeenCalledWith('flash-ws');
+    });
+
+    it('keeps Flash on the flash row with the flag off', async () => {
+      h.allWorkspaces = false;
+      renderPanel({ mode: 'fast' });
+      await screen.findByTestId('chat-input');
+      const args = vi.mocked(useChatMessages).mock.lastCall!;
+      expect(args[0]).toBe('flash-ws');
+      expect(args[8]).toBe('flash');
+    });
+
+    it('explains an empty workspace list without naming PTC', async () => {
+      renderPanel({ mode: 'fast', workspaces: [], selectedWorkspaceId: null });
+      await screen.findByTestId('chat-input');
+      expect(ci.props?.emptyWorkspacesHint).toBe('Create a workspace in /chat to work in one');
+      expect(ci.props?.ptcDisabledReason).toBeNull();
+    });
+
+    it('hands the composer a scope in place of the mode', async () => {
+      const onModeChange = vi.fn();
+      renderPanel({ mode: 'fast', onModeChange });
+      await screen.findByTestId('chat-input');
+      expect(ci.props?.mode).toBeUndefined();
+      expect(ci.props?.scope).toBe('all');
+      act(() => (ci.props?.onScopeChange as (scope: string) => void)('workspace'));
+      expect(onModeChange).toHaveBeenCalledWith('ptc');
+    });
   });
 });

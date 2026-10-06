@@ -32,8 +32,9 @@ from src.server.database.computer import (
     update_computer_activity,
     update_computer_status,
 )
+from src.server.database.home_workspace import get_flash_workspace_id, is_flash_row
 from src.server.database.workspace_folders import folder_allocation, takes_name_folders
-from src.server.database.workspace_names import candidate_dir_names
+from src.server.database.workspace_names import HOME_FOLDER, candidate_dir_names
 from src.server.database.workspace import (
     bind_workspace_to_computer,
     get_live_workspace_ids_for_computer,
@@ -50,6 +51,7 @@ from src.server.services.workspace_status_pubsub import (
 from src.server.services.computer_manager._types import (
     _MACHINE_DECISION_LOCK_TIMEOUT_MS,
     ComputerBinding,
+    WorkspaceNotOnComputer,
 )
 
 logger = logging.getLogger(__name__)
@@ -136,6 +138,82 @@ class MachineLifecycleMixin:
             raise RuntimeError(f"User {user_id} has no primary computer")
         return winner
 
+    async def ensure_home_bound(self, user_id: str) -> Dict[str, Any]:
+        """Put the user's flash row on their primary computer as Home, and return that computer.
+
+        Lazy and idempotent: every turn routed to Home lands here, and a Home
+        already on a live computer costs one read. No sandbox is built; the
+        turn starts the machine as it would for any stopped project. The bind
+        is the ordinary CAS, so workers racing a first turn settle on one
+        folder, and from then on Home takes its computer's lifecycle like any
+        workspace on it.
+        """
+        home_id = get_flash_workspace_id(user_id)
+        computer = await get_computer_for_workspace(home_id)
+        if computer is not None:
+            return computer
+        home = await db_get_workspace(home_id)
+        if home is not None:
+            primary = await self.ensure_primary_computer(user_id)
+            bound = await self._place_on_computer(
+                home_id,
+                primary,
+                held_folder=home.get("dir_name"),
+                name=HOME_FOLDER,
+                expected_computer_id=home.get("computer_id"),
+            )
+            if bound is not None:
+                await publish_workspace_binding_change(
+                    home_id, str(bound["status"]), str(primary["computer_id"])
+                )
+        # A losing bind re-reads the winner's.
+        computer = await get_computer_for_workspace(home_id)
+        if computer is None:
+            raise WorkspaceNotOnComputer(home_id)
+        return computer
+
+    @staticmethod
+    async def _place_on_computer(
+        workspace_id: str,
+        computer: Dict[str, Any],
+        *,
+        held_folder: Optional[str],
+        name: Optional[str],
+        expected_computer_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Bind a project to the folder it holds, else the first free spelling of ``name``.
+
+        None when another bind won the CAS, or no folder was free: a row that
+        already names its folder waits for that one rather than taking another.
+        """
+        computer_id = str(computer["computer_id"])
+        async with folder_allocation(computer_id) as conn:
+            folders = (
+                [held_folder]
+                if held_folder
+                else candidate_dir_names(
+                    name,
+                    workspace_id,
+                    await get_workspace_dir_names_for_computer(computer_id, conn=conn),
+                    own_folder=takes_name_folders(computer),
+                )
+            )
+            for dir_name in folders:
+                try:
+                    return await bind_workspace_to_computer(
+                        workspace_id,
+                        computer_id,
+                        expected_computer_id=expected_computer_id,
+                        dir_name=dir_name,
+                        conn=conn,
+                    )
+                except WorkspaceDirNameTaken:
+                    logger.info(
+                        f"Folder for workspace {workspace_id} is held on computer "
+                        f"{computer_id}; placing it until the folder frees"
+                    )
+        return None
+
     async def _adopt_workspace_onto_computer(
         self, workspace_id: str, *, workspace: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
@@ -150,8 +228,9 @@ class MachineLifecycleMixin:
         if not workspace:
             return None
         status = workspace.get("status")
-        if status in ("flash", "deleted"):
-            # A flash workspace has no sandbox lifecycle to give it.
+        if status == "deleted" or is_flash_row(workspace):
+            # The flash row reaches a computer only as Home, through
+            # ensure_home_bound, never as a machine of its own.
             return None
 
         user_id = workspace.get("user_id")
@@ -209,35 +288,13 @@ class MachineLifecycleMixin:
                 minted_here = str(computer.get("computer_id")) == candidate_id
         computer_id = str(computer["computer_id"])
 
-        async with folder_allocation(computer_id) as conn:
-            folders = (
-                [workspace["dir_name"]]
-                if workspace.get("dir_name")
-                else candidate_dir_names(
-                    workspace.get("name"),
-                    workspace_id,
-                    await get_workspace_dir_names_for_computer(computer_id, conn=conn),
-                    own_folder=takes_name_folders(computer),
-                )
-            )
-            for dir_name in folders:
-                try:
-                    bound = await bind_workspace_to_computer(
-                        workspace_id,
-                        computer_id,
-                        expected_computer_id=None,
-                        dir_name=dir_name,
-                        conn=conn,
-                    )
-                    break
-                except WorkspaceDirNameTaken:
-                    logger.info(
-                        f"Folder for workspace {workspace_id} is held on computer "
-                        f"{computer_id}; placing it until the folder frees"
-                    )
-            else:
-                bound = None
-
+        bound = await self._place_on_computer(
+            workspace_id,
+            computer,
+            held_folder=workspace.get("dir_name"),
+            name=workspace.get("name"),
+            expected_computer_id=None,
+        )
         if bound is None:
             if minted_here:
                 # The row this call inserted names no project now and would

@@ -85,29 +85,41 @@ export function isAgentNotesPath(
 }
 
 /**
- * A reference read from the workspace's own folder. A machine-root path that
- * names that folder, or one it was renamed out of, has the folder folded off;
- * a relative path already reads from it, so `alpha/x.md` stays a nested file.
- * Without the folder names this is the canonical path, which reads a bare
- * sandbox-root path the way the layout before workspace folders did.
+ * A reference read from the workspace's own folder. A path that names that
+ * folder, or one it was renamed out of, has the folder folded off, from a
+ * machine root or from one climb out of the working directory: to Bash,
+ * `../<folder>/x` is `x`. Any other relative path already reads from the
+ * folder, so `alpha/x.md` stays a nested file. Without the folder names this
+ * is the canonical path, which reads a bare sandbox-root path the way the
+ * layout before workspace folders did.
  *
  * The folder matches as the server's file routes match it: the current one
  * exactly, since another spelling is another directory on a case-sensitive
  * disk, and a former one by its name key, since the rename moved it away and
- * a path an older turn wrote can only mean this workspace.
+ * a path an older turn wrote can only mean this workspace, unless a sibling
+ * has taken it since; a caller that knows the siblings asks
+ * `siblingWorkspacePath` first.
  */
 export function workspaceScopedPath(
   parts: AgentPathParts,
   dirName?: string | null,
   previousDirNames?: readonly string[] | null,
 ): string {
-  // A root the sandbox did not claim survives parsing (`/tmp/x`): no folder there.
   const { path } = parts;
-  if (!parts.absolute || path.startsWith('/')) return path;
-  const first = path.split('/', 1)[0];
+  let rest: string;
+  if (parts.absolute) {
+    // A root the sandbox did not claim survives parsing (`/tmp/x`): no folder there.
+    if (path.startsWith('/')) return path;
+    rest = path;
+  } else {
+    // A `__wsref__` path climbs out of that workspace's folder, not this one's.
+    if (parts.workspaceId || !path.startsWith('../')) return path;
+    rest = path.slice(3);
+  }
+  const first = rest.split('/', 1)[0];
   const inFolder = (!!dirName && first === dirName)
     || (!!first && (previousDirNames ?? []).some((name) => !!name && foldFolderName(name) === foldFolderName(first)));
-  return inFolder ? path.slice(first.length + 1) : path;
+  return inFolder ? rest.slice(first.length + 1) : path;
 }
 
 /**
@@ -116,6 +128,105 @@ export function workspaceScopedPath(
  */
 function foldFolderName(name: string): string {
   return Array.from(name, (c) => CASEFOLD_EXCEPTIONS[c] ?? c.toLowerCase()).join('');
+}
+
+/** Another workspace on the viewed workspace's computer, by the folders that address it. */
+export interface SiblingWorkspace {
+  workspaceId: string;
+  dirName: string;
+  previousDirNames?: readonly string[] | null;
+}
+
+/** The viewed workspace's own folders and the other workspaces on its computer. */
+export interface ComputerFolders {
+  dirName?: string | null;
+  previousDirNames?: readonly string[] | null;
+  siblings: readonly SiblingWorkspace[];
+}
+
+/** The fields of a workspace row that place it on a computer. */
+export interface WorkspaceFolderRow {
+  workspace_id: string;
+  computer_id?: string | null;
+  dir_name?: string | null;
+  previous_dir_names?: readonly string[] | null;
+  status?: string | null;
+}
+
+/**
+ * The viewed workspace's folders and the other live workspaces on its
+ * computer, or null until its row is known. A workspace on no computer has
+ * no siblings, a deleted workspace's folder went with it, and a row with no
+ * folder yet is not one a path can name.
+ */
+export function computerFolders(
+  viewed: WorkspaceFolderRow | null | undefined,
+  rows: readonly WorkspaceFolderRow[] | null | undefined,
+): ComputerFolders | null {
+  if (!viewed) return null;
+  const computerId = viewed.computer_id;
+  const siblings: SiblingWorkspace[] = [];
+  for (const row of computerId ? rows ?? [] : []) {
+    if (row.workspace_id === viewed.workspace_id || row.computer_id !== computerId) continue;
+    if (row.status === 'deleted' || !row.dir_name) continue;
+    siblings.push({ workspaceId: row.workspace_id, dirName: row.dir_name, previousDirNames: row.previous_dir_names });
+  }
+  return { dirName: viewed.dir_name, previousDirNames: viewed.previous_dir_names, siblings };
+}
+
+/** A reference that names a sibling's folder: that workspace, and the path inside it. */
+export interface SiblingPath {
+  workspaceId: string;
+  path: string;
+}
+
+/**
+ * The sibling workspace a reference reaches through its folder, the way the
+ * agent reaches it from Bash: `../<folder>/x` from its working directory, or
+ * `<folder>/x` under a sandbox root. A bare `<folder>/x` is a path inside this
+ * workspace, and a folder no sibling holds is left to the caller's usual reading.
+ *
+ * Folders match as `workspaceScopedPath` matches them, the current name exactly
+ * and a former one by its name key, in this order: this workspace's current
+ * folder, a sibling's current one, this workspace's former ones, then a former
+ * one only a single sibling left. A current name goes first because a folder a
+ * sibling took over after a rename is the sibling's on disk. This workspace's
+ * own folders get null here and fold in `workspaceScopedPath`, so asking here
+ * first and reading the rest through it keeps that order. The folder itself is
+ * the sibling's root, which reads as `./`.
+ */
+export function siblingWorkspacePath(
+  parts: AgentPathParts,
+  folders: ComputerFolders | null | undefined,
+): SiblingPath | null {
+  if (!folders?.siblings.length || parts.workspaceId) return null;
+  const { dirName, previousDirNames, siblings } = folders;
+  let rest: string;
+  if (parts.absolute) {
+    // A root the sandbox did not claim (`/tmp/x`) holds no workspace folder.
+    if (parts.path.startsWith('/')) return null;
+    rest = parts.path;
+  } else {
+    // One level up is the computer root; a second climb leaves it.
+    if (!parts.path.startsWith('../')) return null;
+    rest = parts.path.slice(3);
+  }
+  const slash = rest.indexOf('/');
+  const folder = slash < 0 ? rest : rest.slice(0, slash);
+  if (!folder || folder === '..' || folder === dirName) return null;
+
+  const key = foldFolderName(folder);
+  const heldBefore = (names: readonly string[] | null | undefined) =>
+    (names ?? []).some((name) => !!name && foldFolderName(name) === key);
+  let match = siblings.find((s) => s.dirName === folder);
+  if (!match && !heldBefore(previousDirNames)) {
+    const former = siblings.filter((s) => heldBefore(s.previousDirNames));
+    // Two siblings that both left one folder give no way to tell whose path it was.
+    if (former.length === 1) match = former[0];
+  }
+  if (!match) return null;
+  const inside = slash < 0 ? '' : rest.slice(slash + 1);
+  return { workspaceId: match.workspaceId, path: inside || './' };
 }
 
 // The sandbox roots the agent sometimes emits, bare or `file:///`-wrapped (see
@@ -302,7 +413,7 @@ export function workspaceRelativePath(rawPath: string): string {
   return takeApart(rawPath).path.replace(/^\/+/, '');
 }
 
-/** A machine-root path with the selected workspace's folder folded off; any other path as it came. */
+/** A path through the selected workspace's folder with the folder folded off (`workspaceScopedPath`); any other path as it came. */
 function selectedWorkspacePath(
   rawPath: string,
   dirName?: string | null,
@@ -437,14 +548,19 @@ export interface AgentArtifactRouting {
  * tier memory path, we emit `clearWorkspaceId: true` so a stale
  * filePanelWorkspaceId from a prior cross-workspace click doesn't leak into
  * the new query (flash-mode regression guard).
+ *
+ * A path through a sibling's folder (`siblingWorkspacePath`) routes as the
+ * `__wsref__` link to that workspace would. It is read as a path, which is
+ * what an `OpenFileHandler` is handed, so a `#` inside a name stays.
  */
 export function computeAgentArtifactRouting(
   rawPath: string,
   targetWorkspaceId?: string,
-  workspaceDirName?: string | null,
-  previousDirNames?: readonly string[] | null,
+  folders?: ComputerFolders | null,
 ): AgentArtifactRouting {
-  const routedPath = selectedWorkspacePath(rawPath, workspaceDirName, previousDirNames);
+  const sibling = targetWorkspaceId ? null : siblingWorkspacePath(takeApart(rawPath), folders);
+  if (sibling) return computeAgentArtifactRouting(sibling.path, sibling.workspaceId);
+  const routedPath = selectedWorkspacePath(rawPath, folders?.dirName, folders?.previousDirNames);
   const info = classifyAgentPath(routedPath);
   // Caller-supplied wsid wins; otherwise fall back to the wsid extracted from
   // a `__wsref__/...` marker in the path itself.

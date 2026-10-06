@@ -16,6 +16,7 @@ from src.server.models.chat import (
     SubagentMessageRequest,
     TTSRequest,
     _format_rejection_message,
+    rejection_feedback,
     serialize_hitl_response_map,
     summarize_hitl_response_map,
 )
@@ -81,6 +82,19 @@ class TestFormatRejectionMessage:
     def test_blank_feedback(self):
         msg = _format_rejection_message("   ")
         assert "No specific feedback" in msg
+
+
+class TestRejectionFeedback:
+    """A tool that words its own result reads back only the user's words."""
+
+    def test_round_trips_the_users_words(self):
+        assert rejection_feedback(_format_rejection_message(" use my NVDA one ")) == (
+            "use my NVDA one"
+        )
+
+    def test_no_feedback_is_empty_not_the_placeholder(self):
+        assert rejection_feedback(_format_rejection_message(None)) == ""
+        assert rejection_feedback(None) == ""
 
 
 class TestSerializeHitlResponseMap:

@@ -30,6 +30,7 @@ import { type SubagentTokenUsage, ZERO_USAGE } from '../utils/tokenUsage';
 import { computeSteeringBoundary } from '../session/stream/steeringRollback';
 import { isSteeringContinuation, isSteeringUserMessage } from '../components/messageList/messagePredicates';
 import { bumpThreadNavOrder } from './useNavigationData';
+import { invalidateNewWorkspace } from './workspaceRowActions';
 import { ensureThreadId } from '../session/threadCreation';
 export { removeStoredThreadId } from './utils/threadStorage';
 import { createUserMessage, createAssistantMessage, createNotificationMessage, appendMessage, updateMessage, type AttachmentMeta } from './utils/messageHelpers';
@@ -2805,6 +2806,8 @@ export function useChatMessages(
     attachSubagentMux,
     setMarketWatch,
     refreshWorkspaceFolder,
+    armReportBack: () => armReportBackWatch(threadIdRef.current, null, null),
+    refreshWorkspaces: () => invalidateNewWorkspace(queryClient),
   };
 
   /** Composition-level callbacks for the recovery/ownership lifecycle; direct

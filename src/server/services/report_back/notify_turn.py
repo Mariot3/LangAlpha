@@ -32,20 +32,26 @@ async def post_notification_turn(
     heartbeat=None,
     log_prefix: str,
     subject: str = "",
+    still_due=None,
 ) -> tuple[str, str | None]:
     """POST a synthetic turn to ``thread_id``, deferring through admission.
 
     Returns ``(outcome, run_id)`` where outcome is ``"dispatched"`` (run_id
     set), ``"drop"`` (terminal 4xx), ``"cap"`` (exhausted defer-wait — the
     target may simply be busy; the caller picks drop vs park), ``"deleted"``
-    (target thread 404), or ``"lost"`` (the ``heartbeat`` fence failed —
-    caller must stop with no teardown). Defers with backoff on 409, >=500,
+    (target thread 404), ``"lost"`` (the ``heartbeat`` fence failed —
+    caller must stop with no teardown), or ``"superseded"`` (``still_due``
+    said no; no turn was started). Defers with backoff on 409, >=500,
     and ``DEFER_STATUSES``, bounded by ``wait_cap`` — except a 409 whose
     detail is ``duplicate_request``: that's a prior POST of this same
     ``request_key`` that already started a run, adopted as ``"dispatched"``.
     ``heartbeat`` (async -> bool) runs every defer iteration so a long
-    busy-wait can't outlive the caller's outbox lease. ``subject`` is a
-    short label for log lines (e.g. the source PTC thread or task id).
+    busy-wait can't outlive the caller's outbox lease. ``still_due`` (async
+    -> bool) is asked before each POST until one gets no definite answer (a
+    transport error or a 5xx): that POST may still be admitted, and only a
+    retry's request_key dedup can tell.
+    ``subject`` is a short label for log lines (e.g. the source PTC thread
+    or task id).
     """
     import aiohttp
 
@@ -76,8 +82,16 @@ async def post_notification_turn(
 
     deadline = asyncio.get_running_loop().time() + wait_cap
     backoff = 1.0
+    answered = True
     async with aiohttp.ClientSession() as session:
         while True:
+            if still_due is not None and answered and not await still_due():
+                logger.info(
+                    f"{log_prefix} Notification for {subject or thread_id} on "
+                    f"thread {thread_id} is superseded; not posting"
+                )
+                return "superseded", None
+            answered = False
             try:
                 async with session.post(
                     url,
@@ -85,6 +99,7 @@ async def post_notification_turn(
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(connect=10, sock_read=30),
                 ) as resp:
+                    answered = resp.status < 500
                     if resp.status < 400:
                         try:
                             run_id = (await resp.json()).get("run_id")

@@ -192,9 +192,73 @@ function resolvePendingHistoryInterrupt(
   return true;
 }
 
+/**
+ * What a hand-off's result writes on its card. A dispatch that fails after the
+ * user approved it stays approved and says it failed, and keeps the thread an
+ * unknown outcome names, where the run may have started, so the card can still
+ * follow it. A result that is not the dispatch's own JSON started nothing: the
+ * call was cancelled when the chat changed agents, or the tool errored.
+ */
+function dispatchResultFields(content: string): Record<string, unknown> {
+  let result: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (parsed && typeof parsed === 'object') result = parsed as Record<string, unknown>;
+  } catch { /* not the dispatch's result */ }
+  if (!result) return { dispatch_failed: true };
+  return {
+    ...(result.thread_id ? { thread_id: result.thread_id } : {}),
+    ...(result.workspace_id ? { workspace_id: result.workspace_id } : {}),
+    ...(result.success === false ? { dispatch_failed: true } : {}),
+  };
+}
+
+/**
+ * Settle the pending proposal a tool result answers. A decline rejects it, and
+ * so does a result with `success: false` on any card but a hand-off's (see
+ * dispatchResultFields); anything else approves it. One resume can answer
+ * several interrupts, and their results need not arrive in the order the cards
+ * did, so an interrupt that named its tool call (a dispatch does) is settled
+ * only by that call's result; the rest take the next result in order.
+ */
+function settleProposalFromResult(
+  pending: HistoryInterruptInfo[],
+  toolCallId: string | undefined,
+  content: string,
+  setMessages: SetMessages,
+): boolean {
+  const named = !!toolCallId && pending.some((p) => p.toolCallId === toolCallId);
+  return resolvePendingHistoryInterrupt(
+    pending,
+    (p) => PROPOSAL_INTERRUPT_TYPES.has(p.type) &&
+      (named ? p.toolCallId === toolCallId : !toolCallId || !p.toolCallId),
+    // Parsed here so a result pays for it only when it settles a proposal.
+    (m) => {
+      let status = 'approved';
+      if (content.startsWith('User declined')) {
+        status = 'rejected';
+      } else if (m.type !== 'ptc_agent') {
+        try {
+          if (JSON.parse(content)?.success === false) status = 'rejected';
+        } catch { /* non-JSON → treat as approved */ }
+      }
+      const extraFields = m.type === 'ptc_agent' && status === 'approved'
+        ? dispatchResultFields(content)
+        : {};
+      return {
+        bucket: PROPOSAL_DATA_KEY_MAP[m.type] || 'questionProposals',
+        key: m.proposalId!,
+        fields: { status, ...extraFields },
+      };
+    },
+    setMessages,
+  );
+}
+
 export {
-  PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP, SECRETARY_ACTION_TYPES,
+  PROPOSAL_INTERRUPT_TYPES, SECRETARY_ACTION_TYPES,
   INTERRUPT_CARD_BUCKETS, CARD_BUCKET_FOR_TYPE,
   setCardStatus, setCardFields, resolvePendingHistoryInterrupt, historyCardKey,
+  settleProposalFromResult, dispatchResultFields,
   stripHistoryInterruptCards,
 };

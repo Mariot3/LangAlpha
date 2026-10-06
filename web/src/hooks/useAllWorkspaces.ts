@@ -35,13 +35,14 @@ export async function getAllWorkspaces(
  * without looking wrong. Cached in the list shape so an optimistic row patch
  * reaches it too.
  */
-export function useAllWorkspaces({ sortBy = 'custom', includeFlash = false }: { sortBy?: string; includeFlash?: boolean } = {}) {
+export function useAllWorkspaces({ sortBy = 'custom', includeFlash = false, enabled = true }: { sortBy?: string; includeFlash?: boolean; enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.workspaces.list({ view: 'all', sortBy, includeFlash }),
     queryFn: async () => {
       const workspaces = await getAllWorkspaces(sortBy, includeFlash);
       return { workspaces, total: workspaces.length };
     },
+    enabled,
     staleTime: 30_000,
   });
 }

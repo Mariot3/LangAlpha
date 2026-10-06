@@ -5,6 +5,8 @@ import { motion, AnimatePresence, type MotionProps } from '@/lib/framer';
 import { Check, X, ChevronRight, ArrowRight, AlertTriangle, Square } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useDispatchStatus, type PTCDispatchStatus } from '../hooks/usePTCDispatchStatus';
+import { AUTO_APPROVE, useApproveAlways } from '@/hooks/useAutoApprove';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
 
 interface ProposalData {
   workspace_name?: string;
@@ -13,6 +15,8 @@ interface ProposalData {
   thread_id?: string;
   workspace_id?: string;
   report_back?: boolean;
+  /** Approved, but the dispatch failed (session/interrupts/buckets.ts). */
+  dispatch_failed?: boolean;
 }
 
 interface FlashContext {
@@ -130,23 +134,24 @@ function fmtElapsed(secs: number): string {
   return `${m}:${String(secs % 60).padStart(2, '0')}`;
 }
 
-/** Elapsed seconds since `active` first turned true on this mount (best-effort —
- *  a card mounted mid-run counts from mount, not from the true run start). */
-function useElapsedSeconds(active: boolean): number {
+/** Seconds the run has been working: from its start once the server says when
+ *  that was, from when this card first saw it running until then. */
+function useElapsedSeconds(active: boolean, startedAt: number | undefined): number {
   const [secs, setSecs] = useState(0);
-  const startRef = useRef<number | null>(null);
+  const seenRef = useRef<number | null>(null);
   useEffect(() => {
     if (!active) {
-      startRef.current = null;
+      seenRef.current = null;
       setSecs(0);
       return;
     }
-    if (startRef.current === null) startRef.current = Date.now();
-    const tick = () => setSecs(Math.floor((Date.now() - (startRef.current as number)) / 1000));
+    if (seenRef.current === null) seenRef.current = Date.now();
+    const from = startedAt ?? seenRef.current;
+    const tick = () => setSecs(Math.max(0, Math.floor((Date.now() - from) / 1000)));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [active]);
+  }, [active, startedAt]);
   return secs;
 }
 
@@ -250,6 +255,9 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(true);
   const [reportBack, setReportBack] = useState(proposalData?.report_back ?? true);
+  const { approveAlways, saving } = useApproveAlways(AUTO_APPROVE.handoffs);
+  // Flash proposes hand-offs too, to a PTC workspace rather than an Analyst.
+  const allWorkspaces = useAllWorkspacesAgent();
   const navigate = useNavigate();
   const detailId = useId();
 
@@ -257,8 +265,12 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
   const isApproved = status === 'approved';
   const threadId = proposalData?.thread_id;
 
-  const { status: dispatchStatus } = useDispatchStatus(threadId, isApproved && !!threadId);
-  const elapsedSecs = useElapsedSeconds(isApproved && dispatchStatus === 'running');
+  const { status: runStatus, startedAt } = useDispatchStatus(threadId, isApproved && !!threadId);
+  // A failed dispatch has no run to wait for, unless one turns up on the
+  // thread an unknown outcome named.
+  const notStarted = proposalData?.dispatch_failed === true && runStatus === 'starting';
+  const dispatchStatus: PTCDispatchStatus = notStarted ? 'failed' : runStatus;
+  const elapsedSecs = useElapsedSeconds(isApproved && dispatchStatus === 'running', startedAt);
 
   if (!proposalData) return null;
 
@@ -316,6 +328,7 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
   if (isApproved) {
     const ui = STATUS_UI[dispatchStatus];
     const elapsed = dispatchStatus === 'running' ? fmtElapsed(elapsedSecs) : null;
+    const hintKey = notStarted ? 'chat.ptcCard.hintNotStarted' : ui.hintKey;
 
     return (
       <MissionPanel
@@ -326,17 +339,19 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
         transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
         statusSlot={<StatusIndicator status={dispatchStatus} elapsed={elapsed} />}
       >
-        {threadId && (
+        {(threadId || notStarted) && (
           <div className="mt-3 flex items-center justify-between gap-3 pt-2.5" style={{ borderTop: '1px solid var(--color-border-muted)' }}>
-            <span className="text-[0.75rem]" style={{ color: 'var(--color-text-quaternary)' }}>{ui.hintKey ? t(ui.hintKey) : ''}</span>
-            <button
-              onClick={openThread}
-              className="group inline-flex shrink-0 items-center gap-1 text-[0.7813rem] font-medium transition-opacity hover:opacity-80"
-              style={{ color: ui.ctaAccent ? 'var(--color-accent-primary)' : 'var(--color-text-tertiary)' }}
-            >
-              {t(ui.ctaKey)}
-              <ArrowRight aria-hidden className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-            </button>
+            <span className="text-[0.75rem]" style={{ color: 'var(--color-text-quaternary)' }}>{hintKey ? t(hintKey) : ''}</span>
+            {threadId && (
+              <button
+                onClick={openThread}
+                className="group inline-flex shrink-0 items-center gap-1 text-[0.7813rem] font-medium transition-opacity hover:opacity-80"
+                style={{ color: ui.ctaAccent ? 'var(--color-accent-primary)' : 'var(--color-text-tertiary)' }}
+              >
+                {t(ui.ctaKey)}
+                <ArrowRight aria-hidden className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              </button>
+            )}
           </div>
         )}
       </MissionPanel>
@@ -380,6 +395,7 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
       {/* Actions — quiet text buttons, no motion bounce. */}
       <div className="flex items-center gap-2 pt-3">
         <button
+          disabled={saving}
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); onApprove?.({ report_back: reportBack }); }}
           className="rounded-md px-3.5 py-1.5 text-[0.8125rem] font-medium transition-[filter] hover:brightness-110"
           style={{ backgroundColor: 'var(--color-btn-primary-bg)', color: 'var(--color-btn-primary-text)' }}
@@ -387,6 +403,16 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
           {t('chat.ptcCard.approve')}
         </button>
         <button
+          disabled={saving}
+          title={t(allWorkspaces ? 'chat.ptcCard.alwaysApproveHint' : 'chat.ptcCard.alwaysApproveHintPtc')}
+          onClick={(e: React.MouseEvent) => { e.stopPropagation(); approveAlways(() => onApprove?.({ report_back: reportBack })); }}
+          className="rounded-md px-3.5 py-1.5 text-[0.8125rem] font-medium transition-colors hover:bg-(--color-bg-hover)"
+          style={{ border: '1px solid var(--color-border-default)', color: 'var(--color-text-secondary)' }}
+        >
+          {t('chat.ptcCard.alwaysApprove')}
+        </button>
+        <button
+          disabled={saving}
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); onReject?.(); }}
           className="rounded-md px-3.5 py-1.5 text-[0.8125rem] font-medium transition-colors hover:bg-(--color-bg-hover)"
           style={{ border: '1px solid var(--color-border-default)', color: 'var(--color-text-tertiary)' }}

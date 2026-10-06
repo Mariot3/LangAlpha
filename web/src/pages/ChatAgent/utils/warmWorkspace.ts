@@ -38,11 +38,22 @@ export function cachedWorkspaceLists(queryClient: QueryClient): Workspace[] {
 }
 
 /**
+ * A flash row's 'flash' status is a marker, not a lifecycle state: it is how
+ * every surface tells the per-user flash row (Home, once bound) apart. A
+ * bound Home row carries its computer's id, so a computer-wide patch would
+ * otherwise overwrite the marker with the machine's state.
+ */
+function holdsFlashMarker(row: { status?: string | null } | null | undefined): boolean {
+  return row?.status === 'flash';
+}
+
+/**
  * Write `status` into both the workspace detail cache and any active
  * workspace-list caches. Shared between `warmWorkspace` (writes the
  * 202 /start response) and `useWarmWorkspaceSandbox` (writes each
  * SSE-pushed transition) so a single status change visibly updates
- * every gallery + detail consumer without a network round-trip.
+ * every gallery + detail consumer without a network round-trip. A flash
+ * row keeps its marker.
  */
 export function patchWorkspaceStatusInCaches(
   queryClient: QueryClient,
@@ -52,7 +63,7 @@ export function patchWorkspaceStatusInCaches(
 ): void {
   queryClient.setQueryData(
     workspaceDetailQuery(workspaceId).queryKey,
-    (prev) => prev
+    (prev) => prev && !holdsFlashMarker(prev)
       ? { ...prev, status, ...(computerId ? { computer_id: computerId } : {}) }
       : prev,
   );
@@ -63,7 +74,7 @@ export function patchWorkspaceStatusInCaches(
       return {
         ...prev,
         workspaces: prev.workspaces.map((w) =>
-          w.workspace_id === workspaceId
+          w.workspace_id === workspaceId && !holdsFlashMarker(w)
             ? { ...w, status, ...(computerId ? { computer_id: computerId } : {}) }
             : w,
         ),
@@ -72,7 +83,8 @@ export function patchWorkspaceStatusInCaches(
   );
 }
 
-/** Update one machine and every cached workspace bound to it. */
+/** Update one machine and every cached workspace bound to it, except a flash
+ * row, whose status stays its marker. */
 export function patchComputerStatusInCaches(
   queryClient: QueryClient,
   computerId: string,
@@ -89,17 +101,44 @@ export function patchComputerStatusInCaches(
   );
   queryClient.setQueriesData<Workspace | undefined>(
     { queryKey: queryKeys.workspaces.details() },
-    (prev) => prev?.computer_id === computerId && prev.status !== 'deleted'
+    (prev) => prev?.computer_id === computerId && prev.status !== 'deleted' && !holdsFlashMarker(prev)
       ? { ...prev, status }
       : prev,
   );
   const workspaceIds = new Set(
     cachedWorkspaceLists(queryClient)
       .filter((workspace) =>
-        workspace.computer_id === computerId && workspace.status !== 'deleted')
+        workspace.computer_id === computerId && workspace.status !== 'deleted'
+        && !holdsFlashMarker(workspace))
       .map((workspace) => workspace.workspace_id),
   );
   for (const id of workspaceIds) patchWorkspaceStatusInCaches(queryClient, id, status);
+}
+
+/** The computer Home is bound to, called once a start has bound it. A row
+ * cached before Home's first start names no computer, and the start's reply
+ * does not either, so the detail is read again then; that fresh read is also
+ * what puts Home's folder in front of every reader of the detail. */
+async function homeComputerId(queryClient: QueryClient, workspaceId: string): Promise<string | null> {
+  const cached = [
+    queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey),
+    ...cachedWorkspaceLists(queryClient),
+  ].find((w) => w?.workspace_id === workspaceId && w.computer_id)?.computer_id;
+  if (cached) return cached;
+  const row = await queryClient.fetchQuery({ ...workspaceDetailQuery(workspaceId), staleTime: 0 });
+  return row?.computer_id ?? null;
+}
+
+/** What the caches believe a machine is doing: its own row, else a workspace
+ * bound to it. */
+function cachedComputerStatus(queryClient: QueryClient, computerId: string): string | undefined {
+  for (const [, data] of queryClient.getQueriesData<ComputersResponse>({ queryKey: queryKeys.computers.lists() })) {
+    const computer = data?.computers?.find((c) => c.computer_id === computerId);
+    if (computer) return computer.status;
+  }
+  return cachedWorkspaceLists(queryClient)
+    .find((w) => w.computer_id === computerId && !holdsFlashMarker(w) && w.status !== 'deleted')
+    ?.status;
 }
 
 /** Two-level warming state the chat spinner renders: not warming, a generic
@@ -126,11 +165,41 @@ export function mergeWarmingDisplay(
 export function warmWorkspace(
   workspaceId: string,
   queryClient: QueryClient,
+  { home = false }: {
+    /**
+     * The per-user flash row under the all-workspaces agent. Its row reads
+     * 'flash' whatever its computer is doing, so the status gate below would
+     * skip it; the start itself binds Home to the computer and answers from
+     * the computer's state. Leave unset with the flag off, where a start on
+     * that row is refused.
+     */
+    home?: boolean;
+  } = {},
 ): Promise<void> {
   if (!workspaceId) return Promise.resolve();
 
   const existing = inFlight.get(workspaceId);
   if (existing) return existing;
+
+  if (home) {
+    // Home's row keeps its 'flash' marker; the start moves its computer, which
+    // the workspaces beside it on that machine show, so patch the machine.
+    const p = startWorkspace(workspaceId, { lazy: true })
+      .then(async (resp) => {
+        const computerId = await homeComputerId(queryClient, workspaceId);
+        if (computerId && cachedComputerStatus(queryClient, computerId) === 'stopped') {
+          patchComputerStatusInCaches(queryClient, computerId, resp.status);
+        }
+      })
+      .catch((err: unknown) => {
+        if (import.meta.env?.DEV) {
+          console.warn('[warmWorkspace] failed', workspaceId, err);
+        }
+      })
+      .finally(() => inFlight.delete(workspaceId));
+    inFlight.set(workspaceId, p);
+    return p;
+  }
 
   const cached = queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey);
   if (cached && cached.status && !['stopped', 'running'].includes(cached.status)) {

@@ -100,7 +100,13 @@ def test_a_placeholder_is_the_folder_plus_a_suffix_the_id_fixes():
 
 @pytest.mark.parametrize(
     ("name", "reason", "held"),
-    [(" ./ ", "empty", None), ("Tools", "reserved", "Tools"), ("x" * 81, "too_long", None)],
+    [
+        (" ./ ", "empty", None),
+        ("Tools", "reserved", "Tools"),
+        # Home's folder: a workspace taking it would push Home to a placeholder.
+        (" home ", "reserved", "home"),
+        ("x" * 81, "too_long", None),
+    ],
 )
 def test_a_refusal_says_why_so_a_client_can_word_it(name, reason, held):
     with pytest.raises(WorkspaceNameInvalid) as caught:

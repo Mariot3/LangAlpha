@@ -28,6 +28,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import {
   warmWorkspace,
   mergeWarmingDisplay,
+  patchWorkspaceStatusInCaches,
   __resetWarmStateForTests,
 } from '../warmWorkspace';
 
@@ -141,6 +142,34 @@ describe('warmWorkspace', () => {
     expect(computers.computers[0].status).toBe('starting');
     expect((qc.getQueryData(queryKeys.workspaces.detail('ws-2')) as { status: string }).status)
       .toBe('starting');
+  });
+
+  it("leaves a bound flash row's marker alone when its computer starts", async () => {
+    const qc = makeClient();
+    qc.setQueryData(queryKeys.workspaces.detail('ws-1'), {
+      workspace_id: 'ws-1', computer_id: 'comp-1', status: 'stopped',
+    });
+    qc.setQueryData(queryKeys.workspaces.detail('home-1'), {
+      workspace_id: 'home-1', computer_id: 'comp-1', status: 'flash',
+    });
+    const listKey = queryKeys.workspaces.list({ limit: 20, includeFlash: true });
+    qc.setQueryData(listKey, {
+      workspaces: [
+        { workspace_id: 'ws-1', computer_id: 'comp-1', status: 'stopped' },
+        { workspace_id: 'home-1', computer_id: 'comp-1', status: 'flash' },
+      ],
+      total: 2,
+    });
+
+    await warmWorkspace('ws-1', qc);
+    patchWorkspaceStatusInCaches(qc, 'home-1', 'running');
+
+    expect((qc.getQueryData(queryKeys.workspaces.detail('ws-1')) as { status: string }).status)
+      .toBe('starting');
+    expect((qc.getQueryData(queryKeys.workspaces.detail('home-1')) as { status: string }).status)
+      .toBe('flash');
+    const list = qc.getQueryData(listKey) as { workspaces: Array<{ status: string }> };
+    expect(list.workspaces.map((w) => w.status)).toEqual(['starting', 'flash']);
   });
 
   it('patches matching workspace in cached list query', async () => {
@@ -287,6 +316,77 @@ describe('warmWorkspace', () => {
     const qc = makeClient();
     await warmWorkspace('', qc);
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('skips the flash row unless the caller names it Home', async () => {
+    const qc = makeClient();
+    qc.setQueryData(queryKeys.workspaces.detail('flash-1'), {
+      workspace_id: 'flash-1',
+      status: 'flash',
+    });
+
+    await warmWorkspace('flash-1', qc);
+    expect(mockPost).not.toHaveBeenCalled();
+
+    // The start binds Home, so the row is read again, and the server keeps its marker.
+    mockGet.mockResolvedValueOnce({ data: { workspace_id: 'flash-1', computer_id: 'comp-1', status: 'flash' } });
+    await warmWorkspace('flash-1', qc, { home: true });
+    expect(mockPost).toHaveBeenCalledWith('/api/v1/workspaces/flash-1/start?lazy=true');
+    // The row keeps its marker; the computer's status is not the row's.
+    expect(
+      (qc.getQueryData(queryKeys.workspaces.detail('flash-1')) as { status: string }).status,
+    ).toBe('flash');
+  });
+
+  it('shows a Home warm on the workspaces sharing its stopped computer', async () => {
+    const qc = makeClient();
+    mockPost.mockResolvedValueOnce({ data: { workspace_id: 'home-1', status: 'starting' } });
+    qc.setQueryData(queryKeys.workspaces.detail('home-1'), {
+      workspace_id: 'home-1', computer_id: 'comp-1', status: 'flash',
+    });
+    qc.setQueryData(queryKeys.workspaces.list({ limit: 100 }), {
+      workspaces: [
+        { workspace_id: 'home-1', computer_id: 'comp-1', status: 'flash' },
+        { workspace_id: 'ws-2', computer_id: 'comp-1', status: 'stopped' },
+      ],
+    });
+
+    await warmWorkspace('home-1', qc, { home: true });
+
+    const list = qc.getQueryData(queryKeys.workspaces.list({ limit: 100 })) as {
+      workspaces: { workspace_id: string; status: string }[];
+    };
+    expect(list.workspaces.map((w) => [w.workspace_id, w.status])).toEqual([
+      ['home-1', 'flash'],
+      ['ws-2', 'starting'],
+    ]);
+  });
+
+  it('reads Home again after the start that first bound it', async () => {
+    const qc = makeClient();
+    mockPost.mockResolvedValueOnce({ data: { workspace_id: 'home-1', status: 'starting' } });
+    // Every cached copy of Home was read before the start put it on a computer.
+    const unbound = { workspace_id: 'home-1', computer_id: null, dir_name: null, status: 'flash' };
+    qc.setQueryData(queryKeys.workspaces.flash(), unbound);
+    qc.setQueryData(queryKeys.workspaces.detail('home-1'), unbound);
+    qc.setQueryData(queryKeys.workspaces.list({ limit: 100 }), {
+      workspaces: [{ workspace_id: 'ws-2', computer_id: 'comp-1', status: 'stopped' }],
+    });
+    mockGet.mockResolvedValueOnce({
+      data: { workspace_id: 'home-1', computer_id: 'comp-1', dir_name: 'Home', status: 'flash' },
+    });
+
+    await warmWorkspace('home-1', qc, { home: true });
+
+    expect(mockGet).toHaveBeenCalledWith('/api/v1/workspaces/home-1');
+    const list = qc.getQueryData(queryKeys.workspaces.list({ limit: 100 })) as {
+      workspaces: { workspace_id: string; status: string }[];
+    };
+    expect(list.workspaces.map((w) => [w.workspace_id, w.status])).toEqual([['ws-2', 'starting']]);
+    // The detail every placement reader goes through now names the folder.
+    expect(qc.getQueryData(queryKeys.workspaces.detail('home-1'))).toMatchObject({
+      computer_id: 'comp-1', dir_name: 'Home', status: 'flash',
+    });
   });
 });
 

@@ -1,4 +1,7 @@
-"""Secretary tools: workspace management, PTC dispatch, agent monitoring, thread management."""
+"""Flash's secretary tools: workspace management, PTC dispatch, agent monitoring, thread management.
+
+The Chief of Staff's versions are in ``chief_of_staff``.
+"""
 
 from src.tools.secretary.tools import (
     agent_output,

@@ -11,11 +11,18 @@ vi.mock('@/pages/ChatAgent/utils/api/workspaces', async (importOriginal) => ({
   getFlashWorkspace: api.getFlashWorkspace,
 }));
 
+const flag = vi.hoisted(() => ({ on: false }));
+vi.mock('@/hooks/useAllWorkspacesAgent', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useAllWorkspacesAgent: () => flag.on,
+}));
+
 import { queryKeys } from '@/lib/queryKeys';
-import { useFlashWorkspace } from '../useFlashWorkspace';
+import { useFlashScope, useFlashWorkspace } from '../useFlashWorkspace';
 
 afterEach(() => {
   api.getFlashWorkspace.mockClear();
+  flag.on = false;
 });
 
 /**
@@ -51,6 +58,29 @@ describe('useFlashWorkspace', () => {
       expect(queryClient.getQueryState(queryKeys.workspaces.flash())?.isInvalidated).toBe(false),
     );
     expect(queryClient.getQueryState(queryKeys.mcp.catalog())?.isInvalidated).toBe(false);
+    queryClient.clear();
+  });
+});
+
+describe('under the all-workspaces agent', () => {
+  it('names the row Home, since All workspaces already means every workspace in a scope', async () => {
+    flag.on = true;
+    const queryClient = clientWithCatalog();
+    const { result } = renderHookWithProviders(() => useFlashWorkspace(), { queryClient });
+
+    await waitFor(() => expect(result.current).toEqual({ id: 'flash-1', name: 'Home' }));
+    queryClient.clear();
+  });
+
+  it('offers Home on every plugin row, where Flash takes only directly bound tools', async () => {
+    const queryClient = clientWithCatalog();
+    const { result, rerender } = renderHookWithProviders(() => useFlashScope(), { queryClient });
+    await waitFor(() => expect(result.current(true)?.id).toBe('flash-1'));
+    expect(result.current(false)).toBeUndefined();
+
+    flag.on = true;
+    rerender();
+    expect(result.current(false)).toEqual({ id: 'flash-1', name: 'Home' });
     queryClient.clear();
   });
 });

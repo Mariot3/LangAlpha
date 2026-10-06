@@ -15,7 +15,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from src.server.utils import api as auth_api
 from src.server.utils.api import (
     CurrentUserId,
-    require_workspace_owner,
     service_token_matches,
 )
 from src.server.models.chat import ChatRequest
@@ -247,9 +246,11 @@ async def _handle_send_message(
         astream_flash_workflow,
         astream_ptc_workflow,
     )
-    from src.server.database.workspace import get_or_create_flash_workspace
-
-    from src.server.database.workspace import get_workspace
+    from src.server.services.turn_runtime import (
+        ensure_home,
+        requested_workspace,
+        resolve_turn_route,
+    )
 
     # Canonical run_id generation site. Each POST gets a fresh UUID that
     # flows through every downstream key: BTM ``(tid, rid)``, persistence
@@ -353,46 +354,16 @@ async def _handle_send_message(
                 detail="PTC Agent not initialized. Check server startup logs.",
             )
 
-        # Validate workspace_id for ptc mode
-        if agent_mode == "ptc" and not workspace_id:
-            raise HTTPException(
-                status_code=400,
-                detail="workspace_id is required for 'ptc' agent mode. Create workspace first via POST /workspaces, or use agent_mode='flash' for lightweight queries.",
-            )
-
-        # For flash mode, resolve workspace_id to the shared flash workspace.
-        # The upsert returns the full row, reused by the ownership guard below
-        # and by the flash workflow (skipping a repeat upsert).
-        workspace: dict | None = None
-        flash_workspace: dict | None = None
-        if agent_mode == "flash" and not workspace_id:
-            workspace = await get_or_create_flash_workspace(user_id)
-            workspace_id = str(workspace["workspace_id"])
-            flash_workspace = workspace
-
-        # Single workspace lookup, shared by the flash auto-detect and the
-        # ownership guard below — one DB round-trip instead of two.
-        if workspace is None and workspace_id:
-            workspace = await get_workspace(workspace_id)
-
-        # Auto-detect flash workspaces: if the workspace is flash, override
-        # agent_mode so follow-up messages (HITL responses, etc.) route
-        # correctly even if the client doesn't send agent_mode='flash'. Skip
-        # the status check when a ready session exists (PTC workspace, common path).
-        if agent_mode != "flash" and workspace_id:
-            from src.server.services.workspace_manager import WorkspaceManager
-            if not WorkspaceManager.get_instance().has_ready_session(workspace_id):
-                if workspace and workspace.get("status") == "flash":
-                    agent_mode = "flash"
-                    logger.debug(
-                        f"[CHAT] Auto-detected flash workspace {workspace_id}, "
-                        f"overriding agent_mode to 'flash'"
-                    )
-
-        # IDOR guard (workspace dimension): pairs with the thread guard above so
-        # a fresh thread_id cannot run inside another user's workspace/sandbox.
-        # The internal report-back dispatch sets X-User-Id to the owner, so it passes.
-        require_workspace_owner(workspace, user_id=user_id)
+        # A flash request, or any turn in the flash workspace (a HITL resume
+        # whose client didn't resend agent_mode='flash'), runs on Flash, or in
+        # Home when the user has the all-workspaces agent. The workspace guard
+        # comes first: it pairs with the thread guard above. Home is bound once
+        # the admission gates below pass.
+        workspace = await requested_workspace(user_id, agent_mode, workspace_id)
+        route = await resolve_turn_route(
+            user_id, agent_mode, workspace_id, workspace, bind_home=False
+        )
+        runtime, workspace_id = route.agent, route.workspace_id
 
         # Extract user input
         user_input = ""
@@ -407,9 +378,9 @@ async def _handle_send_message(
                         break
 
         logger.info(
-            f"[{'FLASH' if agent_mode == 'flash' else 'PTC'}_CHAT] New request: "
+            f"[{'FLASH' if runtime == 'flash' else 'PTC'}_CHAT] New request: "
             f"workspace_id={workspace_id} thread_id={thread_id} user_id={user_id} "
-            f"mode={agent_mode}"
+            f"mode={agent_mode} runtime={runtime}"
         )
 
         # Resolve LLM config eagerly — credit check must happen before SSE stream starts
@@ -423,6 +394,12 @@ async def _handle_send_message(
         # turns, which never pass through this route, keep their own model.
         requested_model = request.llm_model or None
         held_model = thread_meta.get("llm_model") if thread_meta else None
+        # A Flash thread the full agent takes over holds a model picked for
+        # Flash's slot. Its promotion forgets it, but only once the turn runs,
+        # so this first turn passes it over too.
+        taken_over = (
+            runtime == "ptc" and bool(thread_meta) and thread_meta.get("msg_type") == "flash"
+        )
         named_model = (
             thread_model.NamedModel(requested_model, seen=held_model)
             if requested_model
@@ -435,7 +412,7 @@ async def _handle_send_message(
                 user_id,
                 model,
                 is_byok,
-                mode=agent_mode,
+                mode=runtime,
                 reasoning_effort=getattr(request, "reasoning_effort", None),
                 fast_mode=getattr(request, "fast_mode", None),
                 thread_id=thread_id,
@@ -456,7 +433,7 @@ async def _handle_send_message(
             user_id,
             thread_id,
             named=requested_model,
-            held=held_model,
+            held=None if taken_over else held_model,
             fall_back=from_service,
             resolve=resolve,
         )
@@ -475,6 +452,9 @@ async def _handle_send_message(
         # the transport the run's first buffered event would kill it as
         # failed(transport_lost) anyway — refuse cheaply instead.
         await _assert_stream_transport_ready()
+
+        if route.role == "chief_of_staff":
+            await ensure_home(user_id, workspace)
 
         # Strip internal-only fields from non-internal requests (prevent
         # spoofing system messages / forging report-back watch cleanup).
@@ -502,7 +482,7 @@ async def _handle_send_message(
 
     # Resolve model name for observability labels (bounded by models.json keys).
     _llm = getattr(config, "llm", None)
-    _model = (getattr(_llm, "flash", None) if agent_mode == "flash" else getattr(_llm, "name", None)) or ""
+    _model = (getattr(_llm, "flash", None) if runtime == "flash" else getattr(_llm, "name", None)) or ""
 
     # Content-Location header advertises the reconnect URL for this run.
     # Mirrors langgraph_sdk's protocol so reconnects target the exact run.
@@ -511,14 +491,14 @@ async def _handle_send_message(
         "Content-Location": f"/api/v1/threads/{thread_id}/messages/stream?run_id={run_id}",
     }
 
-    # Route to appropriate streaming function based on agent mode
-    if agent_mode == "flash":
-        is_flash_dispatch = (
-            is_internal
-            and raw_request
-            and raw_request.headers.get("X-Dispatch") == "background"
-        )
-        flash_gen = astream_flash_workflow(
+    is_dispatch = bool(
+        is_internal
+        and raw_request
+        and raw_request.headers.get("X-Dispatch") == "background"
+    )
+    # Route to appropriate streaming function based on the runtime
+    if runtime == "flash":
+        gen = astream_flash_workflow(
             request=request,
             thread_id=thread_id,
             run_id=run_id,
@@ -526,145 +506,40 @@ async def _handle_send_message(
             user_id=user_id,
             is_byok=is_byok,
             config=config,
-            dispatched=is_flash_dispatch,
-            flash_workspace=flash_workspace,
+            dispatched=is_dispatch,
+            flash_workspace=route.flash_workspace,
             named_model=named_model,
         )
+    else:
+        gen = astream_ptc_workflow(
+            request=request,
+            thread_id=thread_id,
+            run_id=run_id,
+            user_input=user_input,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            role=route.role,
+            is_byok=is_byok,
+            config=config,
+            dispatched=is_dispatch,
+            named_model=named_model,
+            # A report-back summary owes its pair's watch clear whichever
+            # agent answers it, so its finalize must see the pair.
+            run_metadata=(
+                {
+                    "report_back_ptc_thread_id": request.report_back_ptc_thread_id,
+                    "origin_dispatch_gen": request.origin_dispatch_gen,
+                }
+                if request.report_back_ptc_thread_id
+                else None
+            ),
+        )
 
-        if is_flash_dispatch:
-            from src.server.database.runs.lifecycle import DuplicateRequestError
-            from src.server.handlers.chat.request_prep import DISPATCH_STARTED_MARKER
-            # Report-back idempotency: a lost-response retry of the drainer's
-            # POST must NOT start a second summary run. The claim CM SET-NXs
-            # the per-(flash, ptc) run pointer (atomic on its own — no outer
-            # lock needed); a prior admission's incumbent run_id is returned
-            # instead, and a non-consummated exit (e.g. a priming failure
-            # below) releases the claim. No-op unless
-            # report_back_ptc_thread_id is set.
-            rb_ptc = request.report_back_ptc_thread_id
-            rb_cache = None
-            if rb_ptc:
-                from src.utils.cache.redis_cache import get_cache_client
-                rb_cache = get_cache_client()
-            from src.server.services.report_back.flash import pointer
-            async with pointer.claim(
-                rb_cache, thread_id, rb_ptc, run_id,
-                request.origin_dispatch_gen,
-                request.request_key,
-            ) as rb_claim:
-                if rb_claim.incumbent is not None:
-                    await scope.release_slot()
-                    logger.info(
-                        f"[FLASH_DISPATCH] Idempotent report-back: returning "
-                        f"in-flight run {rb_claim.incumbent} for ptc={rb_ptc} on "
-                        f"flash thread {thread_id} (no second run)"
-                    )
-                    return JSONResponse({
-                        "status": "dispatched",
-                        "thread_id": thread_id,
-                        "run_id": rb_claim.incumbent,
-                    })
-                if rb_claim.pair_gone:
-                    await scope.release_slot()
-                    logger.warning(
-                        f"[FLASH_DISPATCH] Report-back pair for ptc={rb_ptc} on "
-                        f"flash thread {thread_id} was already settled; refusing "
-                        "to schedule an orphan summary"
-                    )
-                    # 410 is deliberately outside the executor's retry set: the
-                    # job drops (acks) instead of re-POSTing a summary whose
-                    # pair a resolution or terminal clear has already settled.
-                    raise HTTPException(
-                        status_code=410,
-                        detail=(
-                            "Report-back pair already resolved; summary not "
-                            "scheduled."
-                        ),
-                    )
-                if rb_claim.in_flight:
-                    await scope.release_slot()
-                    logger.info(
-                        f"[FLASH_DISPATCH] Report-back for ptc={rb_ptc} on "
-                        f"flash thread {thread_id} has a rowless incumbent "
-                        "inside its priming lease; deferring (503 retriable)"
-                    )
-                    # 503 is inside the executor's always-retried set: the
-                    # retry re-probes once the prior admission either commits
-                    # its START (adopt) or its pointer goes stale (takeover).
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "A prior admission of this report-back may still "
-                            "be starting; retry shortly."
-                        ),
-                    )
-                # Durable receipt (v4 2.4c): drive the generator through its
-                # own admission (per-thread lock, dedup, wait_or_steer, START
-                # txn) to the post-START marker. The dispatched 200 below is
-                # returned only once the in_progress row is committed — a
-                # receipt whose run then vanishes rowlessly can no longer
-                # happen. Pre-START failures surface here raw as HTTP errors.
-                try:
-                    first = await anext(flash_gen)
-                except DuplicateRequestError as dup:
-                    await scope.release_slot()
-                    existing = str(dup.existing_run["conversation_response_id"])
-                    logger.info(
-                        f"[FLASH_DISPATCH] Retransmit adopted existing run "
-                        f"{existing} for thread {thread_id}"
-                    )
-                    return JSONResponse({
-                        "status": "dispatched",
-                        "thread_id": thread_id,
-                        "run_id": existing,
-                    })
-                except HTTPException:
-                    await scope.release_slot()
-                    raise
-                except Exception as e:
-                    await scope.release_slot()
-                    raise HTTPException(
-                        status_code=503,
-                        detail=f"Dispatch could not start durably: {e}",
-                    )
-                if first != DISPATCH_STARTED_MARKER:
-                    await flash_gen.aclose()
-                    await scope.release_slot()
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Dispatch priming yielded an unexpected event.",
-                    )
-                rb_claim.consummate()
-            _track_task(asyncio.create_task(
-                observe_background_chat_turn(
-                    _consume_background_gen(
-                        flash_gen,
-                        "FLASH_DISPATCH",
-                        thread_id,
-                        run_id,
-                    ),
-                    mode="flash",
-                    model=_model,
-                    user_id=user_id,
-                    workspace_id=workspace_id,
-                    thread_id=thread_id,
-                ),
-                name=f"flash-dispatch-{thread_id}-{run_id[:8]}",
-            ))
-            logger.info(
-                f"[FLASH_DISPATCH] Started background workflow: "
-                f"thread_id={thread_id} run_id={run_id}"
-            )
-            return JSONResponse({
-                "status": "dispatched",
-                "thread_id": thread_id,
-                "run_id": run_id,
-            })
-
+    if not is_dispatch:
         return StreamingResponse(
             observe_chat_stream(
-                flash_gen,
-                mode="flash",
+                gen,
+                mode=runtime,
                 model=_model,
                 user_id=user_id,
                 workspace_id=workspace_id,
@@ -674,28 +549,81 @@ async def _handle_send_message(
             headers=sse_headers_with_loc,
         )
 
-    is_ptc_dispatch = (
-        is_internal
-        and raw_request
-        and raw_request.headers.get("X-Dispatch") == "background"
-    )
-    ptc_gen = astream_ptc_workflow(
-        request=request,
-        thread_id=thread_id,
-        run_id=run_id,
-        user_input=user_input,
-        user_id=user_id,
-        workspace_id=workspace_id,
-        is_byok=is_byok,
-        config=config,
-        dispatched=is_ptc_dispatch,
-        named_model=named_model,
-    )
+    from src.server.database.runs.lifecycle import DuplicateRequestError
+    from src.server.handlers.chat.request_prep import DISPATCH_STARTED_MARKER
+    from src.server.services.report_back.flash import pointer, reserve
 
-    if is_ptc_dispatch:
-        from src.server.database.runs.lifecycle import DuplicateRequestError
-        from src.server.services.report_back.flash import reserve
-        from src.server.handlers.chat.request_prep import DISPATCH_STARTED_MARKER
+    label = f"{runtime.upper()}_DISPATCH"
+    # The PTC response names the workspace, since a dispatch may have made it.
+    reply_extra = {"workspace_id": workspace_id} if runtime == "ptc" else {}
+    # Report-back idempotency: a lost-response retry of the drainer's POST
+    # must NOT start a second summary run, whichever agent the summary lands
+    # on. The claim CM SET-NXs the per-(flash, ptc) run pointer (atomic on
+    # its own — no outer lock needed); a prior admission's incumbent run_id
+    # is returned instead, and a non-consummated exit (e.g. a priming failure
+    # below) releases the claim. No-op unless report_back_ptc_thread_id is set.
+    rb_ptc = request.report_back_ptc_thread_id
+    rb_cache = None
+    if rb_ptc:
+        from src.utils.cache.redis_cache import get_cache_client
+        rb_cache = get_cache_client()
+    # A flash→PTC dispatch generation is gated on the PTC thread it starts;
+    # a report-back summary carries its pair's generation for the claim above.
+    gated_gen = (
+        request.origin_dispatch_gen if runtime == "ptc" and not rb_ptc else None
+    )
+    async with pointer.claim(
+        rb_cache, thread_id, rb_ptc, run_id,
+        request.origin_dispatch_gen,
+        request.request_key,
+    ) as rb_claim:
+        if rb_claim.incumbent is not None:
+            await scope.release_slot()
+            logger.info(
+                f"[{label}] Idempotent report-back: returning "
+                f"in-flight run {rb_claim.incumbent} for ptc={rb_ptc} on "
+                f"flash thread {thread_id} (no second run)"
+            )
+            return JSONResponse({
+                "status": "dispatched",
+                "thread_id": thread_id,
+                "run_id": rb_claim.incumbent,
+                **reply_extra,
+            })
+        if rb_claim.pair_gone:
+            await scope.release_slot()
+            logger.warning(
+                f"[{label}] Report-back pair for ptc={rb_ptc} on "
+                f"flash thread {thread_id} was already settled; refusing "
+                "to schedule an orphan summary"
+            )
+            # 410 is deliberately outside the executor's retry set: the
+            # job drops (acks) instead of re-POSTing a summary whose
+            # pair a resolution or terminal clear has already settled.
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    "Report-back pair already resolved; summary not "
+                    "scheduled."
+                ),
+            )
+        if rb_claim.in_flight:
+            await scope.release_slot()
+            logger.info(
+                f"[{label}] Report-back for ptc={rb_ptc} on "
+                f"flash thread {thread_id} has a rowless incumbent "
+                "inside its priming lease; deferring (503 retriable)"
+            )
+            # 503 is inside the executor's always-retried set: the
+            # retry re-probes once the prior admission either commits
+            # its START (adopt) or its pointer goes stale (takeover).
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "A prior admission of this report-back may still "
+                    "be starting; retry shortly."
+                ),
+            )
 
         # Phantom-refusal gate BEFORE the START txn: it atomically refuses
         # generations the orphan resolver already receipted (their watch
@@ -706,10 +634,8 @@ async def _handle_send_message(
         # metadata carries the generation); the stamp only covers the
         # pre-START window for the resolver. Gen-less dispatches skip the
         # gate — there is nothing to receipt against.
-        if request.origin_dispatch_gen:
-            admitted = await reserve.admit_dispatch_gen(
-                thread_id, request.origin_dispatch_gen, run_id
-            )
+        if gated_gen:
+            admitted = await reserve.admit_dispatch_gen(thread_id, gated_gen, run_id)
             if not admitted:
                 await scope.release_slot()
                 raise HTTPException(
@@ -729,81 +655,63 @@ async def _handle_send_message(
         # a retransmit-adopt must NOT retract, the adopted run IS this
         # generation admitted.
         try:
-            first = await anext(ptc_gen)
+            first = await anext(gen)
         except DuplicateRequestError as dup:
             await scope.release_slot()
             existing = str(dup.existing_run["conversation_response_id"])
             logger.info(
-                f"[PTC_DISPATCH] Retransmit adopted existing run {existing} "
+                f"[{label}] Retransmit adopted existing run {existing} "
                 f"for thread {thread_id}"
             )
             return JSONResponse({
                 "status": "dispatched",
                 "thread_id": thread_id,
                 "run_id": existing,
-                "workspace_id": workspace_id,
+                **reply_extra,
             })
         except HTTPException:
             await scope.release_slot()
-            if request.origin_dispatch_gen:
-                await reserve.retract_dispatch_gen(
-                    thread_id, request.origin_dispatch_gen, run_id
-                )
+            if gated_gen:
+                await reserve.retract_dispatch_gen(thread_id, gated_gen, run_id)
             raise
         except Exception as e:
             await scope.release_slot()
-            if request.origin_dispatch_gen:
-                await reserve.retract_dispatch_gen(
-                    thread_id, request.origin_dispatch_gen, run_id
-                )
+            if gated_gen:
+                await reserve.retract_dispatch_gen(thread_id, gated_gen, run_id)
             raise HTTPException(
                 status_code=503,
                 detail=f"Dispatch could not start durably: {e}",
             )
         if first != DISPATCH_STARTED_MARKER:
-            await ptc_gen.aclose()
+            await gen.aclose()
             await scope.release_slot()
             raise HTTPException(
                 status_code=500,
                 detail="Dispatch priming yielded an unexpected event.",
             )
+        rb_claim.consummate()
 
-        _track_task(asyncio.create_task(
-            observe_background_chat_turn(
-                _consume_background_gen(
-                    ptc_gen, "PTC_DISPATCH", thread_id, run_id,
-                ),
-                mode="ptc",
-                model=_model,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                thread_id=thread_id,
-            ),
-            name=f"ptc-dispatch-{thread_id}-{run_id[:8]}",
-        ))
-        logger.info(
-            f"[PTC_DISPATCH] Started background workflow: "
-            f"thread_id={thread_id} run_id={run_id} workspace_id={workspace_id}"
-        )
-        return JSONResponse({
-            "status": "dispatched",
-            "thread_id": thread_id,
-            "run_id": run_id,
-            "workspace_id": workspace_id,
-        })
-
-    return StreamingResponse(
-        observe_chat_stream(
-            ptc_gen,
-            mode="ptc",
+    _track_task(asyncio.create_task(
+        observe_background_chat_turn(
+            _consume_background_gen(gen, label, thread_id, run_id),
+            mode=runtime,
             model=_model,
             user_id=user_id,
             workspace_id=workspace_id,
             thread_id=thread_id,
         ),
-        media_type="text/event-stream",
-        headers=sse_headers_with_loc,
+        name=f"{runtime}-dispatch-{thread_id}-{run_id[:8]}",
+    ))
+    logger.info(
+        f"[{label}] Started background workflow: "
+        f"thread_id={thread_id} run_id={run_id} workspace_id={workspace_id}"
     )
+    return JSONResponse({
+        "status": "dispatched",
+        "thread_id": thread_id,
+        "run_id": run_id,
+        **reply_extra,
+    })
 
 
 @router.get("/{thread_id}/messages/stream")
@@ -1156,6 +1064,9 @@ async def get_dispatches_liveness(
                 "status": status,
                 "run_id": str(row["conversation_response_id"]) if live else None,
                 "can_reconnect": live,
+                # A card opened mid-run times the run from here, not from
+                # when the card mounted.
+                "run_started_at": row["run_started_at"] if live else None,
             }
         )
 

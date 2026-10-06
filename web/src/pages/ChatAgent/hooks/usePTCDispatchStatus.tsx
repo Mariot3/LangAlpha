@@ -91,11 +91,17 @@ function aggregateStatus(statuses: PTCDispatchStatus[]): PTCDispatchStatus {
   return 'completed';
 }
 
+interface DispatchSlice {
+  status: PTCDispatchStatus;
+  /** Start of the live run (epoch ms), when the ledger has one. */
+  startedAt?: number;
+}
+
 interface DispatchStatusContextValue {
   register: (threadId: string) => void;
   unregister: (threadId: string) => void;
   /** Per-thread resolved dispatch status, distributed via context. */
-  slices: Map<string, PTCDispatchStatus>;
+  slices: Map<string, DispatchSlice>;
 }
 
 const DispatchStatusContext = createContext<DispatchStatusContextValue | null>(null);
@@ -113,7 +119,7 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
   // one card unmounting doesn't drop an id another card still watches.
   const countsRef = useRef<Map<string, number>>(new Map());
   // Latest distributed slices, readable from the stable `register` callback.
-  const slicesRef = useRef<Map<string, PTCDispatchStatus>>(new Map());
+  const slicesRef = useRef<Map<string, DispatchSlice>>(new Map());
   // Poll-cadence counters scoped to the CURRENT polling window. The query's
   // update counts are cumulative for its life, so deriving cadence from them
   // directly makes the starting cap trip instantly (and skips the fast window)
@@ -133,7 +139,7 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
     // dormant query would keep serving the stale terminal slice forever.
     // Re-arm the cadence window and wake every id-set variant. Terminal-gated
     // so re-renders during live polling never add fetches.
-    const current = slicesRef.current.get(threadId);
+    const current = slicesRef.current.get(threadId)?.status;
     if (current && TERMINAL.has(current)) {
       cadenceRef.current.polls = 0;
       cadenceRef.current.startingRounds = 0;
@@ -193,11 +199,15 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
   });
 
   const slices = useMemo(() => {
-    const map = new Map<string, PTCDispatchStatus>();
+    const slices = new Map<string, DispatchSlice>();
     for (const row of (data ?? []) as DispatchLiveness[]) {
-      map.set(row.thread_id, mapStatus(row.status));
+      const startedAt = row.run_started_at ? Date.parse(row.run_started_at) : NaN;
+      slices.set(row.thread_id, {
+        status: mapStatus(row.status),
+        startedAt: Number.isFinite(startedAt) ? startedAt : undefined,
+      });
     }
-    return map;
+    return slices;
   }, [data]);
 
   useEffect(() => {
@@ -242,7 +252,7 @@ function mapLifecycleStatus(s: PublicRunStatus): PTCDispatchStatus | null {
 export function useDispatchStatus(
   threadId: string | undefined,
   enabled: boolean,
-): { status: PTCDispatchStatus } {
+): { status: PTCDispatchStatus; startedAt?: number } {
   const ctx = useContext(DispatchStatusContext);
   // Pull the stable register fns out of the context value (whose identity
   // changes every poll) so this effect doesn't re-run — and re-register — on
@@ -258,7 +268,6 @@ export function useDispatchStatus(
   }, [register, unregister, active, threadId]);
 
   const pushed = mapLifecycleStatus(useThreadRunStatus(threadId ?? ''));
-  return {
-    status: pushed ?? (ctx && threadId ? ctx.slices.get(threadId) : undefined) ?? 'starting',
-  };
+  const slice = ctx && threadId ? ctx.slices.get(threadId) : undefined;
+  return { status: pushed ?? slice?.status ?? 'starting', startedAt: slice?.startedAt };
 }

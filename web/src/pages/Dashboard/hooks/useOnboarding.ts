@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
 import { useUser } from '@/hooks/useUser';
+import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import { getFlashWorkspace } from '../../ChatAgent/utils/api';
 
 interface PersonalizationResult {
@@ -103,8 +104,7 @@ export function useOnboarding(): PersonalizationResult {
                     isPersonalizing: true,
                     // Keep isOnboarding for backward compat with ChatView
                     isOnboarding: true,
-                    agentMode: 'flash',
-                    workspaceStatus: 'flash',
+                    ...FLASH_ROUTE_STATE,
                 },
             });
         } catch (error) {
@@ -126,8 +126,7 @@ export function useOnboarding(): PersonalizationResult {
                 state: {
                     workspaceId: flashWs.workspace_id,
                     isModifyingPreferences: true,
-                    agentMode: 'flash',
-                    workspaceStatus: 'flash',
+                    ...FLASH_ROUTE_STATE,
                 },
             });
         } catch (error) {

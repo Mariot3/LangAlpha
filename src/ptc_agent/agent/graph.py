@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any, Protocol, runtime_checkable
 
-from ptc_agent.agent.agent import PTCAgent
+from ptc_agent.agent.agent import AgentRole, PTCAgent
 from ptc_agent.agent.middleware.runtime_context import TurnContext
 from ptc_agent.config import AgentConfig
 from ptc_agent.core.project_context import ProjectContext
@@ -133,7 +133,43 @@ class SessionProvider(Protocol):
         ...
 
 
-async def _read_workspace_naming(workspace_id: str) -> tuple[str | None, str | None]:
+_HOME_DESCRIPTION = (
+    "Your own folder: everything you produce is kept here, "
+    "whether it spans workspaces or belongs to none."
+)
+
+
+async def _read_harness_blocks(
+    user_id: str | None,
+    home_id: str,
+    thread_id: str | None,
+    turn_context: TurnContext | None,
+    role: AgentRole,
+) -> dict[str, str | None]:
+    """The baseline blocks the role adds, keyed by kind, read before the build.
+
+    A kind left out is a block this build does not have, so the analyst's
+    build reads nothing. A None value is a read that did not answer, which the
+    baseline marks as a hole and asks again next turn. A Chief of Staff with
+    no user has no activity to read, so its build leaves the block out rather
+    than marking a hole that no later turn could fill.
+    """
+    if role != "chief_of_staff" or not user_id:
+        return {}
+    from src.tools.secretary.activity import read_activity
+
+    activity = await read_activity(
+        user_id,
+        home_id=home_id,
+        thread_id=thread_id,
+        timezone=turn_context.tool_timezone if turn_context else "UTC",
+    )
+    return {"activity": activity}
+
+
+async def _read_workspace_naming(
+    workspace_id: str, role: AgentRole = "analyst"
+) -> tuple[str | None, str | None]:
     """The workspace's name and description for the prompt's `<workspace>` block.
 
     Read once here rather than inside the model call, so the values are bound
@@ -141,10 +177,15 @@ async def _read_workspace_naming(workspace_id: str) -> tuple[str | None, str | N
     under it mid-answer. The baseline freezes the pair per epoch; a rename
     reaches the model as a `workspace_changed` row on the next turn. A read
     that fails answers None, not an empty name: the baseline must not file a
-    row saying the workspace lost its name.
+    row saying the workspace lost its name. The Chief of Staff's Home is named
+    for its folder, not for the row it is stored in.
     """
     if not workspace_id:
         return None, None
+    if role == "chief_of_staff":
+        from src.server.database.workspace_names import HOME_FOLDER
+
+        return HOME_FOLDER, _HOME_DESCRIPTION
     try:
         from src.server.database.workspace import get_workspace_name_and_description
 
@@ -235,6 +276,7 @@ async def build_ptc_graph_with_session(
     turn_context: TurnContext | None = None,
     project: ProjectContext | None = None,
     tool_view: Any | None = None,
+    role: AgentRole = "analyst",
 ) -> Any:
     """Build a BackgroundSubagentOrchestrator from a pre-acquired session (WorkspaceManager path).
 
@@ -273,10 +315,12 @@ async def build_ptc_graph_with_session(
         user_data_counts,
         ptc_agent,
         (workspace_name, workspace_description),
+        harness_blocks,
     ) = await asyncio.gather(
         fetch_user_data_counts(user_id),
         asyncio.to_thread(PTCAgent, config),
-        _read_workspace_naming(workspace_id),
+        _read_workspace_naming(workspace_id, role),
+        _read_harness_blocks(user_id, workspace_id, thread_id, turn_context, role),
     )
 
     if workspace_id and user_id:
@@ -318,6 +362,8 @@ async def build_ptc_graph_with_session(
         order_ledger=order_ledger,
         turn_context=turn_context,
         project=project,
+        role=role,
+        harness_blocks=harness_blocks,
     )
 
     logger.debug(

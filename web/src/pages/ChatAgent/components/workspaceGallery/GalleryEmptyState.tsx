@@ -2,6 +2,7 @@ import { MessageSquareText, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 
+import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import { getFlashWorkspace } from '../../utils/api';
 import type { WorkspaceRecord } from './types';
 
@@ -30,8 +31,7 @@ export function GalleryEmptyState({ isFiltered, onNewWorkspace }: GalleryEmptySt
         state: {
           workspaceId: (flashWsData as WorkspaceRecord).workspace_id,
           isOnboarding: true,
-          agentMode: 'flash',
-          workspaceStatus: 'flash',
+          ...FLASH_ROUTE_STATE,
         },
       });
     } catch (err) {

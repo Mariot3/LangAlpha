@@ -9,7 +9,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, GripVertical, Pin, Zap } from 'lucide-react';
+import { Check, GripVertical, Pin } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -17,6 +17,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Loader } from '@/components/ui/loader';
+import { useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
+import { FlashRowIcon } from '@/hooks/useFlashWorkspace';
 import { queryKeys } from '@/lib/queryKeys';
 
 import { reorderWorkspaces } from '../../utils/api';
@@ -31,6 +33,7 @@ interface SortableReorderRowProps {
 
 /** Sortable row for reorder mode: a compact single-column list item. */
 function SortableReorderRow({ workspace, disabled }: SortableReorderRowProps) {
+  const label = useWorkspaceLabel();
   const {
     attributes,
     listeners,
@@ -62,14 +65,14 @@ function SortableReorderRow({ workspace, disabled }: SortableReorderRowProps) {
       style={{
         ...style,
         // Same material split as the gallery card: flash rides an elevated
-        // surface, user rows keep the card wash; the Zap glyph is the accent.
+        // surface, user rows keep the card wash; its glyph is the accent.
         background: isFlash
           ? 'var(--color-bg-elevated)'
           : 'var(--color-bg-card-gradient, var(--color-border-muted))',
         borderColor: isFlash ? 'var(--color-border-default)' : 'var(--color-bg-card-border, var(--color-border-muted))',
       }}
     >
-      {/* Flash drags too (within the pinned block), its Zap identity glyph
+      {/* Flash drags too (within the pinned block), its identity glyph
           doubles as the grab handle where user rows show the grip. */}
       <button
         {...listeners}
@@ -77,7 +80,7 @@ function SortableReorderRow({ workspace, disabled }: SortableReorderRowProps) {
         className="shrink-0 cursor-grab active:cursor-grabbing p-1 rounded"
         style={{ color: isFlash ? 'var(--color-accent-primary)' : 'var(--color-text-tertiary)' }}
       >
-        {isFlash ? <Zap className="h-5 w-5" /> : <GripVertical className="h-5 w-5" />}
+        {isFlash ? <FlashRowIcon className="h-5 w-5" /> : <GripVertical className="h-5 w-5" />}
       </button>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
@@ -85,7 +88,7 @@ function SortableReorderRow({ workspace, disabled }: SortableReorderRowProps) {
             <Pin className="h-3.5 w-3.5 shrink-0 rotate-45" style={{ color: 'var(--color-text-tertiary)' }} />
           )}
           <span className="font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-            {workspace.name}
+            {label(workspace)}
           </span>
         </div>
       </div>

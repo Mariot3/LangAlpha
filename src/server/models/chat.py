@@ -75,6 +75,10 @@ class HITLResponse(BaseModel):
     )
 
 
+REJECTED_WITH_FEEDBACK = "User rejected this action with the following feedback: "
+REJECTED_WITHOUT_FEEDBACK = "User rejected this action. No specific feedback was provided."
+
+
 def _format_rejection_message(user_feedback: Optional[str]) -> str:
     """The tool message the agent reads after a rejection.
 
@@ -84,8 +88,18 @@ def _format_rejection_message(user_feedback: Optional[str]) -> str:
     never had.
     """
     if user_feedback and user_feedback.strip():
-        return f"User rejected this action with the following feedback: {user_feedback.strip()}"
-    return "User rejected this action. No specific feedback was provided."
+        return REJECTED_WITH_FEEDBACK + user_feedback.strip()
+    return REJECTED_WITHOUT_FEEDBACK
+
+
+def rejection_feedback(message: Optional[str]) -> str:
+    """What the user wrote when rejecting, from a message the resume path
+    reworded, for a tool that words its own result: quoting the reworded
+    message back puts the no-feedback sentence in the user's mouth."""
+    message = (message or "").strip()
+    if message == REJECTED_WITHOUT_FEEDBACK:
+        return ""
+    return message.removeprefix(REJECTED_WITH_FEEDBACK).strip()
 
 
 def serialize_hitl_response_map(hitl_response: Mapping[str, Any]) -> Dict[str, dict]:

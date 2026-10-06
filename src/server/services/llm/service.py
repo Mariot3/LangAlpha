@@ -12,7 +12,7 @@ regardless of what the user has configured.
 Two code paths:
 
 - ``user_id=None`` — system/scheduled task, no per-user resolution. Uses
-  ``agent_config.llm.flash`` (or ``request_model``) with platform
+  the deployment's model for ``mode`` (or ``request_model``) with platform
   credentials. No DB hit.
 - ``user_id="..."`` — full user-aware resolution through
   ``resolve_llm_config``. A ``platform_key_fallback`` log is emitted
@@ -40,7 +40,7 @@ from pydantic import BaseModel
 from ptc_agent.config.agent import CredentialSource
 from src.llms.api_call import make_api_call
 from src.llms.llm import create_llm
-from .config import _MODE_MODEL_MAP, resolve_llm_config
+from .config import resolve_llm_config, slot_model
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -78,7 +78,7 @@ class LLMService:
             # platform default. ``resolve_llm_config`` is typed ``user_id: str``
             # and makes a DB lookup via ``get_model_preference``; skipping it
             # keeps system callers DB-free.
-            model_name = request_model or self._agent_config.llm.flash
+            model_name = request_model or slot_model(self._agent_config.llm, mode)
             llm = create_llm(model_name, reasoning_effort=reasoning_effort)
         else:
             resolved_config = await resolve_llm_config(
@@ -92,11 +92,7 @@ class LLMService:
                 user_facing=False,
             )
             llm = resolved_config.llm_client
-            model_field, _ = _MODE_MODEL_MAP[mode]
-            effective_model = (
-                getattr(resolved_config.llm, model_field, None)
-                or resolved_config.llm.name
-            )
+            effective_model = slot_model(resolved_config.llm, mode)
             if llm is None:
                 # No BYOK / OAuth configured and no reasoning override — fall
                 # back to a platform-keyed client on the resolved model name.

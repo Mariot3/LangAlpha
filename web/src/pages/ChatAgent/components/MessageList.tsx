@@ -11,6 +11,7 @@ import { computeTurnTails, projectTurns, visibleProjection } from './messageList
 import { useLiveMessages, type LiveMessages } from '../session/stream/liveMessages';
 import type { ChatMessage } from '@/types/chat';
 import { turnFilesByTurn } from '../utils/turnFiles';
+import { useWorkspaceFolders } from '../contexts/WorkspaceContext';
 import type { FeedbackResult, FoldState, MessageRecord } from './messageList/types';
 
 /** What the fold row for one backend turn needs to know about it. */
@@ -55,18 +56,15 @@ interface MessageListProps {
    *  its turn, so a steering continuation shows the continued turn's rating. */
   feedbackByTurn?: Record<number, FeedbackResult>;
   flashContext?: { threadId: string; workspaceId: string } | null;
-  /** The project folder the workspace lives in on a shared computer, when the
-   *  host knows it. The deck keeps the workspace's own notes file out on
-   *  every surface; this only lets it read the sandbox-rooted form of that
-   *  path under the folder. */
-  workspaceDirName?: string | null;
-  /** Folders the workspace lived in before a rename, which older turns' paths still name. */
-  previousDirNames?: readonly string[] | null;
 }
 
-function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, readOnly, allowFiles, feedbackByTurn, flashContext, workspaceDirName, previousDirNames }: MessageListProps): React.ReactElement | null {
+function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, readOnly, allowFiles, feedbackByTurn, flashContext }: MessageListProps): React.ReactElement | null {
   const isMobile = useIsMobile();
   const { onOpenFile } = useMessageActions();
+  // The deck keeps the workspace's own notes file out on every surface; its
+  // folders, when the host knows them, let it read a path that names the
+  // folder, and place one that names a sibling's.
+  const folders = useWorkspaceFolders();
 
   // Session memory, never auto-cleared: a fold the reader opened stays open
   // until they close it or reload. Only the turn they touched is addressed, so
@@ -92,8 +90,8 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
   // The deliverables strip reads the RAW projection: a turn's files are named
   // across its whole span, including a bubble the list never paints.
   const filesByTurn = React.useMemo(
-    () => turnFilesByTurn(projected, workspaceDirName, previousDirNames),
-    [projected, workspaceDirName, previousDirNames],
+    () => turnFilesByTurn(projected, folders),
+    [projected, folders],
   );
 
   // Only the newest turn can still be running. A bubble's own `isStreaming`

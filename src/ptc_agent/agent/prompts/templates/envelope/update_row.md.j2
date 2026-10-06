@@ -34,16 +34,22 @@
    block says before)" lines. It is the same shape as a file row without the
    writer: the platform moved it, and the model cannot edit it back.
 
-   `mcp_servers_changed` and `skills_changed` report the two harness-authored
-   blocks, the MCP roster and the skills manifest. They diff like a file row
-   and read like one, but they name no file and no writer: the harness wrote
-   the text, nobody edited it, and there is nothing on disk to go and read.
-   So they get their own paragraph rather than the file one, which promises a
-   file the model could open.
+   A harness row, `<kind>_changed` for a block in
+   `runtime_context/harness_blocks.py` (the MCP roster, the skills manifest,
+   the Chief of Staff's view of the user's activity), reports a block the
+   harness wrote. `render_update_row` passes that block's registry entry in
+   as `harness`, so its subject and element come from there and a new block
+   needs no branch here. The row diffs like a file row and reads like one,
+   but it names no file and no writer: the harness wrote the text, nobody
+   edited it, and there is nothing on disk to go and read. So it gets its own
+   paragraph rather than the file one, which promises a file the model could
+   open.
 
    A `baseline_rebuilt` row is filed by a rebuild that found change rows
    still in view: those rows keep saying to trust them over the block, and
-   this later row is what outranks them.
+   this later row is what outranks them. It names no block: which blocks an
+   agent has depends on its role and its build, and a list here would name
+   one this reader never had.
 
    A `turn_opened` row (`turn.TURN_ROW_KIND`) renders bare: it is the turn's own
    anchor, already prose with its own stamp, so a header would only label the
@@ -58,7 +64,6 @@
 {{ update.text }}
 {% else %}
 {% set writer = update.provenance.get("writer") if update.provenance is mapping else none %}
-{% set harness = false %}
 {% if update.kind == "agent_md_changed" %}
 {% set subject = "agent.md" %}
 {% set block = "<agentmd>" %}
@@ -67,14 +72,6 @@
 {% set block = "<memory>" %}
 {% elif update.kind == "profile_changed" %}
 {% set subject = "profile" %}
-{% elif update.kind == "mcp_servers_changed" %}
-{% set subject = "MCP server list" %}
-{% set block = "<mcp-servers>" %}
-{% set harness = true %}
-{% elif update.kind == "skills_changed" %}
-{% set subject = "skills manifest" %}
-{% set block = "<skills>" %}
-{% set harness = true %}
 {% else %}
 {% set subject = none %}
 {% endif %}
@@ -87,7 +84,7 @@ Each line below gives the current value and what the frozen blocks still say. Tr
 {% elif update.kind == "baseline_rebuilt" %}
 The frozen blocks were rebuilt at this turn
 
-Every change row above this one is folded into the blocks now: <agentmd>, <memory>, <user_profile>, <user_identity>, <workspace>, <mcp-servers> and <skills> are current, and an earlier row that says to trust it over a block no longer applies. {{ update.text }}{% if update.provenance.still_in_force %} The exception is a row about {{ update.provenance.still_in_force | join(", ") }}: that read did not answer at this rebuild, so such a row still applies over its block until a later row replaces it.{% endif %}
+Every change row above this one is folded into the blocks now, so the blocks are current, and an earlier row that says to trust it over a block no longer applies. {{ update.text }}{% if update.provenance.still_in_force %} The exception is a row about {{ update.provenance.still_in_force | join(", ") }}: that read did not answer at this rebuild, so such a row still applies over its block until a later row replaces it.{% endif %}
 {% elif update.kind == "workspace_changed" %}
 The workspace was renamed or redescribed after the copy in <workspace> was frozen
 
@@ -95,9 +92,9 @@ Each line below gives the current value and what the frozen block still says. Tr
 
 {{ update.text }}
 {% elif harness %}
-The {{ subject }} changed after the copy in {{ block }} was frozen
+The {{ harness.subject }} changed after the copy in {{ harness.label }} was frozen
 
-The text below compares it with the frozen copy in {{ block }}, which stands until this thread compacts: where they differ, this row is the current one. A later row for the same block supersedes it.
+The text below compares it with the frozen copy in {{ harness.label }}, which stands until this thread compacts: where they differ, this row is the current one. A later row for the same block supersedes it.
 
 {{ update.text }}
 {% elif subject %}

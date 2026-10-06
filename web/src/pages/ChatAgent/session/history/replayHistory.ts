@@ -33,7 +33,7 @@ import {
 import type {
   TokenUsage, SSEEvent, HistoryInterruptInfo, SubagentHistoryData, PairState,
 } from '../types';
-import { PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP, resolvePendingHistoryInterrupt, setCardStatus, setCardFields } from '../interrupts/buckets';
+import { resolvePendingHistoryInterrupt, setCardStatus, setCardFields, settleProposalFromResult } from '../interrupts/buckets';
 import { createApprovalEvidence, recordApprovalEvidence } from '../interrupts/claims';
 import { projectHistoryInterrupt } from '../interrupts/fromHistoryEvent';
 import {
@@ -896,37 +896,8 @@ export async function loadConversationHistory(
 
         // Resolve pending create_workspace, start_question, ptc_agent, or secretary action interrupt from tool_call_result
         if (typeof event.content === 'string') {
-          const content = event.content;
-          // Parsed inside the patch builder so replay only pays for it on the
-          // tool result that actually settles a pending proposal.
-          resolvePendingHistoryInterrupt(
-            pendingHistoryInterrupts,
-            (p) => PROPOSAL_INTERRUPT_TYPES.has(p.type),
-            (m) => {
-              let resolvedStatus = 'approved';
-              let resultPayload: Record<string, unknown> | null = null;
-              if (content.startsWith('User declined')) {
-                resolvedStatus = 'rejected';
-              } else {
-                try {
-                  const parsed = JSON.parse(content);
-                  if (parsed?.success === false) resolvedStatus = 'rejected';
-                  resultPayload = parsed;
-                } catch { /* non-JSON → treat as approved */ }
-              }
-              // Extract thread_id/workspace_id from ptc_agent result for navigation
-              const extraFields: Record<string, unknown> = {};
-              if (m.type === 'ptc_agent' && resultPayload) {
-                if (resultPayload.thread_id) extraFields.thread_id = resultPayload.thread_id;
-                if (resultPayload.workspace_id) extraFields.workspace_id = resultPayload.workspace_id;
-              }
-              return {
-                bucket: PROPOSAL_DATA_KEY_MAP[m.type] || 'questionProposals',
-                key: m.proposalId!,
-                fields: { status: resolvedStatus, ...extraFields },
-              };
-            },
-            rt.setMessages,
+          settleProposalFromResult(
+            pendingHistoryInterrupts, event.tool_call_id as string | undefined, event.content, rt.setMessages,
           );
         }
 

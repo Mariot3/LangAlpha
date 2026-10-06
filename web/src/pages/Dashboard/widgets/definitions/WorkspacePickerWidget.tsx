@@ -2,9 +2,11 @@ import { useTranslation } from 'react-i18next';
 import { relativeTime } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
-import { LayoutGrid, Zap, ArrowUpRight, Plus } from 'lucide-react';
+import { LayoutGrid, ArrowUpRight, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
+import { useWorkspaceText } from '@/hooks/useAllWorkspacesAgent';
+import { FlashRowIcon } from '@/hooks/useFlashWorkspace';
 import { clearChatSession } from '@/pages/ChatAgent/hooks/utils/chatSessionRestore';
 import type { Workspace } from '@/types/api';
 import { registerWidget } from '../framework/WidgetRegistry';
@@ -32,6 +34,8 @@ function WorkspaceTile({
   const { t } = useTranslation();
   const locale = useLocale();
   const now = useNow();
+  const workspaceText = useWorkspaceText();
+  const text = workspaceText(workspace);
   const isFlash = workspace.status === 'flash';
   const relative = relativeTime(workspace.updated_at as string | undefined, locale, now);
   const idx = String(index + 1).padStart(2, '0');
@@ -58,10 +62,10 @@ function WorkspaceTile({
       <div className="flex items-start justify-between gap-2 px-3.5 pt-3 pb-1.5">
         <div className="flex items-center gap-2 min-w-0">
           {isFlash ? (
-            <Zap
+            <FlashRowIcon
               className="h-3.5 w-3.5 shrink-0"
               style={{ color: 'var(--color-accent-primary)' }}
-              fill="currentColor"
+              solid
             />
           ) : (
             <span
@@ -78,7 +82,7 @@ function WorkspaceTile({
               letterSpacing: '-0.005em',
             }}
           >
-            {workspace.name || t('dashboard.widgets.workspacePicker.untitled')}
+            {text.name || t('dashboard.widgets.workspacePicker.untitled')}
           </span>
         </div>
         <ArrowUpRight
@@ -87,12 +91,12 @@ function WorkspaceTile({
         />
       </div>
       <div className="px-3.5 pb-2.5 flex-1 flex flex-col justify-between gap-2">
-        {workspace.description ? (
+        {text.description ? (
           <div
             className="text-[0.7188rem] line-clamp-2 leading-snug"
             style={{ color: 'var(--color-text-tertiary)' }}
           >
-            {workspace.description}
+            {text.description}
           </div>
         ) : (
           <div
@@ -105,7 +109,7 @@ function WorkspaceTile({
         {relative ? (
           <div className="flex items-center justify-between text-[0.625rem] dashboard-mono uppercase tracking-wider">
             <span style={{ color: 'var(--color-text-tertiary)', opacity: 0.75 }}>
-              {isFlash ? t('dashboard.widgets.workspacePicker.tagFlash') : t('dashboard.widgets.workspacePicker.tagWorkspace')}
+              {text.tag}
             </span>
             <span style={{ color: 'var(--color-text-tertiary)' }}>{relative}</span>
           </div>

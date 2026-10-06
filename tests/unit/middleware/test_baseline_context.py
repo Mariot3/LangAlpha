@@ -35,6 +35,7 @@ from langchain_core.tools import tool
 
 from ptc_agent.agent.middleware.runtime_context import (
     ENVELOPE_OPEN,
+    HARNESS_BLOCKS,
     MAX_AGENT_MD_SIZE,
     RUNTIME_UPDATE_KEY,
     BaselineContextMiddleware,
@@ -53,6 +54,9 @@ from ptc_agent.agent.middleware.runtime_context import (
 from ptc_agent.agent.middleware.runtime_context.baseline import _workspace_block
 from ptc_agent.agent.middleware.runtime_context.changes import render_diff, sha256_text
 from ptc_agent.agent.middleware.runtime_context.epoch import Workspace
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_update_kind,
+)
 from ptc_agent.core.paths import (
     MEMORY_INDEX_FILENAME,
     MEMORY_USER_DIR,
@@ -1316,6 +1320,36 @@ class TestTheHarnessBlocks:
         assert row.provenance == {"source": "harness"}
 
     @pytest.mark.asyncio
+    async def test_a_block_changed_too_much_to_diff_rides_whole_in_its_row(self):
+        """A file row too large to diff points the model at the file; a block
+        has no file, so that notice left it nothing to read. A new day's
+        automation runs replacing the last day's in `<activity>` was the case.
+        """
+        def runs(day: int) -> str:
+            return "\n".join(
+                f"- 09:{i:02d} brief {i}, failed on day {day}: "
+                + " ".join(["provider timed out"] * 12)
+                for i in range(10)
+            )
+
+        texts = {"activity": runs(4)}
+        mw = _middleware(
+            _session("# Notes"), blocks={"activity": lambda _state: texts["activity"]}
+        )
+        state = await mw.abefore_agent({}, None)
+
+        texts["activity"] = runs(5)
+        second = await mw.abefore_agent(state, None)
+
+        row = runtime_update_from_message(_rows(second)[0])
+        assert row.kind == "activity_changed"
+        assert row.text.endswith(f"so this row carries all of it:\n\n{runs(5)}")
+        assert "Read it" not in row.text
+        # A row, not a rebuild: the frozen block and the cache behind it stay.
+        assert second[STATE_BASELINE]["epoch"] == 1
+        assert second[STATE_BASELINE]["blocks"]["activity"]["text"] == runs(4)
+
+    @pytest.mark.asyncio
     async def test_a_manifest_with_no_skills_in_it_is_an_answer_not_a_hole(self):
         """An empty manifest is a real state; only a None means "not answered"."""
         mw = self._middleware({"mcp_servers": self.ROSTER, "skills": ""})
@@ -1379,6 +1413,42 @@ class TestTheHarnessBlocks:
 
         assert state[STATE_BASELINE]["blocks"] == {}
         assert state[STATE_BASELINE]["incomplete"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", list(HARNESS_BLOCKS))
+    async def test_a_rebuild_blind_to_a_block_keeps_its_row_in_force(self, kind):
+        """The rebuilt row names the exception by the block's own element.
+
+        A second block moves and is read, so the rebuild has a row to fold and
+        files the retiring row that carries the exception.
+        """
+        other = next(k for k in HARNESS_BLOCKS if k != kind)
+        texts: dict = {k: f"{k} v1" for k in HARNESS_BLOCKS}
+        mw = _middleware(
+            _session("# Notes"),
+            blocks={k: (lambda _state, k=k: texts[k]) for k in HARNESS_BLOCKS},
+        )
+        state = await mw.abefore_agent({}, None)
+        texts[kind] = f"{kind} v2"
+        texts[other] = f"{other} v2"
+        second = await mw.abefore_agent(state, None)
+        assert sorted(
+            runtime_update_from_message(m).kind for m in _rows(second)
+        ) == sorted([harness_update_kind(kind), harness_update_kind(other)])
+
+        texts[kind] = None
+        event = {
+            **_compaction_event("a1"),
+            "cutoff_index": 0,
+            "anchor_message_id": None,
+        }
+        third = await mw.abefore_agent(
+            {**state, **second, "_summarization_event": event}, None
+        )
+
+        rows = [runtime_update_from_message(m) for m in _rows(third)]
+        assert [r.kind for r in rows] == ["baseline_rebuilt"]
+        assert rows[0].provenance["still_in_force"] == [HARNESS_BLOCKS[kind].label]
 
     @pytest.mark.asyncio
     async def test_the_blocks_survive_the_state_round_trip(self):

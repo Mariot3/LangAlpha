@@ -18,7 +18,7 @@ import {
   ServerRowShell,
 } from '@/components/mcp/McpPrimitives';
 import type { CatalogServer } from '@/pages/ChatAgent/utils/api';
-import { useFlashWorkspace } from '@/hooks/useFlashWorkspace';
+import { useFlashScope } from '@/hooks/useFlashWorkspace';
 import { settledGrant, type Brokerage } from '../brokerages';
 import { isEffectivelyEnabled, isPluginOwned } from '../utils/provenance';
 import {
@@ -102,7 +102,7 @@ export function BrokerageRow({
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
-  const flashWorkspace = useFlashWorkspace();
+  const flashScopeFor = useFlashScope();
   const status = row?.oauth_status ?? null;
   // The same question the MCP tab asks of its own rows, because past the first
   // write this is one of them: the registry ships an http address, but the row
@@ -142,7 +142,7 @@ export function BrokerageRow({
   const description = redirected
     ? row?.description
     : row?.description || brokerage.description;
-  const flashScope = row?.has_direct_tools ? flashWorkspace : undefined;
+  const flashScope = flashScopeFor(row?.has_direct_tools);
   // An offer and an off row name no workspace, so only an on row waits for
   // the list its reach would be counted against.
   const stateLine = !row

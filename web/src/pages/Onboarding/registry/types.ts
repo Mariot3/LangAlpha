@@ -44,6 +44,9 @@ export interface PageIntroStepDef {
   titleKey: string;
   bodyKey: string;
   visual: IntroVisualId;
+  /** Copy for a user on the all-workspaces agent, who has no Flash or PTC to
+   *  pick between; a key left out keeps the one above. */
+  allWorkspaces?: { titleKey?: string; bodyKey?: string };
 }
 
 /**
@@ -65,6 +68,8 @@ export interface GettingStartedTaskDef {
   id: string;
   titleKey: string;
   descKey: string;
+  /** Copy for a user on the all-workspaces agent; a key left out keeps the one above. */
+  allWorkspaces?: { titleKey?: string; descKey?: string };
   /** Where clicking the task navigates (router path, or a full URL when external). */
   to: string;
   /**

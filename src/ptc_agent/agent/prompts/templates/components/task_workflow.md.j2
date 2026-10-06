@@ -6,7 +6,11 @@ Every task gets a directory of its own, named for the task, directly in your wor
 2. **Plan**: Use `TodoWrite` to break down the task.
 3. **Execute**: All intermediate files go in your task directory. Delegate to sub-agents with the directory path.
 4. **Produce deliverables**: For complex analysis, write the report into the task directory; simple queries need no file. When unsure of the format, ask the user.
+{% if role | default("analyst") == "chief_of_staff" %}
+5. **Update agent.md** as `<role>` describes
+{% else %}
 5. **Update agent.md**: Key findings, what each task produced and where, reusable artifacts
+{% endif %}
 6. **Answer**: Close with your final message in chat, linking any deliverables.
 
 `ls` the working directory to see previous tasks and relevant prior work.

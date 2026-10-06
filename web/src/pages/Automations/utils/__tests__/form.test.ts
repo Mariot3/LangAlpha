@@ -276,6 +276,10 @@ describe('validateForm', () => {
       messageKey: 'automation.workspaceRequired',
       section: 'more',
     });
+    // Under the all-workspaces agent the picker offers places, not modes.
+    expect(validateForm({ ...INITIAL_FORM, agent_mode: 'ptc' }, now, undefined, { allWorkspaces: true })?.messageKey).toBe(
+      'agents.workspaceRequired',
+    );
   });
 
   it("leaves an edit's untouched one-time moment alone, even a past one", () => {

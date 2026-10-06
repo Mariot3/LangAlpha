@@ -260,6 +260,7 @@ export function projectHistoryInterrupt(
         assistantMessageId: interruptAssistantId,
         proposalId,
         interruptId: event.interrupt_id,
+        toolCallId: proposalData.tool_call_id,
       });
     } else if (actionType === 'delete_workspace' || actionType === 'stop_workspace' || actionType === 'delete_thread') {
       // --- Secretary action interrupt (history) ---

@@ -24,6 +24,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from src.server.database import pool
+from src.server.database.home_workspace import is_flash_row
 from src.server.database.pool import get_db_connection
 from src.server.database.session_lock import (
     SharedLockBusy,
@@ -31,6 +32,7 @@ from src.server.database.session_lock import (
     shared_lock_session,
 )
 from src.server.database.workspace_names import (
+    HOME_FOLDER,
     WorkspaceNameInvalid,
     placeholder_dir_name,
     workspace_folder_name,
@@ -164,6 +166,14 @@ class FolderRow:
     previous_dir_names: tuple[str, ...] = ()
     # Every folder a pass planned to land this row on since it was staged.
     landings: tuple[str, ...] = ()
+    # Home's stored name is "Flash"; its folder is named after Home.
+    home: bool = False
+
+    @property
+    def folder_label(self) -> Optional[str]:
+        # Home bound beside a folder already called Home waits on a
+        # placeholder, and moves in once that folder is free.
+        return HOME_FOLDER if self.home else self.name
 
     @property
     def staged(self) -> bool:
@@ -180,7 +190,7 @@ class FolderRow:
         if self.deleted:
             return None
         try:
-            return workspace_folder_name(self.name)
+            return workspace_folder_name(self.folder_label)
         except WorkspaceNameInvalid:
             # A name an older build let through; it keeps the folder it has.
             return None
@@ -292,13 +302,13 @@ def plan_folder_moves(rows: Iterable[FolderRow], busy: set[str] = frozenset()) -
                 destination = back
             else:
                 salt = 0
-                destination = placeholder_dir_name(row.name, row.workspace_id, hex_chars=8)
+                destination = placeholder_dir_name(row.folder_label, row.workspace_id, hex_chars=8)
                 while not free(destination, row.workspace_id):
                     # A staying row holds this spelling (a workspace named
                     # so); another digest of the same id is as good.
                     salt += 1
                     destination = placeholder_dir_name(
-                        row.name, f"{row.workspace_id}/{salt}", hex_chars=8
+                        row.folder_label, f"{row.workspace_id}/{salt}", hex_chars=8
                     )
         taken.add(fold(destination))
         moves.append(
@@ -318,6 +328,7 @@ def _row(record: Mapping[str, Any]) -> FolderRow:
         previous_dir_names=tuple(record.get("previous_dir_names") or ()),
         # Staging writes a fresh list, so any other row's is nothing a pass planned.
         landings=recorded_landings(record.get("landings")) if staged else (),
+        home=is_flash_row(record),
     )
 
 
@@ -333,7 +344,8 @@ _HOLDS_FOLDER = """
 
 _ROWS_SQL = f"""
     SELECT w.workspace_id, w.name, w.dir_name, w.status = 'deleted' AS deleted,
-           w.previous_dir_names, w.config->'folder_landings' AS landings
+           w.previous_dir_names, w.config->'folder_landings' AS landings,
+           w.user_id, w.status
     FROM workspaces w
     WHERE w.computer_id = %s AND {_HOLDS_FOLDER}
     ORDER BY w.created_at, w.workspace_id
@@ -365,7 +377,8 @@ async def read_folder_rows(computer_id: str) -> tuple[Optional[int], list[Folder
             f"""
             SELECT c.layout_version, w.workspace_id, w.name, w.dir_name,
                    w.status = 'deleted' AS deleted, w.previous_dir_names,
-                   w.config->'folder_landings' AS landings
+                   w.config->'folder_landings' AS landings,
+                   w.user_id, w.status
             FROM computers c
             LEFT JOIN workspaces w
               ON w.computer_id = c.computer_id AND {_HOLDS_FOLDER}

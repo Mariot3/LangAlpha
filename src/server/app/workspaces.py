@@ -34,12 +34,13 @@ from src.server.app.status_stream import (
     sse_status_event,
     status_event_stream,
 )
-from src.server.database.workspace import WorkspaceBusyError
+from src.server.database.workspace import FlashWorkspaceTaken, WorkspaceBusyError
 from src.server.database.workspace_folders import WorkspaceFolderMoving
 from src.server.database.workspace_names import (
     WorkspaceNameInvalid,
     WorkspaceNameTaken,
 )
+from src.server.database.home_workspace import is_flash_row
 from src.server.database.workspace import (
     get_workspace as db_get_workspace,
     get_workspaces_for_user,
@@ -62,6 +63,7 @@ from src.server.models.computer import CLAIMABLE_FOR_START
 from ptc_agent.core.sandbox.runtime import SandboxGoneError, SandboxTransientError
 from src.server.utils.error_sanitization import sandbox_unreachable_detail
 from src.server.models.workspace_refresh import WorkspaceRefreshResponse
+from src.server.services.turn_runtime import ensure_home, home_enabled
 from src.server.services.workspace_manager import WorkspaceManager
 from src.server.services.workspace_status_pubsub import subscribe_to_status
 
@@ -148,7 +150,9 @@ def _workspace_to_response(workspace: dict) -> WorkspaceResponse:
         computer_id=str(computer_id) if computer_id else None,
         dir_name=workspace.get("dir_name"),
         previous_dir_names=list(workspace.get("previous_dir_names") or ()),
-        status=workspace["status"],
+        # Clients know the flash row by this status. Bound as Home it carries
+        # its computer's, which the events stream reports.
+        status="flash" if is_flash_row(workspace) else workspace["status"],
         created_at=workspace["created_at"],
         updated_at=workspace["updated_at"],
         last_activity_at=workspace.get("last_activity_at"),
@@ -226,6 +230,10 @@ async def get_flash_workspace(
     try:
         workspace = await get_or_create_flash_workspace(x_user_id)
         return _workspace_to_response(workspace)
+    except FlashWorkspaceTaken:
+        # The owner check's answer for a row another account holds; no retry
+        # makes this one the caller's.
+        raise HTTPException(status_code=403, detail="Forbidden") from None
     except Exception as e:
         logger.exception(f"Error ensuring flash workspace: {e}")
         raise HTTPException(status_code=500, detail="Failed to ensure flash workspace")
@@ -415,6 +423,21 @@ async def update_workspace(
         # Check workspace exists and ownership
         workspace = await db_get_workspace(workspace_id)
         require_workspace_owner(workspace, user_id=x_user_id)
+        if (
+            is_flash_row(workspace)
+            and request.name is not None
+            and request.name != workspace.get("name")
+        ):
+            # Home's folder and the name the agent reads are fixed, so a new
+            # name would show nowhere it matters.
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "workspace_name_invalid",
+                    "reason": "reserved",
+                    "message": "Home can't be renamed.",
+                },
+            )
 
         # Update workspace
         updated = await db_update_workspace(
@@ -509,6 +532,17 @@ async def start_workspace(
             raise HTTPException(status_code=404, detail="Workspace not found")
 
         require_workspace_owner(workspace, user_id=x_user_id)
+
+        if workspace["status"] == "flash" and await home_enabled(x_user_id):
+            # Home before its first turn: the warm puts it on the computer, as
+            # the turn would. Without the all-workspaces agent, Flash has
+            # nothing to start.
+            await ensure_home(x_user_id, workspace)
+            workspace = await db_get_workspace(workspace_id)
+            if not workspace:
+                # A former flash row, which ensure_home just folded into Home:
+                # its threads are there now, and the id is gone for every read.
+                raise HTTPException(status_code=404, detail="Workspace not found")
 
         if workspace["status"] == "stopping":
             await manager.reconcile_stopping_computer(str(workspace["computer_id"]))
@@ -855,7 +889,7 @@ async def delete_workspace(workspace_id: str, x_user_id: CurrentUserId):
     try:
         # Guard: prevent deletion of flash workspaces
         workspace = await db_get_workspace(workspace_id)
-        if workspace and workspace.get("status") == "flash":
+        if is_flash_row(workspace):
             raise HTTPException(
                 status_code=400,
                 detail="Cannot delete flash workspace",

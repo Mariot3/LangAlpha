@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { INTRO_VISUALS, INTRO_VISUAL_ANCHOR } from './introVisuals';
+import { IntroAgentsContext } from './introAgents';
 import type { PageIntroDef } from '../registry';
 import './pageIntro.css';
 
@@ -19,7 +20,17 @@ import './pageIntro.css';
  * blueprint-style product mockup on the right. Seen-state is per-intro —
  * any close path (final CTA, X, Esc) at any step marks the intro seen.
  */
-export function PageIntroModal({ intro, onClose }: { intro: PageIntroDef; onClose: () => void }) {
+export function PageIntroModal({
+  intro,
+  onClose,
+  allWorkspaces = false,
+}: {
+  intro: PageIntroDef;
+  onClose: () => void;
+  /** Words the intro for a user on the all-workspaces agent: the Chief of
+   *  Staff and each workspace's Analyst instead of Flash and PTC. */
+  allWorkspaces?: boolean;
+}) {
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
   const [stepIdx, setStepIdx] = useState(0);
@@ -46,6 +57,8 @@ export function PageIntroModal({ intro, onClose }: { intro: PageIntroDef; onClos
     }),
   };
   const step = intro.steps[Math.min(stepIdx, intro.steps.length - 1)];
+  const titleKey = (allWorkspaces && step.allWorkspaces?.titleKey) || step.titleKey;
+  const bodyKey = (allWorkspaces && step.allWorkspaces?.bodyKey) || step.bodyKey;
   const isLast = stepIdx >= intro.steps.length - 1;
   const Visual = INTRO_VISUALS[step.visual];
   const anchor = INTRO_VISUAL_ANCHOR[step.visual];
@@ -95,13 +108,13 @@ export function PageIntroModal({ intro, onClose }: { intro: PageIntroDef; onClos
                     className="text-2xl font-semibold leading-tight sm:text-3xl"
                     style={{ color: 'var(--color-text-primary)' }}
                   >
-                    {t(step.titleKey)}
+                    {t(titleKey)}
                   </DialogTitle>
                   <DialogDescription
                     className="text-sm leading-relaxed sm:text-[0.9375rem]"
                     style={{ color: 'var(--color-text-secondary)' }}
                   >
-                    {t(step.bodyKey)}
+                    {t(bodyKey)}
                   </DialogDescription>
                 </DialogHeader>
               </motion.div>
@@ -207,7 +220,9 @@ export function PageIntroModal({ intro, onClose }: { intro: PageIntroDef; onClos
                       anchor === 'center' ? 'center center' : `${anchor} center`,
                   }}
                 >
-                  <Visual />
+                  <IntroAgentsContext value={allWorkspaces}>
+                    <Visual />
+                  </IntroAgentsContext>
                 </div>
               </motion.div>
             </AnimatePresence>

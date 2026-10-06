@@ -49,6 +49,7 @@ export const GETTING_STARTED_TASKS: GettingStartedTaskDef[] = [
     id: 'createWorkspace',
     titleKey: 'onboarding.gettingStarted.tasks.createWorkspace.title',
     descKey: 'onboarding.gettingStarted.tasks.createWorkspace.desc',
+    allWorkspaces: { descKey: 'agents.tour.createWorkspaceTask' },
     to: '/chat',
     doneWhen: 'hasWorkspace',
   },

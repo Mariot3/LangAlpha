@@ -397,6 +397,7 @@ export interface PTCAgentProposalState {
   interruptId?: string;
   tool_call_id?: string;
   report_back?: boolean;
+  dispatch_failed?: boolean;
 }
 
 export interface SecretaryActionProposalState {

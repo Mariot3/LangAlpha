@@ -21,6 +21,7 @@ import { Loader } from '@/components/ui/loader';
 import { queryKeys } from '@/lib/queryKeys';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
 import { getWorkspaceThreads } from '../../ChatAgent/utils/api';
 
 interface ThreadRecord {
@@ -63,6 +64,10 @@ export default function MarketChatHistoryButton({
 }: MarketChatHistoryButtonProps): React.ReactElement {
   const { t } = useTranslation();
   const locale = useLocale();
+  const allWorkspaces = useAllWorkspacesAgent();
+  const missingThreadHint = allWorkspaces
+    ? t('agents.market.missingThreadHint')
+    : t('marketView.chatHistory.missingThreadHint');
   const [open, setOpen] = React.useState(false);
   const [page, setPage] = React.useState(0);
   // The row times only render while the menu is open.
@@ -194,7 +199,7 @@ export default function MarketChatHistoryButton({
           <span className="relative inline-flex items-center group/hint">
             <button
               type="button"
-              aria-label={t('marketView.chatHistory.missingThreadHint')}
+              aria-label={missingThreadHint}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -217,7 +222,7 @@ export default function MarketChatHistoryButton({
                 letterSpacing: '-0.005em',
               }}
             >
-              {t('marketView.chatHistory.missingThreadHint')}
+              {missingThreadHint}
             </span>
           </span>
         </div>

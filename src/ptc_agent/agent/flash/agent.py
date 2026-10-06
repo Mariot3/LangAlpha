@@ -336,6 +336,10 @@ class FlashAgent:
         tools.extend(ask_user_middleware.tools)
         logger.info("AskUserQuestion tool enabled for Flash agent")
 
+        from src.tools.secretary.approvals import StandingApprovalMiddleware
+
+        main_middleware.append(StandingApprovalMiddleware(user_id))
+
         # Optional compaction (shares config with main agent)
         compaction_config = None
         if self.config.llm.compaction_name:

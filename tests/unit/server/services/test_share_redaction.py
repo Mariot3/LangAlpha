@@ -339,6 +339,17 @@ def test_sends_each_secretary_call_as_its_name_and_id_alone():
     assert results[0]["status"] == "success"
 
 
+def test_sends_a_chief_of_staff_hand_off_as_its_name_and_id_alone():
+    shown = _shown(
+        [
+            _call("delegate_to_analyst", {"question": "NVDA vs AMD"}, "msg-1", "call_rb"),
+            _answer(json.dumps({"workspace_id": _OWNER_WS, "thread_id": "t-1"}), call_id="call_rb"),
+        ]
+    )
+    assert [(c["name"], c["args"]) for c in _calls(shown)] == [("delegate_to_analyst", {})]
+    assert _answers(shown) == [""]
+
+
 def test_keeps_the_answer_of_a_call_that_reuses_a_secretary_id():
     shown = _shown(
         [

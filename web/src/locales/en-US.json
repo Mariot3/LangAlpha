@@ -419,7 +419,13 @@
       "byok": "BYOK",
       "oauth": "OAuth",
       "locked": "locked"
-    }
+    },
+    "approvals": "Approvals",
+    "autoApproveHandoffs": "Hand off work without asking",
+    "autoApproveHandoffsDesc": "Tasks go to a workspace's Analyst without an approval card. Each hand-off still shows as a card you can follow or stop.",
+    "autoApproveHandoffsDescPtc": "Tasks go to a PTC workspace without an approval card. Each hand-off still shows as a card you can follow or stop.",
+    "autoApproveWorkspaceCreation": "Create workspaces without asking",
+    "autoApproveWorkspaceCreationDesc": "A workspace for new work is created without an approval card."
   },
   "dashboard": {
     "title": "LangAlpha",
@@ -1669,10 +1675,14 @@
       "hintProvisioning": "Provisioning sandbox…",
       "hintWorking": "Running in the background",
       "hintFailed": "Run stopped before finishing",
+      "hintNotStarted": "Run couldn't start",
       "hintStopped": "Run was stopped",
       "ctaOpenThread": "Open thread",
       "ctaAnswerContinue": "Answer & continue",
-      "ctaViewThread": "View thread"
+      "ctaViewThread": "View thread",
+      "alwaysApprove": "Always allow",
+      "alwaysApproveHint": "Hand this and later work to Analysts without asking. Turn it off in Settings.",
+      "alwaysApproveHintPtc": "Hand this and later tasks to PTC workspaces without asking. Turn it off in Settings."
     },
     "marketWatch": {
       "watching": "Watching {{symbols}}",
@@ -1871,6 +1881,15 @@
       "hoursMinutes": "{{hours}}h {{minutes}}m",
       "minutes": "{{minutes}}m",
       "hours": "{{hours}}h"
+    },
+    "createWorkspaceCard": {
+      "title": "Create workspace",
+      "create": "Create",
+      "decline": "Decline",
+      "created": "Workspace created: {{name}}",
+      "declined": "Workspace creation declined",
+      "alwaysApprove": "Always allow",
+      "alwaysApproveHint": "Create this and later workspaces without asking. Turn it off in Settings."
     }
   },
   "context": {
@@ -4215,5 +4234,70 @@
     "yours": "Your time zone",
     "thisDevice": "This device",
     "common": "Common"
+  },
+  "agents": {
+    "allWorkspaces": "All workspaces",
+    "allWorkspacesHint": "Your Chief of Staff answers here and hands deep work to each workspace's Analyst.",
+    "home": "Home",
+    "chiefOfStaff": "Chief of Staff",
+    "analyst": "Analyst",
+    "pickWhere": "Choose where the agent works",
+    "backToChiefOfStaff": "Back to Chief of Staff",
+    "reportBackPending": "Waiting for the Analyst to report back",
+    "inWorkspace": "In {{workspace}}",
+    "workspaceRequired": "Choose a workspace, or All workspaces.",
+    "widgets": {
+      "allWorkspacesDesc": "Ask anything. Your Chief of Staff handles it or hands it off.",
+      "tagAllWorkspaces": "all"
+    },
+    "models": {
+      "defaultModel": "Default model",
+      "defaultModelDesc": "Runs every conversation, in one workspace or across all of them.",
+      "backgroundModel": "Background model",
+      "backgroundModelDesc": "Runs background work: thread titles, reading web pages, compacting long conversations and summarizing memos.",
+      "backgroundPlaceholder": "Select background model...",
+      "defaultsToBackground": "Defaults to the background model",
+      "backgroundSameAsDefault": "Same as Default model",
+      "fallbackModelsDesc": "Tried in order when your default or background model is unavailable. Only add models you have access to. With none selected, no fallback is used.",
+      "chooseYourModelsDesc": "Select the model for your conversations and a cheaper one for background work. You can change these anytime.",
+      "explainerTitle": "Two models",
+      "explainerDefaultBody": "Runs every conversation: your Chief of Staff across all workspaces, and each workspace's Analyst.",
+      "explainerBackgroundBody": "Never runs a conversation, only the work around one, so a faster, cheaper model is usually enough.",
+      "defaultPlaceholder": "Select default model..."
+    },
+    "market": {
+      "missingThreadHint": "Don't see a thread? Threads belong to a workspace. Try All workspaces, or pick a different workspace.",
+      "workspaceDisabledReason": "Create a workspace in /chat to work in one",
+      "noWorkspaceToast": "Create a workspace first, or use All workspaces.",
+      "setupFailed": "Couldn't open the workspace. Please try again."
+    },
+    "tour": {
+      "modes": {
+        "title": "Two ways to work",
+        "body": "Pick a workspace and its Analyst does the work there, with that workspace's files. Pick All workspaces and your Chief of Staff takes it: it answers quick questions itself and hands deep work to the right Analyst. The next steps show each one."
+      },
+      "chiefOfStaff": {
+        "title": "All workspaces: your Chief of Staff",
+        "body": "Just say what you need. Your Chief of Staff answers quick questions, creates and manages workspaces, hands deep work to each workspace's Analyst and reports back, and manages your automations. Its conversations are collected in the All workspaces card, and its own files live in a folder called Home."
+      },
+      "analyst": {
+        "title": "A workspace: its Analyst does the work",
+        "body": "Each workspace has its own Analyst. Every thread in the workspace shares the same files, data and prior work, so research compounds. It processes large datasets, coordinates teams of subagents, and produces any deliverable: Excel models, Word docs, PDFs, dashboards."
+      },
+      "workspace": {
+        "body": "Every workspace is a project desk: the conversations about one task live there together, sharing the same files, data and results, separate from other workspaces. All your workspaces and Home live on one computer, which starts as soon as you start typing."
+      },
+      "create": {
+        "title": "Give real tasks their own workspace",
+        "body": "If it involves data work or ends in a deliverable, give it a workspace: hit \"New workspace\" and name it after the task, or ask your Chief of Staff to set one up."
+      },
+      "createWorkspaceTask": "Spin up a dedicated workspace; its Analyst gets a full sandbox for real research."
+    },
+    "intro": {
+      "chiefOfStaffRun": "chief of staff",
+      "handoff": "handed to an analyst",
+      "taskHandoff": "task handed to an analyst",
+      "footer": "two ways to work"
+    }
   }
 }

@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  Check, ChevronDown, FileStack, FolderOpen, Radar, ScrollText, Zap,
+  Check, ChevronDown, FileStack, FolderOpen, Layers, Radar, ScrollText, Zap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
-  DropdownMenuItem, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
+  DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
 } from './dropdown-menu';
 import { PillToggle } from './chat-input.parts';
 import type { ToolbarItem } from './chat-input.useToolbarFold';
-import type { Workspace } from './chat-input.types';
+import type { ComposerScope, Workspace } from './chat-input.types';
 
 /**
  * The composer's foldable toolbar, declared once in PRIORITY order: the first
@@ -30,6 +30,9 @@ export function useToolbarItems({
   workspaces,
   selectedWorkspaceId,
   onWorkspaceChange,
+  scope,
+  onScopeChange,
+  emptyWorkspacesHint,
 }: {
   mode?: 'fast' | 'ptc';
   onModeChange?: (mode: 'fast' | 'ptc') => void;
@@ -42,6 +45,9 @@ export function useToolbarItems({
   workspaces?: Workspace[] | null;
   selectedWorkspaceId?: string | null;
   onWorkspaceChange?: ((wsId: string) => void) | null;
+  scope?: ComposerScope;
+  onScopeChange?: ((scope: ComposerScope) => void) | null;
+  emptyWorkspacesHint?: string | null;
 }): ToolbarItem[] {
   const { t } = useTranslation();
 
@@ -62,6 +68,10 @@ export function useToolbarItems({
   }, [showWorkspaceMenu]);
 
   const hasModeToggle = mode !== undefined && onModeChange !== undefined;
+  // Under the all-workspaces agent there is no Flash/PTC choice, only where the
+  // agent works, so the host passes a scope and no mode: plan and watch then
+  // show on either scope, as they do for any host without a mode toggle.
+  const hasScopePicker = !!onScopeChange;
   const showPlanWatchSlot = !hasModeToggle || mode === 'ptc';
   const showWorkspaceSelector = !!(hasModeToggle && mode === 'ptc' && workspaces && workspaces.length > 0);
   const ptcBlocked = mode === 'fast' && !!ptcDisabledReason;
@@ -70,7 +80,118 @@ export function useToolbarItems({
     return workspaces.find((w) => w.workspace_id === selectedWorkspaceId)?.name || 'Workspace';
   }, [workspaces, selectedWorkspaceId]);
 
+  const allSelected = scope === 'all';
+  const scopeLabel = allSelected
+    ? t('agents.allWorkspaces')
+    : workspaces?.find((w) => w.workspace_id === selectedWorkspaceId)?.name || t('nav.workspaceFallback');
+  // Shown in the picker when the host can say why its workspace list is empty.
+  const noWorkspacesHint = !workspaces?.length ? emptyWorkspacesHint : null;
+  const hasSecondSection = !!workspaces?.length || !!noWorkspacesHint;
+  const pickAll = useCallback(() => {
+    if (scope !== 'all') onScopeChange?.('all');
+  }, [scope, onScopeChange]);
+  // Workspace before scope, so a host keyed on the active workspace never
+  // pairs the workspace scope with the previously selected workspace.
+  const pickWorkspace = useCallback((id: string) => {
+    if (id !== selectedWorkspaceId) onWorkspaceChange?.(id);
+    if (scope !== 'workspace') onScopeChange?.('workspace');
+  }, [scope, onScopeChange, selectedWorkspaceId, onWorkspaceChange]);
+
   return useMemo<ToolbarItem[]>(() => [
+    {
+      id: 'scope',
+      group: 'agent',
+      // Takes the mode toggle's slot: it is the one control that says where a
+      // send goes, so it is the last to fold.
+      visible: hasScopePicker,
+      inline: ({ measureOnly }) => {
+        const pill = (
+          <PillToggle
+            active={showWorkspaceMenu}
+            onToggle={() => setShowWorkspaceMenu(!showWorkspaceMenu)}
+            icon={allSelected ? Layers : FolderOpen}
+            label={scopeLabel}
+            title={t('agents.pickWhere')}
+            trailing={<ChevronDown className="h-3 w-3 flex-none" />}
+            aria="expanded"
+            gap={4}
+            className="min-w-0"
+            labelClassName="min-w-0 max-w-[120px] truncate"
+            buttonRef={measureOnly ? undefined : workspaceBtnRef}
+            measureOnly={measureOnly}
+          />
+        );
+        if (measureOnly) return pill;
+        const choose = (pick: () => void) => (e: ReactMouseEvent) => {
+          e.preventDefault();
+          pick();
+          setShowWorkspaceMenu(false);
+        };
+        return (
+          <div className="relative flex min-w-0" ref={workspaceMenuRef}>
+            {pill}
+            {showWorkspaceMenu && (
+              <div className="workspace-dropdown workspace-dropdown-up">
+                <div
+                  title={t('agents.allWorkspacesHint')}
+                  className={`workspace-dropdown-item ${allSelected ? 'active' : ''}`}
+                  onMouseDown={choose(pickAll)}
+                >
+                  <Layers className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                  <span>{t('agents.allWorkspaces')}</span>
+                </div>
+                {hasSecondSection && (
+                  <div aria-hidden style={{ height: 1, margin: '4px 0', background: 'var(--color-border-muted)' }} />
+                )}
+                {workspaces?.map((ws) => (
+                  <div
+                    key={ws.workspace_id}
+                    className={`workspace-dropdown-item ${!allSelected && ws.workspace_id === selectedWorkspaceId ? 'active' : ''}`}
+                    onMouseDown={choose(() => pickWorkspace(ws.workspace_id))}
+                  >
+                    <FolderOpen className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                    <span className="min-w-0 truncate" title={ws.name}>{ws.name}</span>
+                  </div>
+                ))}
+                {noWorkspacesHint && (
+                  <div style={{ padding: '6px 14px 8px', fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
+                    {noWorkspacesHint}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      },
+      menu: () => (
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            {allSelected ? <Layers className="h-4 w-4 flex-none" /> : <FolderOpen className="h-4 w-4 flex-none" />}
+            <span className="min-w-0 max-w-[120px] truncate">{scopeLabel}</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
+            <DropdownMenuItem title={t('agents.allWorkspacesHint')} onSelect={pickAll}>
+              <Layers className="h-4 w-4 shrink-0" />
+              <span className="truncate">{t('agents.allWorkspaces')}</span>
+              {allSelected && <Check className="ml-auto h-4 w-4 shrink-0" />}
+            </DropdownMenuItem>
+            {hasSecondSection && <DropdownMenuSeparator />}
+            {workspaces?.map((ws) => (
+              <DropdownMenuItem key={ws.workspace_id} onSelect={() => pickWorkspace(ws.workspace_id)}>
+                <FolderOpen className="h-4 w-4 shrink-0" />
+                <span className="truncate">{ws.name}</span>
+                {!allSelected && ws.workspace_id === selectedWorkspaceId && <Check className="ml-auto h-4 w-4 shrink-0" />}
+              </DropdownMenuItem>
+            ))}
+            {noWorkspacesHint && (
+              <DropdownMenuItem disabled>
+                <span className="text-xs">{noWorkspacesHint}</span>
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      ),
+    },
     {
       id: 'mode',
       group: 'agent',
@@ -232,5 +353,7 @@ export function useToolbarItems({
     showPlanWatchSlot, planMode, setPlanMode, watchMode, setWatchMode, marketWatchEnabled,
     showWorkspaceSelector, showWorkspaceMenu, selectedWorkspaceName,
     workspaces, selectedWorkspaceId, onWorkspaceChange, t,
+    hasScopePicker, allSelected, scopeLabel, noWorkspacesHint, hasSecondSection,
+    pickAll, pickWorkspace,
   ]);
 }

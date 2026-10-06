@@ -53,6 +53,7 @@ vi.mock('@/pages/ChatAgent/components/viewers/CodeEditor', () => ({
 
 import * as api from '@/pages/ChatAgent/utils/api';
 import FilePanel from '@/pages/ChatAgent/components/FilePanel';
+import { WorkspaceProvider } from '@/pages/ChatAgent/contexts/WorkspaceContext';
 import { createTranscriptStore } from '@/pages/ChatAgent/components/filePanel/transcriptStore';
 
 const resolveMock = () => api.resolveWorkspaceFile as ReturnType<typeof vi.fn>;
@@ -73,6 +74,10 @@ const CONTENT: Record<string, string> = {
     '[sub-folder](assets/)',
     '[rooted-folder](__wsref__/ws/results/)',
     '[sandbox-folder](/home/workspace/results/)',
+    '[own-folder](../Home/results/report.md)',
+    '[own-folder-joined](../../Home/results/report.md)',
+    '[sibling-climbed](../NVDA/dcf/report.md)',
+    '[sibling-rooted](/home/workspace/NVDA/dcf/report.md)',
   ].join('\n'),
   'docs/results/report.md': '# The nested one',
   'results/report.md': '# The rooted one',
@@ -331,6 +336,41 @@ describe('FilePanel reference opens', () => {
     // where the open file's own directory is the better guess.
     const read = await openDocAndClick('sibling');
     expect(read).toContain('docs/results/report.md');
+  });
+
+  // `../Home/x` from Home's working directory is Home's `x`; joined onto the
+  // file's directory it would be a nested `docs/Home/`, and as written the
+  // server refuses it for climbing out.
+  it.each([['own-folder'], ['own-folder-joined']])('opens the file a link through the workspace\'s own folder names (%s)', async (linkText) => {
+    renderWithProviders(
+      <WorkspaceProvider workspaceId="ws" downloadFile={null} folders={{ dirName: 'Home', siblings: [] }}>
+        <FilePanel workspaceId="ws" onClose={() => {}} files={NAMESAKES} target={{ kind: 'file', path: 'docs/index.md' }} />
+      </WorkspaceProvider>,
+    );
+    await screen.findByText('Index');
+    (api.readWorkspaceFile as ReturnType<typeof vi.fn>).mockClear();
+    fireEvent.click(await screen.findByText(linkText));
+    await screen.findByText('The rooted one');
+    const read = (api.readWorkspaceFile as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    expect(read).toEqual(['results/report.md']);
+    expect(api.resolveWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  // A note in Home links a sibling workspace's file; it opens there, not in Home.
+  it.each([['sibling-climbed'], ['sibling-rooted']])('opens a sibling workspace\'s file in that workspace (%s)', async (linkText) => {
+    const onOpenFile = vi.fn();
+    renderWithProviders(
+      <WorkspaceProvider
+        workspaceId="ws"
+        downloadFile={null}
+        folders={{ dirName: 'Home', siblings: [{ workspaceId: 'ws-nvda', dirName: 'NVDA' }] }}
+      >
+        <FilePanel workspaceId="ws" onClose={() => {}} files={NAMESAKES} target={{ kind: 'file', path: 'docs/index.md' }} onOpenFile={onOpenFile} />
+      </WorkspaceProvider>,
+    );
+    await screen.findByText('Index');
+    fireEvent.click(await screen.findByText(linkText));
+    await waitFor(() => expect(onOpenFile).toHaveBeenCalledWith('dcf/report.md', 'ws-nvda', undefined));
   });
 
   // A folder is delegated to the router rather than resolved, because the

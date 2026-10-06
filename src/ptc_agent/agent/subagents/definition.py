@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ptc_agent.agent.roles import ALL_ROLES, AgentRole
+
 SubagentMode = Literal["ptc", "flash"]
 
 
@@ -76,6 +78,14 @@ class SubagentDefinition:
 
     Only used when the base template path is active (i.e. not ``custom_prompt``
     or ``custom_prompt_template``).
+    """
+
+    # ── Roles ─────────────────────────────────────────────────────────
+    roles: frozenset[AgentRole] = ALL_ROLES
+    """Which agent roles get this subagent in their roster.
+
+    Narrowed for a subagent whose work one role hands to another instead, so
+    the roster the prompt advertises is the one the build compiles.
     """
 
     # ── Runtime requirements ──────────────────────────────────────────

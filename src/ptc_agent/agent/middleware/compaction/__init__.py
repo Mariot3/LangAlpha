@@ -22,12 +22,12 @@ from ptc_agent.agent.middleware.compaction.utils import (
     get_effective_messages,
     parse_summary_message,
     resolve_cutoff_index,
-    resolve_compaction_client,
     strip_base64_from_content,
     strip_base64_from_messages,
     partition_at_cutoff,
     strip_orphan_tool_messages,
 )
+from ptc_agent.agent.middleware.compaction.model import resolve_compaction_client
 from ptc_agent.agent.middleware.compaction.offloading import (
     aoffload_base64_content,
 )

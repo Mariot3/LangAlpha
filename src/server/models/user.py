@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 
 # =============================================================================
@@ -86,6 +86,15 @@ class OtherPreference(BaseModel):
     """Miscellaneous preferences stored in JSONB."""
 
     model_config = ConfigDict(extra="allow")
+
+    # Strict: a setting that skips approval cards is refused unless it is a
+    # real boolean, rather than guessed from "yes" or 1.
+    auto_approve_handoffs: Optional[StrictBool] = Field(
+        None, description="Hand work to an analyst without asking; absent means ask."
+    )
+    auto_approve_workspace_creation: Optional[StrictBool] = Field(
+        None, description="Create workspaces without asking; absent means ask."
+    )
 
 
 class ModelPreference(BaseModel):

@@ -24,16 +24,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.config.settings import HOST_MODE
 from src.server.database.conversation import create_thread
-from src.server.database.workspace import (
-    get_or_create_flash_workspace,
-    get_workspace,
-)
+from src.server.services.turn_runtime import requested_workspace, resolve_turn_route
 from src.server.models.conversation import (
     ThreadCreateRequest,
     ThreadCreateResponse,
 )
 from src.server.services.thread_title import schedule_title_generation
-from src.server.utils.api import CurrentUserId, require_workspace_owner
+from src.server.utils.api import CurrentUserId
 
 from ._deps import SSE_HEADERS, logger, router
 
@@ -100,19 +97,9 @@ async def create_thread_endpoint(
     still gets the title persisted, and the durable truth is always readable
     via GET /threads/{id}.
     """
-    workspace_id = request.workspace_id
-    if request.agent_mode == "ptc" and not workspace_id:
-        raise HTTPException(
-            status_code=400,
-            detail="workspace_id is required for 'ptc' agent mode.",
-        )
-
-    if request.agent_mode == "flash" and not workspace_id:
-        workspace = await get_or_create_flash_workspace(x_user_id)
-        workspace_id = str(workspace["workspace_id"])
-    else:
-        workspace = await get_workspace(workspace_id)
-    require_workspace_owner(workspace, user_id=x_user_id)
+    workspace = await requested_workspace(
+        x_user_id, request.agent_mode, request.workspace_id
+    )
 
     # Same credit gate the follow-up /messages call enforces — a quota-blocked
     # client must not mint durable rows + platform title calls through this
@@ -128,10 +115,12 @@ async def create_thread_endpoint(
         )
         await enforce_credit_limit(x_user_id, byok=is_byok or has_oauth)
 
-    # Mirror the message path's flash auto-detect so msg_type can't disagree
+    # Decided where the message path decides it, so msg_type can't disagree
     # with the runs the thread will actually carry.
-    is_flash = request.agent_mode == "flash" or workspace.get("status") == "flash"
-    msg_type = "flash" if is_flash else "ptc"
+    route = await resolve_turn_route(
+        x_user_id, request.agent_mode, request.workspace_id, workspace
+    )
+    msg_type, workspace_id = route.agent, route.workspace_id
 
     # Same stamp ensure_thread_exists would apply; also the CAS expectation
     # the title generator swaps against.

@@ -2,6 +2,10 @@
  * A first run fills both defaults: an empty flash slot takes a model to go
  * with the primary. The fill is a local pick like any other, so it stays put
  * when the primary changes and nothing is saved before Continue.
+ *
+ * Compaction and fetch left on their default save unset, not pinned to that
+ * day's flash pick, so the server keeps resolving them from the current model
+ * per turn (`compaction_name`/`fetch_name` in `src/ptc_agent/config/agent.py`).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
@@ -46,6 +50,9 @@ vi.mock('@/components/model/ModelSelector', () => ({
 vi.mock('@/components/model/FallbackModelsPicker', () => ({
   FallbackModelsPicker: () => null,
 }));
+vi.mock('@/hooks/useAllWorkspacesAgent', () => ({
+  useAllWorkspacesAgent: () => false,
+}));
 
 import DefaultsStep from '../DefaultsStep';
 
@@ -85,10 +92,29 @@ describe('DefaultsStep flash fill', () => {
       model_preference: {
         preferred_model: 'gpt-sol',
         preferred_flash_model: 'gpt-terra',
-        compaction_model: 'gpt-terra',
-        fetch_model: 'gpt-terra',
+        compaction_model: null,
+        fetch_model: null,
         fallback_models: [],
       },
     }));
+  });
+});
+
+describe('DefaultsStep compaction and fetch', () => {
+  it('saves an explicit advanced pick as-is, not folded into the flash pick', async () => {
+    renderWithProviders(<DefaultsStep />);
+    fireEvent.change(primary(), { target: { value: 'gpt-sol' } });
+    await waitFor(() => expect(flash().value).toBe('gpt-terra'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Web fetch model' }), {
+      target: { value: 'gpt-sol' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(h.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(h.mutateAsync.mock.calls[0][0]).toMatchObject({
+      model_preference: { fetch_model: 'gpt-sol', compaction_model: null },
+    });
   });
 });

@@ -26,7 +26,7 @@ const T_CALL = /\bt\(\s*['"]([a-zA-Z0-9_.]+)['"]/g;
 // Match `titleKey: 'foo.bar'` / `descriptionKey: 'foo.bar'` / etc. — keys
 // stored in widget definitions, STATUS_UI tables, and PresetMeta. Catches our
 // static metadata references that aren't wrapped in t().
-const KEY_PROP = /\b(?:titleKey|descriptionKey|nameKey|tagKey|bestForKey|labelKey|blurbKey|messageKey|noteKey)\s*[:=]\s*['"]([a-zA-Z0-9_.]+)['"]/g;
+const KEY_PROP = /\b(?:titleKey|descriptionKey|nameKey|tagKey|bestForKey|labelKey|blurbKey|messageKey|noteKey|bodyKey|descKey)\s*[:=]\s*['"]([a-zA-Z0-9_.]+)['"]/g;
 // Bare quoted keys held in const maps and passed to a helper rather than to
 // `t()` directly: SOURCE_KEY / BUCKET_KEY on the dashboard, the tab-label map
 // and the skill-action failure helper under plugins, and the probe verdict
