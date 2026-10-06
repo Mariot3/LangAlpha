@@ -247,6 +247,7 @@ async def _handle_send_message(
         astream_ptc_workflow,
     )
     from src.server.services.turn_runtime import (
+        ensure_home,
         requested_workspace,
         resolve_turn_route,
     )
@@ -356,9 +357,12 @@ async def _handle_send_message(
         # A flash request, or any turn in the flash workspace (a HITL resume
         # whose client didn't resend agent_mode='flash'), runs on Flash, or in
         # Home when the user has the all-workspaces agent. The workspace guard
-        # comes first: it pairs with the thread guard above.
+        # comes first: it pairs with the thread guard above. Home is bound once
+        # the admission gates below pass.
         workspace = await requested_workspace(user_id, agent_mode, workspace_id)
-        route = await resolve_turn_route(user_id, agent_mode, workspace_id, workspace)
+        route = await resolve_turn_route(
+            user_id, agent_mode, workspace_id, workspace, bind_home=False
+        )
         runtime, workspace_id = route.agent, route.workspace_id
 
         # Extract user input
@@ -390,6 +394,12 @@ async def _handle_send_message(
         # turns, which never pass through this route, keep their own model.
         requested_model = request.llm_model or None
         held_model = thread_meta.get("llm_model") if thread_meta else None
+        # A Flash thread the full agent takes over holds a model picked for
+        # Flash's slot. Its promotion forgets it, but only once the turn runs,
+        # so this first turn passes it over too.
+        taken_over = (
+            runtime == "ptc" and bool(thread_meta) and thread_meta.get("msg_type") == "flash"
+        )
         named_model = (
             thread_model.NamedModel(requested_model, seen=held_model)
             if requested_model
@@ -423,7 +433,7 @@ async def _handle_send_message(
             user_id,
             thread_id,
             named=requested_model,
-            held=held_model,
+            held=None if taken_over else held_model,
             fall_back=from_service,
             resolve=resolve,
         )
@@ -442,6 +452,9 @@ async def _handle_send_message(
         # the transport the run's first buffered event would kill it as
         # failed(transport_lost) anyway — refuse cheaply instead.
         await _assert_stream_transport_ready()
+
+        if route.role == "chief_of_staff":
+            await ensure_home(user_id, workspace)
 
         # Strip internal-only fields from non-internal requests (prevent
         # spoofing system messages / forging report-back watch cleanup).

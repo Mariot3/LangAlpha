@@ -39,6 +39,8 @@ async def resolve_turn_route(
     agent_mode: Optional[str],
     workspace_id: Optional[str],
     workspace: Optional[Dict[str, Any]] = None,
+    *,
+    bind_home: bool = True,
 ) -> TurnRoute:
     """Where a turn runs, decided by the flag and the row alone.
 
@@ -46,7 +48,9 @@ async def resolve_turn_route(
     send ``agent_mode='flash'`` and reach Home. Never decided by a cached
     session: Home has one once it ran, and that must not keep Flash from
     coming back when the flag goes off. ``workspace`` is the caller's read of
-    ``workspace_id``, when it has one.
+    ``workspace_id``, when it has one. A caller that routes before its
+    admission gates passes ``bind_home=False`` and calls :func:`ensure_home`
+    once they pass, so a refused turn leaves the user's computer as it was.
     """
     from src.server.database.workspace import get_workspace
 
@@ -72,7 +76,12 @@ async def resolve_turn_route(
         # A thread lives in one workspace, so a flash request continuing one
         # that belongs to a workspace runs there; only the rest go Home.
         return TurnRoute("ptc", workspace_id, role="analyst")
-    return TurnRoute("ptc", await ensure_home(user_id, workspace), role="chief_of_staff")
+    home_id = (
+        await ensure_home(user_id, workspace)
+        if bind_home
+        else get_flash_workspace_id(user_id)
+    )
+    return TurnRoute("ptc", home_id, role="chief_of_staff")
 
 
 async def requested_workspace(

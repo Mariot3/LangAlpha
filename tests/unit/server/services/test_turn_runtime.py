@@ -121,6 +121,18 @@ async def test_flag_on_runs_the_chief_of_staff_in_home(
 
 
 @pytest.mark.asyncio
+async def test_a_caller_routing_before_its_gates_binds_home_itself(seam):
+    """The message route asks before its credit gate, and binds once that passes."""
+    enabled, _, bind, upsert = seam
+    enabled.return_value = True
+    assert await resolve_turn_route(
+        USER, "flash", None, bind_home=False
+    ) == TurnRoute("ptc", HOME, role="chief_of_staff")
+    bind.assert_not_awaited()
+    upsert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_flag_on_keeps_a_workspace_thread_in_its_workspace(seam):
     """A flash request continuing a thread that lives in a workspace runs there, not in Home."""
     enabled, get_workspace, bind, _ = seam
