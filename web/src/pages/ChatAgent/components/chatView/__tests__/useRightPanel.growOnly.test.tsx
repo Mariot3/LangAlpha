@@ -7,12 +7,11 @@ import { useRightPanel } from '../useRightPanel';
 
 vi.mock('../../../utils/api', async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), getPreviewUrl: vi.fn() }));
 
-// A data card wants 480, a plan 550, a file read 850; jsdom's 1024px window
+// A data card wants 480, a file read 850; jsdom's 1024px window
 // caps the default at 563.2 and a chart's wider ask at 942.
 const OVERVIEW = { toolName: 'get_company_overview', toolCall: { id: 'tc1', args: {} }, isComplete: true, toolCallResult: { artifact: { type: 'company_overview' } } };
 const READ = { toolName: 'Read', toolCall: { id: 'tc2', args: {} }, isComplete: true, toolCallResult: { content: 'x' } };
 const MESSAGES = [{ id: 'm1', toolCallProcesses: { tc1: OVERVIEW, tc2: READ } }];
-const PLAN = { description: 'do things' };
 
 function open() {
   const { result } = renderHook(() => useRightPanel({
@@ -35,15 +34,15 @@ function drag(result: ReturnType<typeof open>, by: number) {
 describe('panel width across landings', () => {
   it('opens a closed panel at what the landing asks for', () => {
     const result = open();
-    act(() => result.current.handlePlanDetailClick('p1', PLAN));
-    expect(result.current.rightPanelWidth).toBe(550);
+    act(() => result.current.handleToolCallDetailClick('tc1'));
+    expect(result.current.rightPanelWidth).toBe(480);
   });
 
   it('never narrows an open panel for a landing that asks for less', () => {
     const result = open();
-    act(() => result.current.handlePlanDetailClick('p1', PLAN));
+    act(() => result.current.handleToolCallDetailClick('tc2'));
     act(() => result.current.handleToolCallDetailClick('tc1'));
-    expect(result.current.rightPanelWidth).toBe(550);
+    expect(result.current.rightPanelWidth).toBeCloseTo(563.2);
   });
 
   it('widens an open panel for a landing that asks for more', () => {
@@ -59,7 +58,7 @@ describe('panel width across landings', () => {
     act(() => result.current.handleOpenChart({ symbol: 'GOOGL' }));
     drag(result, 50);
     expect(result.current.rightPanelWidth).toBe(900);
-    act(() => result.current.handlePlanDetailClick('p1', PLAN));
+    act(() => result.current.handleToolCallDetailClick('tc1'));
     expect(result.current.rightPanelWidth).toBe(900);
   });
 
@@ -69,7 +68,7 @@ describe('panel width across landings', () => {
     const result = open();
     act(() => result.current.handleOpenChart({ symbol: 'GOOGL' }));
     expect(result.current.rightPanelWidth).toBe(850);
-    act(() => result.current.handlePlanDetailClick('p1', PLAN));
+    act(() => result.current.handleToolCallDetailClick('tc1'));
     expect(result.current.rightPanelWidth).toBe(850);
   });
 
@@ -78,7 +77,7 @@ describe('panel width across landings', () => {
     act(() => result.current.handleOpenChart({ symbol: 'GOOGL' }));
     act(() => result.current.handleToggleFilePanel());
     expect(result.current.rightPanelType).toBeNull();
-    act(() => result.current.handlePlanDetailClick('p1', PLAN));
-    expect(result.current.rightPanelWidth).toBe(550);
+    act(() => result.current.handleToolCallDetailClick('tc1'));
+    expect(result.current.rightPanelWidth).toBe(480);
   });
 });

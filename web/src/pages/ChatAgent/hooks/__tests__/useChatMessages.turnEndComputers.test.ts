@@ -64,13 +64,13 @@ async function mountThread(agentMode: string) {
 /** Mount a thread and run one turn that streams `events` and completes. */
 async function completeOneTurn(agentMode: string, events: Record<string, unknown>[] = [CHUNK]) {
   mockSend.mockImplementation(async (...args: unknown[]) => {
-    const onEvent = args[5] as (e: Record<string, unknown>) => void;
+    const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
     for (const e of events) onEvent(e);
     return { disconnected: false };
   });
   const mounted = await mountThread(agentMode);
   await act(async () => {
-    await mounted.result.current.handleSendMessage('measure', false);
+    await mounted.result.current.handleSendMessage('measure');
   });
   await waitFor(() => expect(mounted.result.current.isLoading).toBe(false));
   return mounted;
@@ -119,7 +119,7 @@ describe('useChatMessages, a PTC run re-reads the workspace rows for their folde
   it('re-reads it once when the run starts, before any turn end', async () => {
     let end: () => void = () => {};
     mockSend.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
       onEvent(METADATA);
       onEvent(CHUNK);
       onEvent(CHUNK);
@@ -127,7 +127,7 @@ describe('useChatMessages, a PTC run re-reads the workspace rows for their folde
     });
     const { result, invalidate } = await mountThread('ptc');
     act(() => {
-      void result.current.handleSendMessage('measure', false);
+      void result.current.handleSendMessage('measure');
     });
     await waitFor(() => expect(workspaceRowReads(invalidate)).toBe(1));
     expect(result.current.isLoading).toBe(true);

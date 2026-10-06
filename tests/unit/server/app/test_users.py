@@ -1120,3 +1120,38 @@ async def test_an_unknown_apply_default_to_is_422(client):
 
     assert resp.status_code == 422
     upsert.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# PUT /users/me/preferences: other_preference.subagents_default
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [True, False, None])
+@pytest.mark.asyncio
+async def test_a_boolean_subagents_default_is_saved(client, value):
+    """true and false are stored; null reaches the merge, which deletes the key."""
+    async with _prefs_endpoint() as upsert:
+        resp = await client.put(
+            "/api/v1/users/me/preferences",
+            json={"other_preference": {"subagents_default": value}},
+        )
+
+    assert resp.status_code == 200
+    assert upsert.await_args.kwargs["other_preference"] == {"subagents_default": value}
+
+
+@pytest.mark.parametrize("value", ["false", "nope", 0, 1, {"on": False}, [False]])
+@pytest.mark.asyncio
+async def test_a_non_boolean_subagents_default_is_rejected(client, value):
+    """The thread gate reads only a stored JSON false as off, so anything else
+    would look like a choice in Settings and change nothing."""
+    async with _prefs_endpoint() as upsert:
+        resp = await client.put(
+            "/api/v1/users/me/preferences",
+            json={"other_preference": {"subagents_default": value}},
+        )
+
+    assert resp.status_code == 400
+    assert "subagents_default" in resp.json()["detail"]
+    upsert.assert_not_awaited()

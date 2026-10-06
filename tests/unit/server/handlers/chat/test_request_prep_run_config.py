@@ -281,8 +281,8 @@ class TestBuildGraphConfig:
         assert config["configurable"]["thread_id"] == "t-1"
         assert config["recursion_limit"] == 500
 
-    def test_ptc_config_with_plan_mode(self):
-        config = self._build(mode="ptc", plan_mode=True, recursion_limit=2000)
+    def test_ptc_config(self):
+        config = self._build(mode="ptc", recursion_limit=2000)
         assert config["configurable"]["agent_mode"] == "ptc"
         assert config["recursion_limit"] == 2000
 
@@ -311,8 +311,8 @@ class TestBuildGraphConfig:
         assert "callbacks" not in config
 
     def test_extra_configurable_merged(self):
-        config = self._build(extra_configurable={"plan_mode": True})
-        assert config["configurable"]["plan_mode"] is True
+        config = self._build(extra_configurable={"custom_flag": True})
+        assert config["configurable"]["custom_flag"] is True
 
     def test_graph_metadata_stays_turn_identity(self):
         """A subagent inherits this dict wholesale while running its own model at

@@ -275,12 +275,12 @@ describe('useChatMessages — report-back watch (PTC → flash report-back)', ()
 
     // Live send: streams and success-finalizes (turn 1 persisted server-side).
     mockSend.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
       onEvent({ event: 'message_chunk', role: 'assistant', agent: 'main', content_type: 'text', content: 'resuming both threads' });
       return { disconnected: false };
     });
     await act(async () => {
-      await result.current.handleSendMessage('resume both analyses', false);
+      await result.current.handleSendMessage('resume both analyses');
     });
     expect(JSON.stringify(result.current.messages)).toContain('resume both analyses');
 
@@ -334,9 +334,9 @@ describe('useChatMessages — report-back watch (PTC → flash report-back)', ()
     // Live send: latches the run id (admission), streams ONE partial chunk,
     // then hangs until stopWorkflow aborts it — a mid-stream user stop.
     mockSend.mockImplementation((...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
-      const onRunIdResolved = args[16] as (runId: string, threadId: string | null) => void;
-      const signal = args[17] as AbortSignal | null;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
+      const onRunIdResolved = (args[3] as { onRunIdResolved: (runId: string, threadId: string | null) => void }).onRunIdResolved;
+      const signal = (args[3] as { signal: AbortSignal | null }).signal;
       onRunIdResolved('run-stopped-1', 'th-rb');
       onEvent({ event: 'message_chunk', role: 'assistant', agent: 'main', content_type: 'text', content: 'partial answer' });
       return new Promise((resolve) => {
@@ -346,7 +346,7 @@ describe('useChatMessages — report-back watch (PTC → flash report-back)', ()
     });
     let sendPromise: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      sendPromise = result.current.handleSendMessage('stopped question', false);
+      sendPromise = result.current.handleSendMessage('stopped question');
       await new Promise((r) => setTimeout(r, 0));
     });
     await waitFor(() => expect(JSON.stringify(result.current.liveMessages.get())).toContain('partial answer'));
@@ -404,8 +404,8 @@ describe('useChatMessages — report-back watch (PTC → flash report-back)', ()
     // Live send that is stopped before admission: streams a chunk but never
     // resolves a run id (e.g. stopped during sandbox bringup).
     mockSend.mockImplementation((...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
-      const signal = args[17] as AbortSignal | null;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
+      const signal = (args[3] as { signal: AbortSignal | null }).signal;
       onEvent({ event: 'message_chunk', role: 'assistant', agent: 'main', content_type: 'text', content: 'partial answer' });
       return new Promise((resolve) => {
         if (signal?.aborted) return resolve({ disconnected: false, aborted: true });
@@ -414,7 +414,7 @@ describe('useChatMessages — report-back watch (PTC → flash report-back)', ()
     });
     let sendPromise: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      sendPromise = result.current.handleSendMessage('stopped question', false);
+      sendPromise = result.current.handleSendMessage('stopped question');
       await new Promise((r) => setTimeout(r, 0));
     });
     await act(async () => {

@@ -32,7 +32,6 @@ def _make_request(steer_only: bool = True):
     req.hitl_response = None
     req.checkpoint_id = None
     req.messages = [MagicMock(role="user", content="hi")]
-    req.plan_mode = False
     req.timezone = "UTC"
     req.locale = None
     req.subagents_enabled = None

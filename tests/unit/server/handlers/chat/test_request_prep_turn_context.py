@@ -42,6 +42,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with patch(f"{PREP}.qr_db.ensure_thread_exists", new_callable=AsyncMock) as mock_db:
             await ensure_thread(
@@ -65,6 +66,7 @@ class TestEnsureThread:
         request.external_thread_id = "ext-123"
         request.platform = "slack"
         request.origin = None
+        request.subagents_allowed = None
 
         with patch(f"{PREP}.qr_db.ensure_thread_exists", new_callable=AsyncMock) as mock_db:
             await ensure_thread(
@@ -83,6 +85,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with patch(f"{PREP}.qr_db.ensure_thread_exists", new_callable=AsyncMock) as mock_db:
             await ensure_thread(request, "t-1", "ws-1", "u-1", msg_type="flash")
@@ -100,6 +103,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = ThreadOrigin(type="agent", id="flash-t-1")
+        request.subagents_allowed = None
 
         with patch(
             f"{PREP}.qr_db.ensure_thread_exists",
@@ -115,6 +119,28 @@ class TestEnsureThread:
         }
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("named", [True, False, None])
+    async def test_a_named_switch_reaches_the_create(self, named):
+        """The switch a send names goes to the create; ensure_thread_exists
+        applies it only if the row is new."""
+        from src.server.handlers.chat.request_prep import ensure_thread
+
+        request = MagicMock()
+        request.external_thread_id = None
+        request.platform = None
+        request.origin = None
+        request.subagents_allowed = named
+
+        with patch(
+            f"{PREP}.qr_db.ensure_thread_exists",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_db:
+            await ensure_thread(request, "t-1", "ws-1", "u-1", msg_type="ptc")
+
+        assert mock_db.call_args.kwargs.get("subagents_allowed") is named
+
+    @pytest.mark.asyncio
     async def test_title_generation_on_create(self):
         """A newly created thread with a first query spawns title generation."""
         from src.server.handlers.chat.request_prep import ensure_thread
@@ -123,6 +149,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with (
             patch(
@@ -151,6 +178,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with (
             patch(
@@ -177,6 +205,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         calls: list[str] = []
         stamp = datetime(2026, 3, 1, 14, 30, tzinfo=UTC)
@@ -216,6 +245,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
         renamed_at = datetime(2026, 3, 4, 9, 0, tzinfo=UTC)
         last_turn = datetime(2026, 3, 1, 14, 30, tzinfo=UTC)
 
@@ -247,6 +277,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with (
             patch(
@@ -277,6 +308,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
         request.fork_from_turn = 3
         request.checkpoint_id = "ckpt-3"
         before = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
@@ -310,6 +342,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
         request.fork_from_turn = None
         request.checkpoint_id = None
 
@@ -340,6 +373,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with (
             patch(
@@ -364,6 +398,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with patch(f"{PREP}.qr_db.ensure_thread_exists", new_callable=AsyncMock):
             prior = await ensure_thread(
@@ -381,6 +416,7 @@ class TestEnsureThread:
         request.external_thread_id = None
         request.platform = None
         request.origin = None
+        request.subagents_allowed = None
 
         with (
             patch(
@@ -427,6 +463,7 @@ class TestBuildTurnContext:
     def _request(self, origin=None, platform=None, surface_rules=None):
         request = MagicMock(timezone="UTC", locale="en-US")
         request.origin = origin
+        request.subagents_allowed = None
         request.platform = platform
         request.surface_rules = surface_rules
         return request

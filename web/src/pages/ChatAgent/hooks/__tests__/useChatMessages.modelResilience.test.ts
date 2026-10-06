@@ -84,9 +84,7 @@ function mockHangingStreamWith(events: Array<Record<string, unknown>>): Deferred
       _msg: string,
       _ws: string,
       _tid: string | null,
-      _hist: unknown[],
-      _plan: boolean,
-      onEvent: OnEvent,
+      { onEvent }: { onEvent: OnEvent },
     ) => {
       for (const e of events) onEvent(e);
       return hang.promise;
@@ -104,7 +102,7 @@ function mockHangingStreamWith(events: Array<Record<string, unknown>>): Deferred
 async function startHungSend(result: HookResult): Promise<{ send: Promise<unknown> }> {
   let send: Promise<unknown> = Promise.resolve();
   await act(async () => {
-    send = result.current.handleSendMessage('hello', false);
+    send = result.current.handleSendMessage('hello');
     send.catch(() => undefined);
     await Promise.resolve();
   });
@@ -297,16 +295,14 @@ describe('useChatMessages — model retry/fallback resilience', () => {
   });
 
   it('HITL resume clears a lingering fallbackSuggestion (new-run boundary)', async () => {
-    // A fallback fires, then the turn interrupts for approval; the stream
+    // A fallback fires, then the turn interrupts with a question; the stream
     // ends there (matching the real interrupt flow).
     mockSendStream.mockImplementation(
       async (
         _msg: string,
         _ws: string,
         _tid: string | null,
-        _hist: unknown[],
-        _plan: boolean,
-        onEvent: OnEvent,
+        { onEvent }: { onEvent: OnEvent },
       ) => {
         onEvent({
           event: 'model_fallback',
@@ -316,25 +312,25 @@ describe('useChatMessages — model retry/fallback resilience', () => {
         });
         onEvent({
           event: 'interrupt',
-          interrupt_id: 'plan-1',
-          action_requests: [{ name: 'SubmitPlan', description: 'Step 1.' }],
+          interrupt_id: 'q-1',
+          action_requests: [{ type: 'ask_user_question', question: 'Which tickers?', options: [], allow_multiple: false }],
         });
         return { disconnected: false };
       },
     );
     const { result } = renderHookWithProviders(() => useChatMessages('ws-hitl'));
     await act(async () => {
-      await result.current.handleSendMessage('make a plan', false);
+      await result.current.handleSendMessage('compare a few names');
     });
     await waitFor(() => expect(result.current.fallbackSuggestion).not.toBeNull());
     await waitFor(() => expect(result.current.pendingInterrupt).not.toBeNull());
 
-    // Approving opens a fresh backend run whose model calls start from the
+    // Answering opens a fresh backend run whose model calls start from the
     // primary again — the pre-interrupt suggestion must not survive to sit
     // under the resumed turn's answer (a re-fired model_fallback re-sets it).
     mockSendHitl.mockResolvedValue({ disconnected: false, aborted: false });
     await act(async () => {
-      result.current.handleApproveInterrupt();
+      result.current.handleAnswerQuestion('AAPL', 'q-1', 'q-1');
       await new Promise((r) => setTimeout(r, 0));
     });
     await waitFor(() => expect(mockSendHitl).toHaveBeenCalled());

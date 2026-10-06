@@ -56,7 +56,7 @@ describe('ChatView mounting harness', () => {
       userMsg('u1', 'hello mount'),
       assistant('a1', {
         content: 'assistant reply text',
-        contentSegments: [{ type: 'text', order: 0 }],
+        contentSegments: [{ type: 'text', content: 'assistant reply text', order: 0 }],
       }),
     ];
     const { container } = mountChatView(ChatView);

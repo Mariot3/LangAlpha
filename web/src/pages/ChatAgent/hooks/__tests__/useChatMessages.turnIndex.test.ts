@@ -84,9 +84,7 @@ function mockTwoTurnsWithSteering(steeringCount: number) {
       _msg: string,
       _ws: string,
       _tid: string | null,
-      _hist: unknown[],
-      _plan: boolean,
-      onEvent: StreamCallback,
+      { onEvent }: { onEvent: StreamCallback },
     ) => {
       callCount++;
       onEvent({ event: 'thread_id', thread_id: 'thread-1' });
@@ -125,7 +123,7 @@ describe('useChatMessages – turn index with steering messages', () => {
     await settleMountLoad();
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -197,10 +195,10 @@ describe('useChatMessages – turn index with steering messages', () => {
 
     // Send two messages: first with steering, second without
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
     await act(async () => {
-      await result.current.handleSendMessage('next question', false);
+      await result.current.handleSendMessage('next question');
     });
 
     // Wait for all messages to settle
@@ -240,7 +238,7 @@ describe('useChatMessages – turn index with steering messages', () => {
     await settleMountLoad();
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     let steeringUserId: string;

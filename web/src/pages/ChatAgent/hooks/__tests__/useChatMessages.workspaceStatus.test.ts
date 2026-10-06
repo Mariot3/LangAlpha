@@ -73,9 +73,7 @@ function mockHangingStream(events: Array<Record<string, unknown>>) {
       _msg: string,
       _ws: string,
       _tid: string | null,
-      _hist: unknown[],
-      _plan: boolean,
-      onEvent: StreamCallback,
+      { onEvent }: { onEvent: StreamCallback },
     ) => {
       onEvent({ event: 'thread_id', thread_id: 'thread-1' });
       for (const e of events) {
@@ -106,7 +104,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
 
     // Fire without awaiting so stream stays mid-flight.
     act(() => {
-      void result.current.handleSendMessage('hello', false);
+      void result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -124,7 +122,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     act(() => {
-      void result.current.handleSendMessage('hello', false);
+      void result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -144,7 +142,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     act(() => {
-      void result.current.handleSendMessage('hello', false);
+      void result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -164,7 +162,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     act(() => {
-      void result.current.handleSendMessage('hello', false);
+      void result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -180,9 +178,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
         _msg: string,
         _ws: string,
         _tid: string | null,
-        _hist: unknown[],
-        _plan: boolean,
-        onEvent: StreamCallback,
+        { onEvent }: { onEvent: StreamCallback },
       ) => {
         onEvent({ event: 'thread_id', thread_id: 'thread-1' });
         return { disconnected: false };
@@ -192,7 +188,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     expect(result.current.workspaceStarting).toBe(false);
@@ -207,9 +203,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
         _msg: string,
         _ws: string,
         _tid: string | null,
-        _hist: unknown[],
-        _plan: boolean,
-        onEvent: StreamCallback,
+        { onEvent }: { onEvent: StreamCallback },
       ) => {
         onEvent({ event: 'thread_id', thread_id: 'thread-1' });
         onEvent({ event: 'workspace_status', status: 'starting', sandbox_state: 'archived' });
@@ -221,7 +215,7 @@ describe('useChatMessages – workspace_status SSE handling', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     // After cleanupAfterStreamEnd runs, spinner should be cleared.

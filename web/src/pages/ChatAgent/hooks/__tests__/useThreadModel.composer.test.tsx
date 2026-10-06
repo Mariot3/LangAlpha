@@ -25,13 +25,19 @@ const mocks = vi.hoisted(() => ({
   updateThread: vi.fn(),
   toast: vi.fn(),
   preferences: { model_preference: { preferred_model: 'model-default' } } as unknown,
+  /** The server's row, which a read returns. */
+  server: null as unknown,
 }));
 
+// A save the server accepts moves its row, so a read after it finds the save.
 vi.mock('@/pages/ChatAgent/utils/api', () => ({
   getSkills: vi.fn().mockResolvedValue([]),
   getModelMetadata: vi.fn().mockResolvedValue({}),
   getThread: mocks.getThread,
-  updateThread: mocks.updateThread,
+  updateThread: (...args: unknown[]) => Promise.resolve(mocks.updateThread(...args)).then((saved: unknown) => {
+    mocks.server = saved;
+    return saved;
+  }),
 }));
 
 vi.mock('@/hooks/usePreferences', () => ({
@@ -147,7 +153,8 @@ describe('the composer on a thread-owned model', () => {
     queryClient = createTestQueryClient();
     queryClient.setQueryData(queryKeys.user.preferences(), mocks.preferences);
     queryClient.setQueryData(queryKeys.threads.detail(THREAD), row('model-thread'));
-    mocks.getThread.mockResolvedValue(row('model-thread'));
+    mocks.server = row('model-thread');
+    mocks.getThread.mockImplementation(async () => mocks.server);
   });
   afterEach(() => {
     ContextBus.__resetForTests();
@@ -176,7 +183,7 @@ describe('the composer on a thread-owned model', () => {
     expect(screen.getByRole('button', { name: 'Switch to model-fallback' })).toBeInTheDocument();
 
     send('next');
-    expect(onSend.mock.calls[0][4]).toMatchObject({ model: 'model-y' });
+    expect(onSend.mock.calls[0][3]).toMatchObject({ model: 'model-y' });
 
     await waitFor(() => expect(mocks.updateThread).toHaveBeenLastCalledWith(THREAD, { llm_model: 'model-y' }));
     await act(async () => { y.resolve(row('model-y')); });
@@ -203,7 +210,7 @@ describe('the composer on a thread-owned model', () => {
     await act(async () => { x1.reject(failure()); });
     expect(screen.getByText('pill:model-x')).toBeInTheDocument();
     send('next');
-    expect(onSend.mock.calls[0][4]).toMatchObject({ model: 'model-x' });
+    expect(onSend.mock.calls[0][3]).toMatchObject({ model: 'model-x' });
 
     await waitFor(() => expect(mocks.updateThread).toHaveBeenCalledTimes(2));
     await act(async () => { y.resolve(row('model-y')); });
@@ -223,7 +230,7 @@ describe('the composer on a thread-owned model', () => {
     expect(screen.getByText('pill:model-y')).toBeInTheDocument();
     send('start a thread');
 
-    expect(onSend.mock.calls[0][4]).toMatchObject({ model: 'model-y' });
+    expect(onSend.mock.calls[0][3]).toMatchObject({ model: 'model-y' });
     expect(mocks.updateThread).not.toHaveBeenCalled();
   });
 });

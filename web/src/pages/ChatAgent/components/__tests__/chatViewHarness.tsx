@@ -93,7 +93,6 @@ const baseChatState = () => ({
   stopWorkflow: vi.fn(),
   stopCompaction: vi.fn(),
   pendingInterrupt: null,
-  pendingRejection: null,
   handleApproveInterrupt: vi.fn(),
   handleRejectInterrupt: vi.fn(),
   handleAnswerQuestion: vi.fn(),

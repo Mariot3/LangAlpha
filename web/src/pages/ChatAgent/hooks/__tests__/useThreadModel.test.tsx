@@ -14,6 +14,7 @@ import { renderHookWithProviders, createTestQueryClient } from '@/test/utils';
 import { queryKeys } from '@/lib/queryKeys';
 import { userSessionStorage } from '@/lib/userStorage';
 import type { Thread } from '@/types/api';
+import { useThreadFieldSave } from '../useThreadFieldSave';
 import { useThreadModel } from '../useThreadModel';
 
 const mocks = vi.hoisted(() => ({
@@ -22,11 +23,17 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   defaultModel: 'model-default' as string | null,
   catalogModelNames: new Set<string>(),
+  /** The server's row, which a read returns unless a test says otherwise. */
+  server: null as unknown,
 }));
 
+// A save the server accepts moves its row, so a read after it finds the save.
 vi.mock('../../utils/api', () => ({
   getThread: mocks.getThread,
-  updateThread: mocks.updateThread,
+  updateThread: (...args: unknown[]) => Promise.resolve(mocks.updateThread(...args)).then((saved: unknown) => {
+    mocks.server = saved;
+    return saved;
+  }),
 }));
 
 vi.mock('@/hooks/useModeDefaultModel', () => ({
@@ -63,7 +70,8 @@ function setup(
   queryClient = createTestQueryClient(),
 ) {
   if (cached) queryClient.setQueryData(queryKeys.threads.detail(THREAD), cached);
-  mocks.getThread.mockResolvedValue(cached ?? row(null));
+  mocks.server = cached ?? row(null);
+  mocks.getThread.mockImplementation(async () => mocks.server);
   const initial: Props = { threadId: THREAD, mode: 'ptc', isLoading: false, ...props };
   const view = renderHookWithProviders(
     (p: Props = initial) => useThreadModel(p),
@@ -439,15 +447,119 @@ describe('useThreadModel', () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail(THREAD) });
     });
 
-    it('leaves the row alone while a pick is saving, whose answer is newer', async () => {
-      mocks.updateThread.mockReturnValue(new Promise(() => {}));
+    it('leaves the reread to a pick still saving, which reads the row once it settles', async () => {
+      const answer = deferred<Thread>();
+      mocks.updateThread.mockReturnValue(answer.promise);
       const { result, rerender, queryClient } = setup({ isLoading: true });
+      await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+      const reads = mocks.getThread.mock.calls.length;
       act(() => { void result.current.pickModel('model-beta'); });
       await waitFor(() => expect(mocks.updateThread).toHaveBeenCalled());
 
-      const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
       rerender({ threadId: THREAD, mode: 'ptc', isLoading: false });
-      expect(invalidate).not.toHaveBeenCalled();
+      // A read now would land over the pick.
+      expect(mocks.getThread).toHaveBeenCalledTimes(reads);
+
+      await act(async () => { answer.resolve(row('model-beta')); });
+      await waitFor(() => expect(mocks.getThread).toHaveBeenCalledTimes(reads + 1));
+      expect(result.current.model).toBe('model-beta');
+    });
+
+    it("finds a model the turn cleared while the subagents switch was saving", async () => {
+      // The flip's save writes only its own field, so the model the turn
+      // refused as removed stays cached unless the turn-end reread survives.
+      const flip = deferred<Thread>();
+      mocks.updateThread.mockReturnValue(flip.promise);
+      const queryClient = createTestQueryClient();
+      queryClient.setQueryData(queryKeys.threads.detail(THREAD), row('model-thread'));
+      mocks.server = row('model-thread');
+      mocks.getThread.mockImplementation(async () => mocks.server);
+      const { result, rerender } = renderHookWithProviders(
+        (p: Props = { threadId: THREAD, mode: 'ptc', isLoading: true }) => ({
+          thread: useThreadModel(p),
+          flip: useThreadFieldSave({
+            threadId: THREAD,
+            field: 'subagents_allowed',
+            failedMessage: 'flip failed',
+            onFailed: () => {},
+          }),
+        }),
+        { queryClient },
+      );
+      await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+
+      act(() => { void result.current.flip({ threadId: THREAD, value: false, before: null }); });
+      await waitFor(() => expect(mocks.updateThread).toHaveBeenCalled());
+      rerender({ threadId: THREAD, mode: 'ptc', isLoading: false });
+
+      await act(async () => { flip.resolve({ ...row(null), subagents_allowed: false } as Thread); });
+      await waitFor(() => expect(cachedModel(queryClient)).toBeNull());
+      expect(result.current.thread.model).toBe('model-default');
+    });
+
+    it('holds the reread until the save of every field has settled', async () => {
+      const pick = deferred<Thread>();
+      const flip = deferred<Thread>();
+      mocks.updateThread.mockReturnValueOnce(pick.promise).mockReturnValueOnce(flip.promise);
+      const queryClient = createTestQueryClient();
+      queryClient.setQueryData(queryKeys.threads.detail(THREAD), row('model-thread'));
+      mocks.server = row('model-thread');
+      mocks.getThread.mockImplementation(async () => mocks.server);
+      const { result, rerender } = renderHookWithProviders(
+        (p: Props = { threadId: THREAD, mode: 'ptc', isLoading: true }) => ({
+          thread: useThreadModel(p),
+          flip: useThreadFieldSave({
+            threadId: THREAD,
+            field: 'subagents_allowed',
+            failedMessage: 'flip failed',
+            onFailed: () => {},
+          }),
+        }),
+        { queryClient },
+      );
+      await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+      const reads = mocks.getThread.mock.calls.length;
+      const cachedSwitch = () => queryClient.getQueryData<Thread>(queryKeys.threads.detail(THREAD))?.subagents_allowed;
+
+      act(() => { void result.current.thread.pickModel('model-beta'); });
+      act(() => { void result.current.flip({ threadId: THREAD, value: false, before: null }); });
+      await waitFor(() => expect(mocks.updateThread).toHaveBeenCalledTimes(2));
+      rerender({ threadId: THREAD, mode: 'ptc', isLoading: false });
+
+      // The server has not taken the flip yet, so a read now would undo it.
+      await act(async () => { pick.resolve(row('model-beta')); });
+      expect(mocks.getThread).toHaveBeenCalledTimes(reads);
+      expect(cachedSwitch()).toBe(false);
+
+      await act(async () => { flip.resolve({ ...row('model-beta'), subagents_allowed: false } as Thread); });
+      await waitFor(() => expect(mocks.getThread).toHaveBeenCalledTimes(reads + 1));
+      expect(cachedSwitch()).toBe(false);
+      expect(result.current.thread.model).toBe('model-beta');
+    });
+
+    it('keeps the reread when a later pick starts before the one it waited on settles', async () => {
+      const first = deferred<Thread>();
+      const second = deferred<Thread>();
+      mocks.updateThread.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const { result, rerender, queryClient } = setup({ isLoading: true });
+      await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+
+      act(() => { void result.current.pickModel('model-x'); });
+      await waitFor(() => expect(cachedModel(queryClient)).toBe('model-x'));
+      rerender({ threadId: THREAD, mode: 'ptc', isLoading: false });
+      // The second pick's optimistic write would clear the stale mark.
+      act(() => { void result.current.pickModel('model-y'); });
+      await waitFor(() => expect(cachedModel(queryClient)).toBe('model-y'));
+
+      await act(async () => { first.resolve(row('model-x')); });
+      await waitFor(() => expect(mocks.updateThread).toHaveBeenCalledTimes(2));
+      // The turn stored subagents on the row; the pick's answer carries it,
+      // but the save writes only the model.
+      await act(async () => { second.resolve({ ...row('model-y'), subagents_allowed: false } as Thread); });
+      await waitFor(() => expect(
+        queryClient.getQueryData<Thread>(queryKeys.threads.detail(THREAD))?.subagents_allowed,
+      ).toBe(false));
+      expect(result.current.model).toBe('model-y');
     });
   });
 });

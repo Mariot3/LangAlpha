@@ -12,8 +12,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   messages: [{ id: 'm1', role: 'assistant' }],
   handleSendMessage: vi.fn(),
-  handleApproveInterrupt: vi.fn(),
-  handleRejectInterrupt: vi.fn(),
   handleAnswerQuestion: vi.fn(),
   handleSkipQuestion: vi.fn(),
   handleApproveCreateWorkspace: vi.fn(),
@@ -79,8 +77,6 @@ vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
     handleSendMessage: h.handleSendMessage,
     stopWorkflow: h.stopWorkflow,
     getSubagentHistory: vi.fn(),
-    handleApproveInterrupt: h.handleApproveInterrupt,
-    handleRejectInterrupt: h.handleRejectInterrupt,
     handleAnswerQuestion: h.handleAnswerQuestion,
     handleSkipQuestion: h.handleSkipQuestion,
     handleApproveCreateWorkspace: h.handleApproveCreateWorkspace,
@@ -93,7 +89,6 @@ vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
     handleRejectSecretaryAction: h.handleRejectSecretaryAction,
     handleResumeCreditPause: h.handleResumeCreditPause,
     pendingInterrupt: h.pendingInterrupt,
-    pendingRejection: null,
     hasActiveSubagents: false,
     workspaceStarting: false,
     isCompacting: false,
@@ -385,9 +380,9 @@ describe('MarketChatPanel', () => {
         h.isLoading = true;
       });
       const onSend = ci.props!.onSend as (
-        m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+        m: string, att: unknown[], cmds: unknown[], opts: unknown,
       ) => void;
-      act(() => onSend('and the next quarter?', false, [], [], {}));
+      act(() => onSend('and the next quarter?', [], [], {}));
       expect(scrollTo).toHaveBeenLastCalledWith({ top: 600 });
       nextFrame();
 
@@ -481,9 +476,9 @@ describe('MarketChatPanel', () => {
           h.isLoading = true;
         });
         const onSend = ci.props!.onSend as (
-          m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+          m: string, att: unknown[], cmds: unknown[], opts: unknown,
         ) => void;
-        act(() => onSend('and the next quarter?', false, [], [], {}));
+        act(() => onSend('and the next quarter?', [], [], {}));
         expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200 });
         nextFrame();
         setLoading(true);
@@ -544,14 +539,12 @@ describe('MarketChatPanel', () => {
     expect(ml.folders?.previousDirNames).toEqual(['Old Name']);
   });
 
-  it('provides every HITL handler through MessageActionsContext so plan/question cards work', () => {
+  it('provides every HITL handler through MessageActionsContext so interrupt cards work', () => {
     renderPanel();
     const a = ml.actions!;
     // The context members are useStableHandler'd (identity must survive every
     // streamed chunk), so assert delegation, not identity.
     const wiring: Array<[string, ReturnType<typeof vi.fn>]> = [
-      ['onApprovePlan', h.handleApproveInterrupt],
-      ['onRejectPlan', h.handleRejectInterrupt],
       ['onAnswerQuestion', h.handleAnswerQuestion],
       ['onSkipQuestion', h.handleSkipQuestion],
       ['onApproveCreateWorkspace', h.handleApproveCreateWorkspace],
@@ -602,7 +595,7 @@ describe('MarketChatPanel', () => {
     expect(h.stopWorkflow).toHaveBeenCalledTimes(1);
   });
 
-  it('disables the input while a plan approval is pending', () => {
+  it('disables the input while an interrupt is pending', () => {
     renderPanel();
     expect(ci.props!.disabled).toBe(false);
 
@@ -624,15 +617,15 @@ describe('MarketChatPanel', () => {
   it('forwards typed slash commands as skill + subagent contexts on send', () => {
     renderPanel();
     const onSend = ci.props!.onSend as (
-      m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+      m: string, att: unknown[], cmds: unknown[], opts: unknown,
     ) => void;
-    onSend('draw a trend line', false, [], [
+    onSend('draw a trend line', [], [
       { type: 'skill', name: 'deep-research', skillName: 'deep-research' },
       { type: 'subagent', name: 'subagent' },
     ], {});
 
     expect(h.handleSendMessage).toHaveBeenCalledTimes(1);
-    const contexts = h.handleSendMessage.mock.calls[0][2] as Array<Record<string, unknown>>;
+    const contexts = h.handleSendMessage.mock.calls[0][1] as Array<Record<string, unknown>>;
     // Chart-annotation skill is always injected; the typed skill rides alongside.
     expect(contexts).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'skills', name: 'chart-annotation' }),
@@ -641,7 +634,7 @@ describe('MarketChatPanel', () => {
     ]));
   });
 
-  it('forwards a confirmed region crop as a display attachment (arg 3) so the bubble shows a thumbnail', () => {
+  it('forwards a confirmed region crop as a display attachment (arg 2) so the bubble shows a thumbnail', () => {
     // baseProps is AAPL/1day; stage a confirmed region with a crop on that chart.
     const id = chartSelectionStore.beginDraft({
       symbol: 'AAPL',
@@ -659,13 +652,13 @@ describe('MarketChatPanel', () => {
 
     renderPanel();
     const onSend = ci.props!.onSend as (
-      m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+      m: string, att: unknown[], cmds: unknown[], opts: unknown,
     ) => void;
     // clearAll() after send notifies the chip subscriber → wrap to flush in act.
-    act(() => onSend('analyze', false, [], [], {}));
+    act(() => onSend('analyze', [], [], {}));
 
     expect(h.handleSendMessage).toHaveBeenCalledTimes(1);
-    const attachmentMeta = h.handleSendMessage.mock.calls[0][3] as Array<Record<string, unknown>>;
+    const attachmentMeta = h.handleSendMessage.mock.calls[0][2] as Array<Record<string, unknown>>;
     expect(attachmentMeta).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'image',
@@ -679,13 +672,13 @@ describe('MarketChatPanel', () => {
   it('does not double-inject chart-annotation when typed explicitly', () => {
     renderPanel();
     const onSend = ci.props!.onSend as (
-      m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+      m: string, att: unknown[], cmds: unknown[], opts: unknown,
     ) => void;
-    onSend('annotate', false, [], [
+    onSend('annotate', [], [
       { type: 'skill', name: 'chart-annotation', skillName: 'chart-annotation' },
     ], {});
 
-    const contexts = h.handleSendMessage.mock.calls[0][2] as Array<Record<string, unknown>>;
+    const contexts = h.handleSendMessage.mock.calls[0][1] as Array<Record<string, unknown>>;
     const chartCtx = contexts.filter((c) => c.name === 'chart-annotation');
     expect(chartCtx).toHaveLength(1);
   });
@@ -725,6 +718,38 @@ describe('MarketChatPanel', () => {
     renderPanel();
     expect(screen.queryByText('Open in Chat')).not.toBeInTheDocument();
     expect(screen.queryByText('Return to Chat')).not.toBeInTheDocument();
+  });
+
+  describe('the Subagents toggle', () => {
+    type OnSend = (m: string, att: unknown[], cmds: unknown[], opts: unknown) => void;
+
+    it("hands the composer a new thread's setting, and a flip rides the next PTC send", () => {
+      h.threadId = '__default__';
+      renderPanel();
+      expect(ci.props!.subagentsAllowed).toBe(true);
+
+      act(() => { void (ci.props!.onToggleSubagents as (next: boolean) => Promise<boolean>)(false); });
+      expect(ci.props!.subagentsAllowed).toBe(false);
+      act(() => (ci.props!.onSend as OnSend)('Build me a DCF', [], [], {}));
+      expect(h.handleSendMessage.mock.calls[0][3]).toMatchObject({ subagentsAllowed: false });
+    });
+
+    it("shows a new thread the user's default, which its send leaves to the server", () => {
+      h.threadId = '__default__';
+      h.preferences = { other_preference: { subagents_default: false } };
+      renderPanel();
+      expect(ci.props!.subagentsAllowed).toBe(false);
+      act(() => (ci.props!.onSend as OnSend)('Build me a DCF', [], [], {}));
+      expect((h.handleSendMessage.mock.calls[0][3] as Record<string, unknown>).subagentsAllowed).toBeUndefined();
+    });
+
+    it('sends none on a Fast thread', async () => {
+      h.threadId = '__default__';
+      renderPanel({ mode: 'fast' });
+      await vi.waitFor(() => expect(ci.props).not.toBeNull());
+      act(() => (ci.props!.onSend as OnSend)('What is AAPL doing?', [], [], {}));
+      expect((h.handleSendMessage.mock.calls[0][3] as Record<string, unknown>).subagentsAllowed).toBeUndefined();
+    });
   });
 
   it('opens the gone dialog for a tool row whose record the transcript no longer holds', () => {

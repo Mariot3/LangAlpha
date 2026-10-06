@@ -38,7 +38,6 @@ import { sendChatMessageStream, fetchThreadTurns, replayThreadHistory } from '..
 import { useChatMessages } from '../useChatMessages';
 
 const mockSendStream = sendChatMessageStream as Mock;
-const PLATFORM_ARG = 15;
 
 describe('useChatMessages – a fork sends the current render', () => {
   beforeEach(() => {
@@ -47,7 +46,7 @@ describe('useChatMessages – a fork sends the current render', () => {
       turns: [{ turn_index: 0, edit_checkpoint_id: 'cp-in', regenerate_checkpoint_id: 'cp-0' }],
     });
     mockSendStream.mockImplementation(async (...args: unknown[]) => {
-      (args[5] as (e: Record<string, unknown>) => void)({ event: 'thread_id', thread_id: 'thread-1' });
+      (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent({ event: 'thread_id', thread_id: 'thread-1' });
       return { disconnected: false };
     });
   });
@@ -60,9 +59,9 @@ describe('useChatMessages – a fork sends the current render', () => {
     await act(async () => {});
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
-    expect(mockSendStream.mock.lastCall?.[PLATFORM_ARG]).toBe('web');
+    expect((mockSendStream.mock.lastCall?.[3] as { platform: string } | undefined)?.platform).toBe('web');
 
     // Nothing in the transcript moves with it.
     platform = 'desktop';
@@ -72,7 +71,7 @@ describe('useChatMessages – a fork sends the current render', () => {
     await act(async () => {
       await result.current.handleRegenerate(assistantId);
     });
-    expect(mockSendStream.mock.lastCall?.[PLATFORM_ARG]).toBe('desktop');
+    expect((mockSendStream.mock.lastCall?.[3] as { platform: string } | undefined)?.platform).toBe('desktop');
 
     platform = 'mobile';
     rerender();
@@ -80,6 +79,6 @@ describe('useChatMessages – a fork sends the current render', () => {
     await act(async () => {
       await result.current.handleEditMessage(userId, 'hello again');
     });
-    expect(mockSendStream.mock.lastCall?.[PLATFORM_ARG]).toBe('mobile');
+    expect((mockSendStream.mock.lastCall?.[3] as { platform: string } | undefined)?.platform).toBe('mobile');
   });
 });

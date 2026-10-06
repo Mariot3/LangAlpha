@@ -52,7 +52,7 @@ const text = (id: number, content: string) => ({ event: 'message_chunk', content
 describe('useChatMessages – steering rollback', () => {
   it('drops text that reached the old bubble after the steering point', async () => {
     mockSendStream.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
       onEvent({ event: 'thread_id', thread_id: 'thread-1' });
       onEvent(text(1, 'kept'));
       onEvent({ event: 'steering_accepted', _eventId: 2 });
@@ -65,7 +65,7 @@ describe('useChatMessages – steering rollback', () => {
     await act(async () => {});
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {

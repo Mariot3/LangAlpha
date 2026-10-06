@@ -30,7 +30,7 @@ function setup(initial: Props) {
   const hook = renderHook(
     ({ turnEndScroll = 'reply_start', pendingInterrupt = null, ...state }: Props) =>
       useTranscriptFollow(
-        { ...starters, ...state, pendingInterrupt, pendingRejection: null } as unknown as Parameters<typeof useTranscriptFollow>[0],
+        { ...starters, ...state, pendingInterrupt } as unknown as Parameters<typeof useTranscriptFollow>[0],
         follow,
         () => scroller,
         turnEndScroll,

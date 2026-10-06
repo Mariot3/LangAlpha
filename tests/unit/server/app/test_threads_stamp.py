@@ -73,6 +73,7 @@ def _thread_row(**overrides):
         "title": "Test Thread",
         "platform": None,
         "external_id": None,
+        "subagents_allowed": True,
         "created_at": now,
         "updated_at": now,
     }

@@ -108,9 +108,7 @@ describe('useChatMessages — handleSendSteering demotion path', () => {
         _msg: string,
         _ws: string,
         _tid: string | null,
-        _hist: unknown[],
-        _plan: boolean,
-        onEvent: OnEvent,
+        { onEvent }: { onEvent: OnEvent },
       ) => {
         if (mockSendStream.mock.calls.length === 1) {
           // Emit thread_id so subsequent history-load short-circuits.
@@ -131,7 +129,7 @@ describe('useChatMessages — handleSendSteering demotion path', () => {
     // Fire the first message and let `isLoading` flip to true.
     let firstSend: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      firstSend = result.current.handleSendMessage('first turn', false);
+      firstSend = result.current.handleSendMessage('first turn');
       // Yield once so the synchronous setIsLoading flush propagates.
       await Promise.resolve();
     });
@@ -143,7 +141,7 @@ describe('useChatMessages — handleSendSteering demotion path', () => {
     // Second send while still streaming → routes to handleSendSteering.
     let steeringSend: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      steeringSend = result.current.handleSendMessage('follow-up steering', false);
+      steeringSend = result.current.handleSendMessage('follow-up steering');
       // Let the handler kick off and the mock implementation run.
       await Promise.resolve();
       await Promise.resolve();

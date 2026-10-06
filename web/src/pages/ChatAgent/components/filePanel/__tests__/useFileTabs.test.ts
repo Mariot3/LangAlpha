@@ -724,25 +724,6 @@ describe('useFileTabs transcript tabs', () => {
     expect(result.current.tabs[0]).toMatchObject({ path: 'a.md', preview: true });
   });
 
-  it('shares the tool slot with a plan', () => {
-    const { result } = renderHook(() => useFileTabs('ws'));
-    act(() => result.current.openTool({ toolCallId: 'a' }));
-    act(() => result.current.openPlan({ planId: 'p1', plan: { description: 'do things' } }));
-
-    expect(kinds(result.current.tabs)).toEqual(['plan']);
-  });
-
-  it('keeps one tab per plan, so a second plan never retargets a pinned one', () => {
-    const { result } = renderHook(() => useFileTabs('ws'));
-    act(() => result.current.openPlan({ planId: 'p1', plan: { description: 'first' } }));
-    act(() => result.current.pinTab(result.current.activeId));
-    act(() => result.current.openPlan({ planId: 'p2', plan: { description: 'second' } }));
-    act(() => result.current.openPlan({ planId: 'p1', plan: { description: 'first' } }));
-
-    expect(result.current.tabs.map((t) => (t.kind === 'plan' ? t.planId : null))).toEqual(['p1', 'p2']);
-    expect(result.current.activeTab).toMatchObject({ kind: 'plan', planId: 'p1', preview: false });
-  });
-
   it('opens one sources tab per turn in a slot of its own', () => {
     const { result } = renderHook(() => useFileTabs('ws'));
     act(() => result.current.openTool({ toolCallId: 'a' }));

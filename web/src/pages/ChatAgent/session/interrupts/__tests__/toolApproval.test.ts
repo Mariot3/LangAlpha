@@ -1,9 +1,9 @@
 // @vitest-environment node
 /**
  * An interrupt whose action request names a direct MCP tool (`mcp__*`) is a
- * tool approval, not a plan approval: both projections must write a
- * `toolApprovals` card that carries the tool and its exact arguments, and
- * leave the plan branch for everything else it used to catch.
+ * tool approval: both projections must write a `toolApprovals` card that
+ * carries the tool and its exact arguments. An interrupt no branch matches
+ * gets no card and arms nothing, so it can never hold the composer shut.
  */
 import { describe, it, expect, vi } from 'vitest';
 import type { AssistantMessage, ChatMessage } from '@/types/chat';
@@ -58,7 +58,8 @@ function batchedToolEvent(): SSEEvent {
   } as unknown as SSEEvent;
 }
 
-function planEvent(): SSEEvent {
+/** A SubmitPlan review, which threads paused before the agent stopped raising it still hold. */
+function unmatchedEvent(): SSEEvent {
   return {
     type: 'interrupt',
     interrupt_id: 'plan-1',
@@ -79,7 +80,6 @@ describe('live projection', () => {
       setPendingInterrupt: vi.fn(),
       pendingInterruptIdsRef: ref(new Set<string>()),
       renderedInterruptIdsRef: ref(new Set<string>()),
-      currentPlanModeRef: ref(false),
     } as unknown as StreamRuntime;
     const refs = { contentOrderCounterRef: ref(0) } as unknown as StreamProcessorRefs;
     return { rt, refs, read: () => current };
@@ -91,7 +91,6 @@ describe('live projection', () => {
 
     const msg = read()[0] as AssistantMessage;
     expect(msg.contentSegments).toEqual([{ type: 'tool_approval', proposalId: INTERRUPT_ID, order: 1 }]);
-    expect(msg.planApprovals).toBeUndefined();
     const card = msg.toolApprovals?.[INTERRUPT_ID];
     expect(card).toMatchObject({
       status: 'pending',
@@ -128,13 +127,14 @@ describe('live projection', () => {
     expect(cards.map((c) => c.args.code)).toEqual(['US.AAPL', 'US.MSFT']);
   });
 
-  it('still routes a SubmitPlan interrupt to the plan card', () => {
+  it('draws no card and arms nothing for an interrupt no branch matches', () => {
     const { rt, refs, read } = build([bubble('a-1')]);
-    projectLiveInterrupt(rt, planEvent(), 'a-1', refs);
+    projectLiveInterrupt(rt, unmatchedEvent(), 'a-1', refs);
     const msg = read()[0] as AssistantMessage;
-    expect(msg.contentSegments[0].type).toBe('plan_approval');
+    expect(msg.contentSegments).toEqual([]);
     expect(msg.toolApprovals).toBeUndefined();
-    expect(msg.planApprovals?.['plan-1']?.description).toBe('# The plan');
+    expect(rt.setPendingInterrupt).not.toHaveBeenCalled();
+    expect(rt.pendingInterruptIdsRef.current.size).toBe(0);
   });
 
   it('suppresses the duplicate card on a re-raise but keeps it answerable', () => {
@@ -216,7 +216,6 @@ describe('history projection', () => {
       tool: 'trading_order_place',
       args: ARGS,
     });
-    expect(msg.planApprovals).toBeUndefined();
     expect(ctx.pendingHistoryInterrupts).toEqual([
       {
         type: 'tool_approval',
@@ -250,11 +249,11 @@ describe('history projection', () => {
     expect(ctx.pendingHistoryInterrupts).toHaveLength(0);
   });
 
-  it('still routes a SubmitPlan interrupt to the plan card', () => {
+  it('draws no card and queues nothing for an interrupt no branch matches', () => {
     const { rt, ctx, read } = build([bubble('a-1')]);
-    projectHistoryInterrupt(rt, planEvent(), ctx);
+    projectHistoryInterrupt(rt, unmatchedEvent(), ctx);
     const msg = read()[0] as AssistantMessage;
-    expect(msg.contentSegments[0].type).toBe('plan_approval');
-    expect(ctx.pendingHistoryInterrupts[0].type).toBe('plan_approval');
+    expect(msg.contentSegments).toEqual([]);
+    expect(ctx.pendingHistoryInterrupts).toEqual([]);
   });
 });

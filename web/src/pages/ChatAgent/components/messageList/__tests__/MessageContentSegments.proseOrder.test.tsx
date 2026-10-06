@@ -41,8 +41,8 @@ vi.mock('../TaskSegmentCard', () => ({
     return <div data-testid="subagent-card" />;
   },
 }));
-vi.mock('../../PlanApprovalCard', () => ({
-  default: () => <div data-testid="plan-card" />,
+vi.mock('../../UserQuestionCard', () => ({
+  default: () => <div data-testid="question-card" />,
 }));
 vi.mock('../../charts/InlineArtifactCards', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -65,12 +65,12 @@ const ARTIFACT_PROCS = {
 
 function renderSegments(
   text: string,
-  after: 'subagent_task' | 'plan_approval' | 'compact_artifact' | 'notification' = 'subagent_task',
+  after: 'subagent_task' | 'user_question' | 'compact_artifact' | 'notification' = 'subagent_task',
 ) {
   const trailing = after === 'subagent_task'
     ? { type: 'subagent_task', order: 1, subagentId: 'task-1' }
-    : after === 'plan_approval'
-      ? { type: 'plan_approval', order: 1, planApprovalId: 'plan-1' }
+    : after === 'user_question'
+      ? { type: 'user_question', order: 1, questionId: 'q-1' }
       : after === 'notification'
         ? { type: 'notification', order: 1, content: 'Switched to gpt-5 after 2 retries' }
         : { type: 'tool_call', order: 1, toolCallId: 't1' };
@@ -92,7 +92,7 @@ function renderSegments(
         toolCallProcesses={toolCallProcesses}
         todoListProcesses={{}}
         subagentTasks={{ 'task-1': { status: 'running' } as never }}
-        planApprovals={{ 'plan-1': { plan: 'do the thing' } }}
+        userQuestions={{ 'q-1': { question: 'Which tickers?', options: [], interruptId: 'q-1', status: 'pending' } }}
         isStreaming
       />
     </TranscriptDisplayContext.Provider>,
@@ -120,12 +120,12 @@ describe('block order while a paragraph is held', () => {
     expect(cardPaints.n).toBe(0);
   });
 
-  it('lets an approval card through, because its turn is waiting on the reader', () => {
+  it('lets a question card through, because its turn is waiting on the reader', () => {
     // Holding the control the reader has to answer behind a typewriter would
     // leave the turn waiting on the reader and the reader waiting on the turn.
-    const { container } = renderSegments(HELD, 'plan_approval');
+    const { container } = renderSegments(HELD, 'user_question');
 
-    expect(present(container, 'plan-card')).toBe(true);
+    expect(present(container, 'question-card')).toBe(true);
   });
 
   it('holds an inline artifact card, which narrates work the same way', () => {

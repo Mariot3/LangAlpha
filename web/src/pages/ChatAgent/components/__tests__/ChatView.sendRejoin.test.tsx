@@ -40,7 +40,7 @@ import ChatView from '../ChatView';
 import { scrollMemory } from '@/lib/scrollMemory';
 
 const reply = (id: string, content: string, isStreaming = false) =>
-  assistant(id, { content, contentSegments: [{ type: 'text', order: 0 }], isStreaming });
+  assistant(id, { content, contentSegments: [{ type: 'text', content, order: 0 }], isStreaming });
 
 // ---------------------------------------------------------------------------
 // Layout: jsdom has none, so the transcript viewport and its bubbles are
@@ -135,8 +135,8 @@ describe('ChatView send while scrolled up', () => {
     userScrollTo(800);
     expect(screen.getByLabelText('chat.jumpToLatest.aria')).toBeInTheDocument();
 
-    const onSend = chatInput.props!.onSend as (m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown) => void;
-    act(() => onSend('and the next quarter?', false, [], [], {}));
+    const onSend = chatInput.props!.onSend as (m: string, att: unknown[], cmds: unknown[], opts: unknown) => void;
+    act(() => onSend('and the next quarter?', [], [], {}));
 
     expect(chatState.handleSendMessage).toHaveBeenCalledTimes(1);
     expect(viewport().scrollTop).toBe(1500);
@@ -170,8 +170,8 @@ describe('ChatView send while scrolled up', () => {
     Object.defineProperty(viewport(), 'scrollHeight', { get: () => contentH, configurable: true });
     grow(2000);
 
-    const onSend = chatInput.props!.onSend as (m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown) => void;
-    act(() => onSend('and the next quarter?', false, [], [], {}));
+    const onSend = chatInput.props!.onSend as (m: string, att: unknown[], cmds: unknown[], opts: unknown) => void;
+    act(() => onSend('and the next quarter?', [], [], {}));
     layout = { ...layout, u2: 2000, a2: 2100 };
     update({
       isLoading: true,
