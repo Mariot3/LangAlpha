@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { ArrowLeft, Folder, FileText, Zap, Archive } from 'lucide-react';
+import { ArrowLeft, Folder, FileText, Archive } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useAllWorkspacesAgent, useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
+import { FLASH_ROUTE_STATE, FlashRowIcon } from '@/hooks/useFlashWorkspace';
 import { useNavigate, useParams, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
@@ -75,9 +77,15 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   const { data: wsData, error: wsError } = useWorkspace(workspaceId);
   // Keep location.state values as instant display fallbacks during navigation
   const locationState = location.state as Record<string, unknown> | null;
-  const workspaceName = (wsData?.name || locationState?.workspaceName || '') as string;
   const workspaceStatus = (wsData?.status || locationState?.workspaceStatus || null) as string | null;
+  const label = useWorkspaceLabel();
+  const workspaceName = (label(wsData) || locationState?.workspaceName || '') as string;
+  const allWorkspaces = useAllWorkspacesAgent();
   const isFlash = workspaceStatus === 'flash';
+  // Under the all-workspaces agent the flash row is Home: the full agent with
+  // a folder of its own, so its threads open without Flash's mode and its
+  // files show. It still has no machine controls of its own.
+  const flashMode = isFlash && !allWorkspaces;
 
   // Archived view toggle. Both views live under the byWorkspace prefix
   // (queryKeys.threads.gallery), so prefix invalidations refresh both — and
@@ -181,13 +189,13 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   // no overflow the sentinel is simply already on screen.
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
-  // Shared workspace files for the FilePanel (skip for flash workspaces -- no sandbox)
+  // Shared workspace files for the FilePanel (skip for Flash -- no sandbox)
   const {
     files: panelFiles,
     loading: panelFilesLoading,
     error: panelFilesError,
     refresh: refreshPanelFiles,
-  } = useWorkspaceFiles(isFlash ? null : workspaceId, { includeSystem: showSystemFiles });
+  } = useWorkspaceFiles(flashMode ? null : workspaceId, { includeSystem: showSystemFiles });
 
   const navigate = useNavigate();
   const { threadId: currentThreadId } = useParams();
@@ -268,9 +276,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   // closure per render would defeat the memo for the whole list.
   const handleThreadClick = useCallback((thread: Record<string, unknown>) => {
     if (onThreadSelect) {
-      onThreadSelect(workspaceId, thread.thread_id as string, isFlash ? 'flash' : null);
+      onThreadSelect(workspaceId, thread.thread_id as string, flashMode ? 'flash' : null);
     }
-  }, [onThreadSelect, workspaceId, isFlash]);
+  }, [onThreadSelect, workspaceId, flashMode]);
 
   /**
    * Handles delete icon click - opens confirmation modal
@@ -486,7 +494,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
           workspaceId,
           initialMessage: message.trim(),
           planMode: planMode,
-          ...(isFlash ? { agentMode: 'flash' } : {}),
+          ...(isFlash ? FLASH_ROUTE_STATE : {}),
           ...(additionalContext ? { additionalContext } : {}),
           ...(attachmentMeta ? { attachmentMeta } : {}),
           ...(model ? { model } : {}),
@@ -636,7 +644,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                 onClick={!isFlash ? () => setShowSandboxPanel(true) : undefined}
               >
                 {isFlash ? (
-                  <Zap className="w-10 h-10" style={{ color: 'var(--color-accent-primary)' }} />
+                  <FlashRowIcon className="w-10 h-10" style={{ color: 'var(--color-accent-primary)' }} />
                 ) : (
                   <img src={iconComputer} alt="Workspace" className="w-10 h-10" />
                 )}
@@ -662,7 +670,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                 disabled={isSendingMessage || !workspaceId}
                 files={panelFiles}
                 dropdownDirection="down"
-                mode={isFlash ? 'fast' : 'ptc'}
+                mode={flashMode ? 'fast' : 'ptc'}
                 // The turn this composer sends lands in this workspace, so the
                 // slash menu has to be scoped to it too: without this it lists
                 // the account-level skills, hiding the workspace's own and
@@ -672,8 +680,8 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
               />
             </div>
 
-            {/* Files Card -- hidden for flash workspaces (no sandbox) */}
-            {!isFlash && <div className="w-full enter-fade-up enter-fade-up-d3">
+            {/* Files Card -- hidden for Flash (no sandbox) */}
+            {!flashMode && <div className="w-full enter-fade-up enter-fade-up-d3">
               <div
                 className="flex-1 min-w-0 flex flex-col ps-[16px] pt-[12px] pb-[14px] pe-[20px] rounded-[12px] border cursor-pointer hover:bg-foreground/5 transition-colors"
                 style={{
@@ -820,9 +828,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
         </div>
       </div>
 
-      {/* Right Side: File Panel -- hidden for flash workspaces */}
+      {/* Right Side: File Panel -- hidden for Flash */}
       <AnimatePresence>
-        {showFilePanel && !isFlash && (
+        {showFilePanel && !flashMode && (
           <motion.div
             initial={isMobile ? { x: '100%' } : { width: 0, opacity: 0 }}
             animate={isMobile ? { x: 0 } : { width: filePanelWidth + DIVIDER_WIDTH, opacity: 1 }}

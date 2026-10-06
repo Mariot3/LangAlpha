@@ -4,6 +4,7 @@ import { Search, Pin } from "lucide-react"
 import type { ProviderModelsData } from "./types"
 import type { ModelMetadataEntry } from "@/hooks/useFilteredModels"
 import { modelLabel, modelMatches } from "@/lib/modelLabel"
+import { useModelSlotCopy } from "./useModelSlotCopy"
 
 // ---------------------------------------------------------------------------
 // Fallback models picker — add/remove from accessible models
@@ -24,6 +25,7 @@ export function FallbackModelsPicker({
   metadata?: Record<string, ModelMetadataEntry>
 }) {
   const { t } = useTranslation()
+  const copy = useModelSlotCopy()
   const [showAdd, setShowAdd] = useState(false)
   const [search, setSearch] = useState("")
   const containerRef = useRef<HTMLDivElement>(null)
@@ -89,7 +91,7 @@ export function FallbackModelsPicker({
         className="text-xs leading-relaxed"
         style={{ color: "var(--color-text-tertiary)" }}
       >
-        {t("settings.fallbackModelsDesc")}
+        {copy.fallbackDesc}
       </p>
 
       {/* Selected chips with remove */}

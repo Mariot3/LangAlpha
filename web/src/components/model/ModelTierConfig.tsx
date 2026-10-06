@@ -5,6 +5,7 @@ import { ChevronRight, Lightbulb } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { FLASH_AUTO } from "@/lib/modelPreferences"
 import { ModelSelector } from "./ModelSelector"
+import { useModelSlotCopy } from "./useModelSlotCopy"
 import type { ProviderModelsData } from "./types"
 import type { ModelAccess } from "@/types/platform"
 import type { ModelMetadataEntry } from "@/hooks/useFilteredModels"
@@ -53,6 +54,7 @@ export function ModelTierConfig({
 }: ModelTierConfigProps) {
   const { t } = useTranslation()
   const [explainerOpen, setExplainerOpen] = useState(true)
+  const copy = useModelSlotCopy()
   const autoLabel = (model: string | undefined) =>
     model ? t("settings.autoModel", { model }) : undefined
   const primaryAuto = autoLabel(auto?.primary)
@@ -84,7 +86,7 @@ export function ModelTierConfig({
               style={{ color: "var(--color-accent-primary)" }}
             />
             <span className="text-sm font-medium flex-1">
-              {t("setup.explainerTitle")}
+              {copy.explainerTitle}
             </span>
             <ChevronRight
               className={cn(
@@ -110,13 +112,13 @@ export function ModelTierConfig({
                       className="text-xs font-semibold"
                       style={{ color: "var(--color-text-primary)" }}
                     >
-                      {t("setup.explainerDeepTitle")}
+                      {copy.default.explainerTitle}
                     </span>
                     <span
                       className="text-xs leading-relaxed"
                       style={{ color: "var(--color-text-tertiary)" }}
                     >
-                      {t("setup.explainerDeepBody")}
+                      {copy.default.explainerBody}
                     </span>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -124,13 +126,13 @@ export function ModelTierConfig({
                       className="text-xs font-semibold"
                       style={{ color: "var(--color-text-primary)" }}
                     >
-                      {t("setup.explainerFlashTitle")}
+                      {copy.background.explainerTitle}
                     </span>
                     <span
                       className="text-xs leading-relaxed"
                       style={{ color: "var(--color-text-tertiary)" }}
                     >
-                      {t("setup.explainerFlashBody")}
+                      {copy.background.explainerBody}
                     </span>
                   </div>
                 </div>
@@ -142,13 +144,13 @@ export function ModelTierConfig({
 
       {/* Primary Model selector */}
       <ModelSelector
-        label={t("setup.primaryModel")}
-        description={t("setup.primaryDescription")}
+        label={copy.default.label}
+        description={copy.default.description}
         value={primaryModel}
         onChange={onPrimaryModelChange}
         models={models}
         filterProviders={filterProviders}
-        placeholder={primaryAuto ?? t("setup.primaryPlaceholder")}
+        placeholder={primaryAuto ?? copy.default.placeholder}
         required={!primaryAuto}
         modelAccess={modelAccess}
         metadata={metadata}
@@ -156,15 +158,15 @@ export function ModelTierConfig({
 
       {/* Flash Model selector */}
       <ModelSelector
-        label={t("setup.flashModel")}
-        description={t("setup.flashDescription")}
+        label={copy.background.label}
+        description={copy.background.description}
         value={flashModel}
         onChange={onFlashModelChange}
         models={models}
         filterProviders={filterProviders}
         placeholder={auto && primaryModel
-          ? t("setup.flashSameAsPrimary")
-          : (auto && flashAuto) || t("setup.flashPlaceholder")}
+          ? copy.backgroundSameAsDefault
+          : (auto && flashAuto) || copy.background.placeholder}
         autoOption={auto && primaryModel && flashAuto
           ? { value: FLASH_AUTO, label: flashAuto }
           : undefined}

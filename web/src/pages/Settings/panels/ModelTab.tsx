@@ -20,6 +20,7 @@ import { isPlatformMode } from '@/config/hostMode';
 import { useTranslation } from 'react-i18next';
 import { ConnectedAccounts } from './ConnectedAccounts';
 import { FLASH_AUTO, flashDefaultChoice, modelPrefs, readDefaultModelScope, splitPreferenceWrite } from '@/lib/modelPreferences';
+import { useModelSlotCopy } from '@/components/model/useModelSlotCopy';
 import type { ComposerMode, DefaultModelScope, PreferencePatch, PreferencesLike } from '@/lib/modelPreferences';
 
 type ModelTabMode = 'simple' | 'advanced';
@@ -63,6 +64,7 @@ export function ModelTab() {
   const { mutate } = useUpdatePreferences();
   const { models: visibleModels, metadata: modelMetadata, modelAccessMap, systemDefaults: hookSystemDefaults, validModelNames, rawModels, isLoading: modelsLoading, compactionProfiles, searchProviders } = useAllModels();
   const { t } = useTranslation();
+  const modelSlotCopy = useModelSlotCopy();
 
   /** Write the keys a control owns, each routed to its own column. */
   const write = useCallback(
@@ -393,7 +395,7 @@ export function ModelTab() {
                   value={mPref.fetch_model ?? ''}
                   onChange={(v) => write({ fetch_model: v || null })}
                   models={visibleModels}
-                  placeholder={t('settings.modelTuning.defaultsToFlash')}
+                  placeholder={modelSlotCopy.defaultsToBackground}
                   modelAccess={modelAccessMap}
                   metadata={modelMetadata}
                 />
@@ -409,7 +411,7 @@ export function ModelTab() {
                     summarization_model: null,
                   })}
                   models={visibleModels}
-                  placeholder={t('settings.modelTuning.defaultsToFlash')}
+                  placeholder={modelSlotCopy.defaultsToBackground}
                   modelAccess={modelAccessMap}
                   metadata={modelMetadata}
                 />

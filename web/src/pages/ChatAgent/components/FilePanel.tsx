@@ -52,6 +52,7 @@ import { AnimatePresence } from '@/lib/framer';
 import { TreeColumn } from './filePanel/TreeColumn';
 import { FileCrumbs } from './filePanel/FileCrumbs';
 import { PreviewCrumbs } from './filePanel/PreviewCrumbs';
+import { SiblingCrumbs } from './filePanel/SiblingCrumbs';
 import { PreviewPanes } from './filePanel/PreviewPanes';
 import { usePreviews } from './filePanel/usePreviews';
 import { usePanelTarget } from './filePanel/usePanelTarget';
@@ -124,6 +125,13 @@ interface FilePanelProps {
   onActiveTabKindChange?: ((kind: FileTab['kind'] | null) => void) | null;
   /** Offer the open file's share dialog in its header: the owner's own panel only. */
   canShare?: boolean;
+  /** The panel shows Home's own files: the flash row under the all-workspaces
+   *  agent, which has files once it is bound to the user's computer. */
+  isHome?: boolean;
+  /** Set while a Home panel shows a sibling's files in place of its own: the
+   *  panel names that workspace and offers the way back, asking first about
+   *  unsaved edits as its own close does. */
+  onReturnHome?: (() => void) | null;
 }
 
 function FilePanel({
@@ -156,6 +164,8 @@ function FilePanel({
   onLeaveGuardChange = null,
   onActiveTabKindChange = null,
   canShare = false,
+  isHome = false,
+  onReturnHome = null,
 }: FilePanelProps): React.ReactElement {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -240,7 +250,13 @@ function FilePanel({
   useEffect(() => () => dropBodies(), []);
 
   const downloads = useFileDownloads({ workspaceId, triggerDownloadFn, workspaceStatus: wsData?.status });
-  const fileError = downloads.errorFor(selectedFile) ?? readError;
+  const rawFileError = downloads.errorFor(selectedFile) ?? readError;
+  // The server refuses a file read on a flash row it has not bound yet, which
+  // for Flash means it has no files at all. Home binds on its first start, so
+  // there the refusal means the computer is on its way.
+  const fileError = isHome && rawFileError?.category === 'no_sandbox'
+    ? { ...rawFileError, category: 'sandbox_starting' as const }
+    : rawFileError;
 
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
@@ -609,6 +625,10 @@ function FilePanel({
         onPanelClose={closePanel}
         backArrow={isMobile}
       />
+
+      {onReturnHome && (
+        <SiblingCrumbs workspaceName={wsData?.name ?? ''} onReturnHome={() => guardLeave(onReturnHome)} />
+      )}
 
       {activeTab.kind === 'preview' && (
         <PreviewCrumbs

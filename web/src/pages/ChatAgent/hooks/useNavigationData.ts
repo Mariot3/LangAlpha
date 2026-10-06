@@ -185,6 +185,22 @@ export function isEffectivelyPinned(ws: { workspace_id?: unknown; is_pinned?: un
   return Boolean(ws.is_pinned) || ws.status === 'flash';
 }
 
+/**
+ * Put the unpinned workspaces the server lists above every known unpinned one
+ * at the top of the frozen order. `applyStableOrderBy` tops only rows above
+ * every known row, and the pinned block (Flash included) always leads the
+ * list, so a workspace created this session sank below the rest instead of
+ * opening the unpinned block, where a reload shows it. Rows paged in later
+ * still come below the known ones.
+ */
+function admitNewWorkspaces(frozen: string[], workspaces: NavWorkspace[]): string[] {
+  const known = new Set(frozen);
+  const unpinned = workspaces.filter((ws) => !isEffectivelyPinned(ws));
+  const firstKnown = unpinned.findIndex((ws) => known.has(ws.workspace_id));
+  const fresh = (firstKnown === -1 ? unpinned : unpinned.slice(0, firstKnown)).map((ws) => ws.workspace_id);
+  return fresh.length ? [...fresh, ...frozen] : frozen;
+}
+
 // Pinned block first, preserving relative (frozen) order within each block.
 // A render-time partition rather than part of the frozen order itself: a pin
 // toggle repositions the row instantly via the optimistic cache patch, without
@@ -296,8 +312,9 @@ export function useNavigationData(currentWorkspaceId: string) {
         _lastWorkspaceArrangement.set(ws.workspace_id, { sortOrder, pinned });
       }
       if (manualOrderChanged) _frozenWorkspaceOrder = null;
+      const frozen = _frozenWorkspaceOrder && admitNewWorkspaces(_frozenWorkspaceOrder, allFetched);
 
-      const { order, items: stable } = applyStableOrderBy(_frozenWorkspaceOrder, allFetched, (ws) => ws.workspace_id);
+      const { order, items: stable } = applyStableOrderBy(frozen, allFetched, (ws) => ws.workspace_id);
       _frozenWorkspaceOrder = order;
       ordered = stable;
     } else {

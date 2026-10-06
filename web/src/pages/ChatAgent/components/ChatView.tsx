@@ -16,6 +16,8 @@ import {
   type TranscriptDisplay,
 } from '@/lib/transcriptDisplay';
 import { useFeatureEnabled } from '@/hooks/useFeatures';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
+import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { updateCurrentUser } from '../../Dashboard/utils/api';
@@ -31,7 +33,6 @@ import { QueuedAutomationNotice } from './QueuedAutomationNotice';
 import { saveChatSession, getChatSession, clearChatSession } from '../hooks/utils/chatSessionRestore';
 import type { PreviewData } from '../hooks/utils/types';
 import { useCardState } from '../hooks/useCardState';
-import { useWorkspaceFiles } from '../hooks/useWorkspaceFiles';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import { classifyAgentPath } from '../utils/agentPaths';
 import { fileArtifactPath } from '../utils/fileArtifact';
@@ -87,11 +88,13 @@ import { ChatDiskWarning } from './chatView/ChatDiskWarning';
 import { useToolCallAnnouncer } from './chatView/useToolCallAnnouncer';
 import { useNavPanel } from './chatView/useNavPanel';
 import { MobileNavDrawer } from './chatView/MobileNavDrawer';
+import { resolveChatMode } from './chatView/chatMode';
 import { useChatScroll } from './chatView/useChatScroll';
 import { isTurnOpen, useTranscriptFollow } from './chatView/useTranscriptFollow';
 import { useSubagentTabs } from './chatView/useSubagentTabs';
 import { publishSidebarAgents, clearSidebarAgents } from './sidebarAgentsBridge';
 import { useRightPanel } from './chatView/useRightPanel';
+import { usePanelFiles } from './chatView/usePanelFiles';
 import { usePanelChartSelections } from './chatView/usePanelChartSelections';
 import { SelectionChips } from '@/pages/MarketView/components/SelectionChips';
 import { useMessageActionBundles } from './chatView/useMessageActionBundles';
@@ -113,6 +116,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   const navigate = useNavigate();
   const { preferences } = usePreferences();
   const marketWatchEnabled = useFeatureEnabled('market_watch');
+  const allWorkspacesAgent = useAllWorkspacesAgent();
   const queryClient = useQueryClient();
   const initialMessageSentRef = useRef(false);
   const state = location.state as LocationState | null;
@@ -122,11 +126,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   // kept mounted by the ChatView LRU, whose own copy of the name never
   // refreshes). The prop is only the pre-fetch seed.
   const { data: workspaceRecord } = useWorkspace(workspaceId);
-  const workspaceName = workspaceRecord?.name || initialWorkspaceName || '';
 
   // Agent mode: what the navigation asked for, else what the workspace row
-  // says — direct URL navigation carries no route state, so the row is the
-  // only thing left that names a flash workspace.
+  // says (resolveChatMode).
   //
   // Both route-state reads are captured at mount. ChatAgent keeps up to five
   // ChatViews rendered at once (display:none, not unmounted) and they all read
@@ -139,15 +141,18 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     agentMode: state?.agentMode,
     isFlash: state?.workspaceStatus === 'flash',
   }));
-  const agentMode = navMode.agentMode || (workspaceRecord?.status === 'flash' ? 'flash' : 'ptc');
-  const isFlashMode = agentMode === 'flash' || navMode.isFlash;
+  const { isHome, agentMode, isFlashMode, dispatches } = resolveChatMode({
+    allWorkspacesAgent,
+    navAgentMode: navMode.agentMode,
+    navIsFlash: navMode.isFlash,
+    rowStatus: workspaceRecord?.status,
+  });
+  // Home is named for what it stands for, also before its row has loaded.
+  const workspaceName = (isHome ? t('agents.allWorkspaces') : workspaceRecord?.name) || initialWorkspaceName || '';
 
   // The model a navigation's first message goes out with, frozen for the same
   // reason as navMode; the auto-send below clears the route state.
   const [navModel] = useState(() => (typeof state?.model === 'string' && state.model ? state.model : null));
-  // Cross-workspace file panel: in flash mode, files live in PTC workspaces.
-  // This tracks which workspace the file panel should fetch from.
-  const [filePanelWorkspaceId, setFilePanelWorkspaceId] = useState<string | null>(null);
 
 
 
@@ -216,39 +221,44 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     navigate(path, { state: navState });
   }, [navigate]);
 
-  // Workspace files - shared between FilePanel and ChatInput
-  // Must be declared before useChatMessages so refreshFiles can be passed as onFileArtifact
-  // For flash mode: use filePanelWorkspaceId (a PTC workspace) when set via cross-workspace file links.
-  // For PTC mode: always use the current workspaceId.
-  const effectiveFileWorkspaceId = isFlashMode ? filePanelWorkspaceId : workspaceId;
+  // Workspace files, shared between FilePanel and ChatInput, and declared
+  // before useChatMessages so the agent's writes can refresh them.
   const {
+    override: filePanelWorkspaceId,
+    setOverride: setFilePanelWorkspaceId,
+    shownWorkspaceId: effectiveFileWorkspaceId,
     files: workspaceFiles,
     loading: filesLoading,
     error: filesError,
     refresh: refreshFiles,
-  } = useWorkspaceFiles(effectiveFileWorkspaceId, { includeSystem: showSystemFiles });
+    refreshOwn: refreshOwnFiles,
+    mentionFiles,
+    panelAccess: filePanelAccess,
+  } = usePanelFiles({ isHome, isFlashMode, workspaceId, includeSystem: showSystemFiles });
 
   // When the agent writes to a memory- or memo-tier path, invalidate the
   // matching queries so the Memory / Memo tab reflects the new content
   // without a manual refresh. classifyAgentPath is the single source of
   // truth — same logic the chat row click routing uses.
   const handleFileArtifact = useCallback((event: { payload?: Record<string, unknown> }) => {
-    refreshFiles();
+    refreshOwnFiles();
     const filePath = fileArtifactPath(event?.payload as FileOperationArtifactPayload | undefined);
     if (!filePath) return;
     const info = classifyAgentPath(filePath);
+    // Home's agent writes Home's memory, whichever workspace the panel shows.
+    const memoryWorkspaceId = isHome ? workspaceId : effectiveFileWorkspaceId;
     if (info.kind === 'memory') {
       if (info.tier === 'user') {
         queryClient.invalidateQueries({ queryKey: queryKeys.memory.user() });
-      } else if (effectiveFileWorkspaceId) {
+      } else if (memoryWorkspaceId) {
         queryClient.invalidateQueries({
-          queryKey: queryKeys.memory.workspace(effectiveFileWorkspaceId),
+          queryKey: queryKeys.memory.workspace(memoryWorkspaceId),
         });
       }
     } else if (info.kind === 'memo') {
       queryClient.invalidateQueries({ queryKey: queryKeys.memo.all });
     }
-  }, [refreshFiles, queryClient, effectiveFileWorkspaceId]);
+  }, [refreshOwnFiles, queryClient, isHome, workspaceId, effectiveFileWorkspaceId]);
 
   // Stable ref-based callback for opening preview URLs from SSE events.
   // Defined here so it can be passed to useChatMessages; assigned after
@@ -757,9 +767,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
       setWasStopped(false);
     }
     if (!isLoading && wasLoading) {
-      refreshFiles();
+      refreshOwnFiles();
     }
-  }, [isLoading, refreshFiles]);
+  }, [isLoading, refreshOwnFiles]);
 
 
 
@@ -819,7 +829,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     containerRef,
     setFilePanelWorkspaceId,
     filePanelWorkspaceId,
-    isFlashMode,
+    dispatches,
+    isHome,
     messages,
     subagentTranscripts,
     watching: showWatchChip,
@@ -911,11 +922,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     chatInputRef,
   });
 
-  // Flash-mode deep-link context for PTC-agent proposal cards. Memoized: a
-  // fresh object per render would defeat the bubble memo in flash mode.
+  // The dispatcher's deep-link context for PTC-agent proposal cards. Memoized:
+  // a fresh object per render would defeat the bubble memo in flash mode.
   const flashContext = useMemo(
-    () => (isFlashMode && currentThreadId ? { threadId: currentThreadId, workspaceId } : null),
-    [isFlashMode, currentThreadId, workspaceId],
+    () => (dispatches && currentThreadId ? { threadId: currentThreadId, workspaceId } : null),
+    [dispatches, currentThreadId, workspaceId],
   );
 
 
@@ -1285,14 +1296,12 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   // everything else returns to the main chat.
                   handleSelectAgent(activeAgent?.ownerTaskId ?? 'main');
                 } else if (state?.fromThreadId) {
-                  // Navigate back to the flash thread that dispatched this PTC thread
+                  // Navigate back to the thread that dispatched this PTC thread:
+                  // Flash's, or under the all-workspaces agent Home's. The
+                  // flash row's route state names either (resolveChatMode).
                   intentionalExitRef.current = true;
                   navigate(`/chat/t/${state.fromThreadId}`, {
-                    state: {
-                      workspaceId: state.fromWorkspaceId,
-                      agentMode: 'flash',
-                      workspaceStatus: 'flash',
-                    },
+                    state: { workspaceId: state.fromWorkspaceId, ...FLASH_ROUTE_STATE },
                   });
                 } else {
                   intentionalExitRef.current = true;
@@ -1306,7 +1315,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   ? activeAgent?.ownerTaskId
                     ? t('chat.backToWorkflow', 'Back to workflow')
                     : t('chat.backToMain', 'Back to main')
-                  : state?.fromThreadId ? t('chat.backToFlash', 'Back to Flash') : t('workspace.backToThreads')
+                  : state?.fromThreadId
+                    ? allWorkspacesAgent ? t('agents.backToChiefOfStaff') : t('chat.backToFlash', 'Back to Flash')
+                    : t('workspace.backToThreads')
               }
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
@@ -1624,7 +1635,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         <span aria-hidden="true" className="shrink-0">
                           <Loader size={12} className="text-(--color-accent-primary)" />
                         </span>
-                        {t(isFlashMode ? 'chat.reportBackPending' : 'chat.taskReportBackPending')}
+                        {isHome ? t('agents.reportBackPending') : isFlashMode ? t('chat.reportBackPending') : t('chat.taskReportBackPending')}
                       </div>
                     )}
                     {displayWorkspaceStarting && (
@@ -1699,7 +1710,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         isLoading={isLoading}
                         isCompacting={!!isCompacting}
                         placeholder={chatPlaceholder}
-                        files={workspaceFiles}
+                        files={mentionFiles}
                         tokenUsage={tokenUsage}
                         onAction={handleAction}
                         model={threadModel.model}
@@ -1842,9 +1853,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       return !v;
                     });
                   }}
-                  readOnly={isFlashMode}
-                  singleFileMode={isFlashMode && !!filePanelWorkspaceId}
-                  canShare={!isFlashMode}
+                  {...filePanelAccess}
                 />
                 </WorkspaceProvider>
               </Suspense>
@@ -1906,9 +1915,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                           return !v;
                         });
                       }}
-                      readOnly={isFlashMode}
-                      singleFileMode={isFlashMode && !!filePanelWorkspaceId}
-                      canShare={!isFlashMode}
+                      {...filePanelAccess}
                     />
                     </WorkspaceProvider>
                   ) : null}

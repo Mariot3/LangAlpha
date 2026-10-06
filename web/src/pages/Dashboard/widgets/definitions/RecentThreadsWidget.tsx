@@ -3,10 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { useLocale } from '@/hooks/useLocale';
 import { clockTime, shortMonthDay, shortWeekday } from '@/lib/format';
 import { useNow } from '@/hooks/useNow';
-import { MessagesSquare, ArrowUpRight, MessageSquareText, Zap } from 'lucide-react';
+import { MessagesSquare, ArrowUpRight, MessageSquareText } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
+import { useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
+import { FlashRowIcon } from '@/hooks/useFlashWorkspace';
 import { getRecentThreads } from '@/pages/ChatAgent/utils/api';
 import { workspaceThreadsQuery } from '@/pages/ChatAgent/utils/threadQueries';
 import { clearChatSession } from '@/pages/ChatAgent/hooks/utils/chatSessionRestore';
@@ -103,10 +105,10 @@ function ThreadRow({
       }}
     >
       {isFlash ? (
-        <Zap
+        <FlashRowIcon
           className="h-3 w-3 shrink-0"
           style={{ color: 'var(--color-accent-primary)' }}
-          fill="currentColor"
+          solid
         />
       ) : (
         <span
@@ -168,6 +170,7 @@ function BucketSection({
   instanceId: string;
 }) {
   const { t } = useTranslation();
+  const wsLabel = useWorkspaceLabel();
   if (threads.length === 0) return null;
   return (
     <div className="flex flex-col">
@@ -199,7 +202,7 @@ function BucketSection({
           const wsId = (thread as { workspace_id?: string }).workspace_id;
           const ws = wsId ? workspaceMap.get(wsId) : undefined;
           const isFlash = ws?.status === 'flash';
-          const workspaceLabel = ws?.name ?? (isFlash ? t('dashboard.widgets.recentThreads.flash') : undefined);
+          const workspaceLabel = isFlash ? wsLabel(ws) || t('dashboard.widgets.recentThreads.flash') : ws?.name;
           return (
             <ThreadRow
               key={thread.thread_id}
@@ -219,6 +222,7 @@ function BucketSection({
 
 function RecentThreadsWidget({ instance }: WidgetRenderProps<RecentThreadsConfig>) {
   const { t } = useTranslation();
+  const label = useWorkspaceLabel();
   const navigate = useNavigate();
   const limit = instance.config.limit ?? 15;
   const scope = instance.config.workspaceId ?? 'all';
@@ -280,7 +284,9 @@ function RecentThreadsWidget({ instance }: WidgetRenderProps<RecentThreadsConfig
             th.title ||
             ((th as { first_query_content?: string }).first_query_content as string | undefined) ||
             t('dashboard.widgets.recentThreads.untitled'),
-          workspace: ws?.name ?? (ws?.status === 'flash' ? t('dashboard.widgets.recentThreads.flash') : ''),
+          workspace: ws?.status === 'flash'
+            ? label(ws) || t('dashboard.widgets.recentThreads.flash')
+            : ws?.name ?? '',
           when: th.updated_at ?? '',
           thread_id: th.thread_id,
         };

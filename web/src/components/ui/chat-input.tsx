@@ -4,6 +4,7 @@ import {
   ChartCandlestick, TextSelect, MoreHorizontal, Mic, MicOff,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { TokenUsageRing, type TokenUsageData } from './token-usage-ring';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuSeparator,
@@ -13,6 +14,7 @@ import { usePreferences } from '@/hooks/usePreferences';
 import { useModeDefaultModel } from '@/hooks/useModeDefaultModel';
 import { useEffectiveTuning, useModelProfileWriter } from '@/hooks/useModelProfile';
 import { useFeatureEnabled } from '@/hooks/useFeatures';
+import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { useAllModels } from '@/hooks/useAllModels';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useQuickAccessModels } from '@/hooks/useQuickAccessModels';
@@ -20,7 +22,7 @@ import { useSeededModel } from '@/hooks/useSeededModel';
 import { ChatInputRegistry, ContextBus } from '@/lib/contextBus';
 import type { WidgetContextSnapshot } from '@/pages/Dashboard/widgets/framework/contextSnapshot';
 import './chat-input.css';
-import type { ModelOptions, ReadyAttachment, SlashCommand, Workspace } from './chat-input.types';
+import type { ComposerScope, ModelOptions, ReadyAttachment, SlashCommand, Workspace } from './chat-input.types';
 import { getSlashCommandIcon, isLargePaste, getModelDisplayName } from './chat-input.helpers';
 import { effortLabelFor } from '@/lib/modelTuning';
 import type { ModelProfile } from '@/lib/modelTuning';
@@ -71,10 +73,18 @@ export interface ChatInputProps {
   onStop?: () => void;
   placeholder?: string;
   files?: string[];
+  /** Flash or PTC; unset runs PTC. Under the all-workspaces agent every
+   *  conversation runs the full agent, so hosts pass `scope` instead. */
   mode?: 'fast' | 'ptc';
   onModeChange?: (mode: 'fast' | 'ptc') => void;
   /** When set, disables switching into PTC mode and shows this reason as a tooltip. */
   ptcDisabledReason?: string | null;
+  /** Under the all-workspaces agent, where the send goes. With `onScopeChange`
+   *  the toolbar offers the scope picker in place of the mode toggle. */
+  scope?: ComposerScope;
+  onScopeChange?: ((scope: ComposerScope) => void) | null;
+  /** Shown in the scope picker while there is no workspace to pick. */
+  emptyWorkspacesHint?: string | null;
   workspaces?: Workspace[] | null;
   selectedWorkspaceId?: string | null;
   onWorkspaceChange?: ((wsId: string) => void) | null;
@@ -119,6 +129,10 @@ function ChatInput({
   mode,
   onModeChange,
   ptcDisabledReason = null,
+  // Scope picker (all-workspaces agent)
+  scope,
+  onScopeChange = null,
+  emptyWorkspacesHint = null,
   // Workspace selector
   workspaces = null,
   selectedWorkspaceId = null,
@@ -232,8 +246,17 @@ function ChatInput({
   const mentions = useMentions({ textareaRef, message, setMessage, workspaceFiles });
   // The workspace context scopes the slash menu: inside a workspace the
   // enabled-skill list is the workspace-effective one (workspace-scoped
-  // skills included, its disables applied).
-  const slash = useSlashCommands({ textareaRef, message, setMessage, mode, workspaceId: selectedWorkspaceId });
+  // skills included, its disables applied). All workspaces runs in Home, the
+  // flash row, which loads its skills as any workspace does, so the menu
+  // lists Home's rather than those of the workspace the picker remembers.
+  const queryClient = useQueryClient();
+  const { data: homeWorkspaceId = null } = useQuery({
+    ...flashWorkspaceQuery(queryClient),
+    enabled: scope === 'all',
+    select: (workspace) => workspace.workspace_id,
+  });
+  const slashWorkspaceId = scope === 'all' ? homeWorkspaceId : selectedWorkspaceId;
+  const slash = useSlashCommands({ textareaRef, message, setMessage, mode, workspaceId: slashWorkspaceId });
   const {
     mentionedFiles, setMentionedFiles, pruneRemoved: pruneMentions, detectTrigger: detectMention,
     close: closeMentions, reset: resetMentions, handleKeyDown: mentionKeyDown, open: mentionsOpen,
@@ -561,7 +584,7 @@ function ChatInput({
    * renders the SAME components, so any locale / workspace name / model label
    * is measured, never guessed. */
   const toolbarItems = useToolbarItems({
-    mode, onModeChange, ptcDisabledReason,
+    mode, onModeChange, ptcDisabledReason, scope, onScopeChange, emptyWorkspacesHint,
     planMode, setPlanMode, watchMode, setWatchMode, marketWatchEnabled,
     workspaces, selectedWorkspaceId, onWorkspaceChange,
   });

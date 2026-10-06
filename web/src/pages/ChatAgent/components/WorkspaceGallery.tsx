@@ -19,6 +19,7 @@ import { isEffectivelyPinned } from '../hooks/useNavigationData';
 import { pinWorkspaceRow } from '../hooks/workspaceRowActions';
 import { useCreateWorkspace } from '../hooks/useCreateWorkspace';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
+import { useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
 import { clearChatSession } from '../hooks/utils/chatSessionRestore';
 import { useWorkspaceMutation } from '../hooks/useWorkspaceMutation';
 import { useComputers } from '../hooks/useComputers';
@@ -63,6 +64,7 @@ interface WorkspaceGalleryProps {
 
 function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalleryProps) {
   const { t } = useTranslation();
+  const label = useWorkspaceLabel();
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -243,9 +245,10 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
   // unpinned rows, and Flash counts as always-pinned (it isn't guaranteed to
   // carry is_pinned in the DB). No flash-first hoist — within the pinned
   // block Flash competes on the server sort like any pinned workspace.
+  // Matched on the name the card shows, so a search finds Home as All workspaces.
   const visibleWorkspaces = workspaces
     .filter((workspace) =>
-      workspace.name.toLowerCase().includes(searchQuery.toLowerCase())
+      label(workspace).toLowerCase().includes(searchQuery.toLowerCase())
     )
     .sort((a, b) => {
       const aPinned = isEffectivelyPinned(a) ? 1 : 0;

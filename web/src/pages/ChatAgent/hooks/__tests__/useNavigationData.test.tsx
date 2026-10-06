@@ -674,7 +674,7 @@ describe('useNavigationData — pinned-block partition & pin freeze reset', () =
     );
     const rendered = renderHook(() => useNavigationData('ws-a'), { wrapper });
     const wsIds = () => rendered.result.current.workspaces.map((ws) => ws.workspace_id);
-    return { ...rendered, wsIds };
+    return { ...rendered, queryClient, wsIds };
   }
 
   it('never renders an unpinned workspace above flash, even when the server ranks it higher', async () => {
@@ -695,6 +695,16 @@ describe('useNavigationData — pinned-block partition & pin freeze reset', () =
     const { wsIds } = setup();
     await waitFor(() => expect(wsIds().length).toBe(4));
     expect(wsIds()).toEqual(['ws-pin', 'ws-flash', 'ws-a', 'ws-b']);
+  });
+
+  it('opens the unpinned block with a workspace created this session, as a reload shows it', async () => {
+    const { wsIds, queryClient } = setup();
+    await waitFor(() => expect(wsIds()).toEqual(['ws-flash', 'ws-a', 'ws-b']));
+    server.push({ workspace_id: 'ws-new', is_pinned: false, sort_order: 0, updated_at: '2026-01-09' });
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    await waitFor(() => expect(wsIds()).toEqual(['ws-flash', 'ws-new', 'ws-a', 'ws-b']));
   });
 
   it('returns an unpinned workspace to its custom slot instead of freezing the pinned-era order', async () => {

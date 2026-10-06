@@ -1,7 +1,9 @@
-import { MoreHorizontal, Zap, Pin, Cpu, Server, Infinity as InfinityIcon } from 'lucide-react';
+import { MoreHorizontal, Pin, Cpu, Server, Infinity as InfinityIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { useWorkspaceText } from '@/hooks/useAllWorkspacesAgent';
+import { FlashRowIcon } from '@/hooks/useFlashWorkspace';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
 import { shortMonthDay } from '@/lib/format';
@@ -75,6 +77,8 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
   const { t } = useTranslation();
   const locale = useLocale();
   const isMobile = useIsMobile();
+  const workspaceText = useWorkspaceText();
+  const text = workspaceText(workspace);
   const isFlash = workspace.status === 'flash';
 
   // Tier and always-on are the machine's; the workspace row's copies are the
@@ -103,11 +107,11 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
         onMouseEnter={!isMobile ? () => prefetchThreads?.(workspace.workspace_id) : undefined}
       >
         <div
-          onClick={() => onSelect(workspace.workspace_id, workspace.name, workspace.status)}
+          onClick={() => onSelect(workspace.workspace_id, text.name, workspace.status)}
           className="relative flex cursor-pointer flex-col overflow-hidden rounded-xl py-4 pl-5 pr-4 transition-all ease-in-out hover:shadow-xs active:scale-[0.98] h-full w-full"
           style={{
             // Flash is a system card: flat elevated surface + crisp hairline,
-            // a different material from user cards; the amber Zap glyph is the
+            // a different material from user cards; its amber glyph is the
             // only accent.
             background: isFlash
               ? 'var(--color-bg-elevated)'
@@ -125,17 +129,17 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
           <div className="flex flex-col grow gap-3">
             <div className="flex items-center pr-10 overflow-hidden gap-2">
               {isFlash && (
-                <Zap className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                <FlashRowIcon className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
               )}
               {!isFlash && workspace.is_pinned && (
                 <Pin className="h-3.5 w-3.5 shrink-0 rotate-45" style={{ color: 'var(--color-text-tertiary)' }} />
               )}
               <div className="font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-                {workspace.name}
+                {text.name}
               </div>
             </div>
             <div className="text-sm line-clamp-1 grow" style={{ color: 'var(--color-text-tertiary)' }}>
-              {workspace.description || ''}
+              {text.description}
             </div>
             {showMachine && (
               <button

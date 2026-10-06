@@ -18,10 +18,19 @@
  * from cold storage). This lets the entry-time UI show the same two-level
  * spinner the chat path shows, even when a background warm — not a chat
  * message — owns the start.
+ *
+ * Home, the flash row under the all-workspaces agent, warms differently: its
+ * start binds it to the user's computer and its events report that computer.
+ * Its row keeps the 'flash' marker throughout, so the stream's statuses drive
+ * the spinner but are never written onto the row.
  */
 import { useEffect, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
+
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
+import { useFeatures } from '@/hooks/useFeatures';
+import { useWorkspace } from '@/hooks/useWorkspace';
 
 import { streamWorkspaceEvents } from '../utils/api';
 import { patchWorkspaceStatusInCaches, warmWorkspace } from '../utils/warmWorkspace';
@@ -31,26 +40,40 @@ const TERMINAL_STATUSES = new Set(['running', 'error', 'deleted']);
 
 export type WarmingState = false | 'starting' | 'archived';
 
-export function useWarmWorkspaceSandbox(
-  workspaceId: string | null,
-): WarmingState {
+/**
+ * Whether the workspace is Home, or null until its row says, and for a flash
+ * row until the flag has loaded too. Deciding once keeps a cold entry into
+ * Home from warming it as a plain workspace first, then again as Home with a
+ * second events stream.
+ */
+function useIsHome(workspaceId: string | null): boolean | null {
+  const { data: row } = useWorkspace(workspaceId);
+  const { isPending: flagPending } = useFeatures();
+  const allWorkspaces = useAllWorkspacesAgent();
+  if (!row) return null;
+  if (row.status !== 'flash') return false;
+  return flagPending ? null : allWorkspaces;
+}
+
+export function useWarmWorkspaceSandbox(workspaceId: string | null): WarmingState {
   const queryClient = useQueryClient();
   const [warming, setWarming] = useState<WarmingState>(false);
+  const home = useIsHome(workspaceId);
 
   useEffect(() => {
-    if (!workspaceId) return;
-    void warmWorkspace(workspaceId, queryClient);
-  }, [workspaceId, queryClient]);
+    if (!workspaceId || home === null) return;
+    void warmWorkspace(workspaceId, queryClient, { home });
+  }, [workspaceId, queryClient, home]);
 
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!workspaceId || home === null) return;
     setWarming(false);
     // Don't open a stream for a workspace we already know is terminal
     // (running/error/deleted) — it has nothing left to transition to, and the
     // server would only emit the current status and close. Saves a request +
     // a server-side DB read on every navigation to an already-running
-    // workspace (the common case). When status is unknown (cold nav), open the
-    // stream — warmWorkspace resolves the real status concurrently.
+    // workspace (the common case), a cold one included: the row has loaded
+    // by now (useIsHome).
     const known = queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey);
     if (known?.status && TERMINAL_STATUSES.has(known.status)) return;
 
@@ -85,6 +108,12 @@ export function useWarmWorkspaceSandbox(
       // 'starting' written by warmWorkspace could be stale — the backend may
       // have reached 'running' after the stream died.
       if (controller.signal.aborted) return;
+      // Home's row reads 'flash' whatever its computer reached, so there is
+      // nothing to reconcile against; a turn's own status events take over.
+      if (home) {
+        setWarming(false);
+        return;
+      }
       const current = queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey);
       if (!current?.status || !TERMINAL_STATUSES.has(current.status)) {
         // Fetch the authoritative status and reconcile local state. A bare
@@ -109,7 +138,7 @@ export function useWarmWorkspaceSandbox(
       }
     })();
     return () => controller.abort();
-  }, [workspaceId, queryClient]);
+  }, [workspaceId, queryClient, home]);
 
   return warming;
 }

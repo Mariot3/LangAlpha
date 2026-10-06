@@ -12,7 +12,7 @@ export const MAX_IN_PROGRESS_MS = 15000; // max time a tool call can stay in-pro
 export const ALWAYS_LIVE_TOOLS = new Set(['TaskOutput', 'WebFetch']);
 /** Tool calls that are never rendered as visible activity items — they have dedicated UI or are internal */
 /** Tools the transcript never draws a card for; the spinner gate skips them too. */
-export const HIDDEN_TOOL_CALL_NAMES = new Set(['TodoWrite', 'task', 'Task', 'SubmitPlan', 'AskUserQuestion', 'manage_workspaces', 'ptc_agent', 'agent_output', 'manage_threads', 'ShowWidget']);
+export const HIDDEN_TOOL_CALL_NAMES = new Set(['TodoWrite', 'task', 'Task', 'SubmitPlan', 'AskUserQuestion', 'manage_workspaces', 'ptc_agent', 'agent_output', 'manage_threads', 'ShowWidget', 'delegate_to_analyst']);
 
 /** Render block types for the inline activity grouping */
 export interface ActivityRenderBlock {

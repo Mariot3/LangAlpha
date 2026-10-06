@@ -3,6 +3,7 @@ import { isPlatformMode } from '@/config/hostMode';
 import { splitPreferenceWrite, type PreferencesLike } from '@/lib/modelPreferences';
 import { deriveQuickAccessModels, modelList, ownModelNames } from '@/lib/quickAccessModels';
 import { useAllModels } from './useAllModels';
+import { useAllWorkspacesAgent } from './useAllWorkspacesAgent';
 import { useModeDefaultModels } from './useModeDefaultModel';
 import { usePreferences } from './usePreferences';
 import { useUpdatePreferences } from './useUpdatePreferences';
@@ -29,6 +30,7 @@ export function useQuickAccessModels(exclude: string[] = []) {
   const { models: visibleModels, modelAccessMap, validModelNames } = useAllModels();
   const { mutate } = useUpdatePreferences();
   const defaults = useModeDefaultModels();
+  const allWorkspaces = useAllWorkspacesAgent();
 
   // starred_models stayed in other_preference when model routing moved to
   // its own column, so the defaults below are read from a different place.
@@ -41,7 +43,10 @@ export function useQuickAccessModels(exclude: string[] = []) {
     // nothing is saved: a pick on a thread saves no preference, so this row
     // can be the only way back to a default nobody chose.
     preferredModel: defaults.ptc,
-    preferredFlashModel: defaults.fast,
+    // With the all-workspaces agent every conversation runs the Default model
+    // and the second slot only does background work, so no composer would
+    // fall back to it.
+    preferredFlashModel: allWorkspaces ? null : defaults.fast,
     starredModels: starred,
     // On a platform the access map is what says which models are the user's
     // own; until it loads (or if it fails) none are known, rather than every

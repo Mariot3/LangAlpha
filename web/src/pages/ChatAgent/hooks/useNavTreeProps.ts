@@ -6,6 +6,8 @@
  */
 import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router';
+import { useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
+import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import { useNavigationData } from './useNavigationData';
 import type { NavWorkspace } from './useNavigationData';
 import type { SidebarAgentRow } from '../session/subagents/subagentStatus';
@@ -64,6 +66,7 @@ export function useNavTreeProps({
     (wsId: string): NavWorkspace | undefined => workspaces.find((ws) => ws.workspace_id === wsId),
     [workspaces],
   );
+  const label = useWorkspaceLabel();
 
   const onNewThread = useCallback(
     (wsId: string) => openNewThread(wsId, findWorkspace(wsId)),
@@ -77,12 +80,12 @@ export function useNavTreeProps({
     navigate(`/chat/t/${threadId}`, {
       state: {
         workspaceId: wsId,
-        workspaceName: ws?.name || fallbackWorkspaceName || '',
+        workspaceName: label(ws) || fallbackWorkspaceName || '',
         workspaceStatus: ws?.status || null,
-        ...(ws?.status === 'flash' ? { agentMode: 'flash' } : {}),
+        ...(ws?.status === 'flash' ? FLASH_ROUTE_STATE : {}),
       },
     });
-  }, [findWorkspace, navigate, fallbackWorkspaceName]);
+  }, [findWorkspace, navigate, fallbackWorkspaceName, label]);
 
   // Archiving the thread being viewed must not strand ChatView on a row that
   // just left the nav: mount the adjacent thread in the tree's visible order
@@ -111,12 +114,12 @@ export function useNavTreeProps({
       const ws = findWorkspace(wsId);
       navigate(`/chat/${wsId}`, {
         state: {
-          workspaceName: ws?.name || fallbackWorkspaceName || '',
+          workspaceName: label(ws) || fallbackWorkspaceName || '',
           workspaceStatus: ws?.status || null,
         },
       });
     }
-  }, [currentThreadId, onNavigateThread, findWorkspace, navigate, fallbackWorkspaceName, archiveThread]);
+  }, [currentThreadId, onNavigateThread, findWorkspace, navigate, fallbackWorkspaceName, archiveThread, label]);
 
   return useMemo(() => ({
     workspaces,

@@ -7,6 +7,7 @@ import { useApiKeys } from '@/hooks/useApiKeys';
 import type { ByokProvider } from '@/components/model/types';
 import { useTranslation } from 'react-i18next';
 import { modelPrefs } from '@/lib/modelPreferences';
+import { useModelSlotCopy } from '@/components/model/useModelSlotCopy';
 
 // ---------------------------------------------------------------------------
 // DoneStep — confirmation screen
@@ -17,6 +18,7 @@ export default function DoneStep() {
   const { preferences } = usePreferences();
   const { apiKeys } = useApiKeys();
   const { t } = useTranslation();
+  const copy = useModelSlotCopy();
 
   // ---------------------------------------------------------------------------
   // Derive summary data
@@ -78,8 +80,8 @@ export default function DoneStep() {
       >
         <div className="flex flex-col divide-y" style={{ borderColor: 'var(--color-border-default)' }}>
           <SummaryRow label={t('setup.providerLabel')} value={providerLabel} />
-          <SummaryRow label={t('setup.primaryModelLabel')} value={primaryModel} />
-          <SummaryRow label={t('setup.flashModelLabel')} value={flashModel} />
+          <SummaryRow label={copy.default.summary} value={primaryModel} />
+          <SummaryRow label={copy.background.summary} value={flashModel} />
         </div>
       </div>
 

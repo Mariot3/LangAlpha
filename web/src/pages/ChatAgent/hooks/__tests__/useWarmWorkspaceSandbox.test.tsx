@@ -141,10 +141,18 @@ function makeMockSSEStream(): {
 
 const originalFetch = global.fetch;
 
+// The hook reads the flag list and the workspace row; every other GET is a
+// workspace's detail.
+let features: Array<{ key: string; enabled: boolean }> = [];
+let detail: Record<string, unknown> = {};
+const detailGets = () => mockGet.mock.calls.filter(([url]) => url === '/api/v1/workspaces/ws-1');
+
 beforeEach(() => {
-  mockGet.mockReset().mockResolvedValue({
-    data: { workspace_id: 'ws-1', status: 'stopped' },
-  });
+  features = [];
+  detail = { workspace_id: 'ws-1', status: 'stopped' };
+  mockGet.mockReset().mockImplementation(async (url: string) => (
+    url === '/api/v1/features' ? { data: { features } } : { data: detail }
+  ));
   mockPost.mockReset().mockResolvedValue({
     data: { workspace_id: 'ws-1', status: 'starting', message: 'ok' },
   });
@@ -182,8 +190,40 @@ describe('useWarmWorkspaceSandbox', () => {
 
     await new Promise((res) => setTimeout(res, 20));
     expect(mockPost).not.toHaveBeenCalled();
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockGet.mock.calls.filter(([url]) => url !== '/api/v1/features')).toHaveLength(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('warms Home once, as Home, on a cold entry', async () => {
+    // Under the all-workspaces agent the flash row is Home, which starts by
+    // binding to the user's computer. Nothing is known on arrival, so the
+    // hook waits for the row and the flag rather than warming it first as a
+    // plain workspace and then again as Home.
+    features = [{ key: 'all_workspaces_agent', enabled: true }];
+    detail = { workspace_id: 'ws-1', status: 'flash' };
+    const qc = makeClient();
+    const { fetchMock } = makeMockSSEStream();
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderHook(() => useWarmWorkspaceSandbox('ws-1'), { wrapper: wrapper(qc) });
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/v1/workspaces/ws-1/start?lazy=true'));
+    await new Promise((res) => setTimeout(res, 20));
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the flash row alone with the flag off', async () => {
+    detail = { workspace_id: 'ws-1', status: 'flash' };
+    const qc = makeClient();
+    const { fetchMock } = makeMockSSEStream();
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderHook(() => useWarmWorkspaceSandbox('ws-1'), { wrapper: wrapper(qc) });
+
+    await waitFor(() => expect(detailGets()).not.toHaveLength(0));
+    await new Promise((res) => setTimeout(res, 20));
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it('opens the events SSE stream after mount', async () => {
@@ -298,9 +338,6 @@ describe('useWarmWorkspaceSandbox', () => {
         queries: { retry: false, gcTime: Infinity, staleTime: 2 * 60_000, refetchOnMount: false },
       },
     });
-    mockGet
-      .mockResolvedValueOnce({ data: { workspace_id: 'ws-1', status: 'stopped' } })
-      .mockResolvedValue({ data: { workspace_id: 'ws-1', status: 'running' } });
     const { fetchMock, next } = makeMockSSEStream();
     global.fetch = fetchMock as unknown as typeof fetch;
 
@@ -315,13 +352,14 @@ describe('useWarmWorkspaceSandbox', () => {
       );
     });
     await waitFor(() => expect(result.current).toBe('starting'));
+    detail = { workspace_id: 'ws-1', status: 'running' };
 
     await act(async () => {
       await handle.close();
     });
 
     await waitFor(() => expect(result.current).toBe(false));
-    expect(mockGet.mock.calls.filter(([url]) => url === '/api/v1/workspaces/ws-1')).toHaveLength(2);
+    expect(detailGets()).toHaveLength(2);
   });
 
   it('aborts the stream on unmount', async () => {

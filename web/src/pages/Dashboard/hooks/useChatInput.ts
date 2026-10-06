@@ -1,9 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../../../components/ui/use-toast';
-import { getFlashWorkspace } from '../../ChatAgent/utils/api';
+import type { ComposerScope } from '../../../components/ui/chat-input.types';
 import { attachmentsToContexts, widgetSnapshotsToContexts } from '../../ChatAgent/utils/fileUpload';
+import { warmWorkspace } from '../../ChatAgent/utils/warmWorkspace';
 import { useWorkspaces } from '../../../hooks/useWorkspaces';
+import { FLASH_ROUTE_STATE, flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
+import { useAllWorkspacesAgent } from '@/hooks/useAllWorkspacesAgent';
 import { ContextBus } from '@/lib/contextBus';
 import type { WidgetContextSnapshot } from '../widgets/framework/contextSnapshot';
 
@@ -37,13 +42,29 @@ const MAX_LOCATION_STATE_BYTES = 5 * 1024 * 1024; // ~5MB structured-clone safet
  * Manages dashboard chat input state: mode (fast/ptc), workspace selection,
  * loading, and the send handler. Message and planMode are owned by ChatInput
  * and passed through via handleSend.
+ *
+ * Under the all-workspaces agent the composer picks a scope instead of a mode:
+ * All workspaces (the user's flash row, which the server runs as Home) or the
+ * selected workspace, both on the full agent. `composerProps` carries
+ * whichever the flag calls for. `composing` is the host's report that the user
+ * is writing a message, which warms the target computer.
  */
-export function useChatInput() {
+export function useChatInput({ composing = false }: { composing?: boolean } = {}) {
   const [mode, setModeRaw] = useState<ChatMode>('ptc');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const allWorkspaces = useAllWorkspacesAgent();
+  // Nothing picked yet means All workspaces, which needs no workspace to exist.
+  const [scope, setScope] = useState<ComposerScope>('all');
+
+  // The All workspaces target, resolved ahead of the send so warming and the
+  // send both have it. The request upserts the row, so only with the flag on.
+  const { data: flashWs } = useQuery({ ...flashWorkspaceQuery(queryClient), enabled: allWorkspaces });
+  const flashWorkspaceId = flashWs?.workspace_id ?? null;
 
   // Fetch workspaces for the workspace selector. The 100-limit matches the other
   // dashboard widgets (RecentThreads, ConversationWidget, WorkspacePicker) so all
@@ -72,9 +93,25 @@ export function useChatInput() {
     if (workspaces.length === 0 && mode !== 'fast') setModeRaw('fast');
   }, [wsData, workspaces.length, mode]);
 
+  // Start the computer while the user is still typing, so the send lands on a
+  // running one. Once per target per composing spell: stopping forgets what
+  // was warmed, and a scope change meanwhile warms the new target. With the
+  // flag off a start on the flash row is refused, and nothing here warms.
+  const warmedRef = useRef(new Set<string>());
+  const warmTargetId = !allWorkspaces ? null : scope === 'all' ? flashWorkspaceId : selectedWorkspaceId;
+  useEffect(() => {
+    if (!composing) {
+      warmedRef.current.clear();
+      return;
+    }
+    if (!warmTargetId || warmedRef.current.has(warmTargetId)) return;
+    warmedRef.current.add(warmTargetId);
+    void warmWorkspace(warmTargetId, queryClient, { home: warmTargetId === flashWorkspaceId });
+  }, [composing, warmTargetId, flashWorkspaceId, queryClient]);
+
   /**
-   * Navigates to the ChatAgent workspace with the composed message payload.
-   * Fast mode: uses the flash workspace. PTC mode: uses the selected workspace.
+   * Navigates to the ChatAgent workspace with the composed message payload:
+   * the flash row for Fast mode or All workspaces, else the selected workspace.
    */
   const handleSend = async (
     message: string,
@@ -132,50 +169,35 @@ export function useChatInput() {
         }
       }
 
-      if (mode === 'fast') {
-        // Flash mode: get/create flash workspace and navigate
-        const flashWs = await getFlashWorkspace() as { workspace_id: string };
-        const workspaceId = flashWs.workspace_id;
-
-        navigate(`/chat/t/__default__`, {
-          state: {
-            workspaceId,
-            initialMessage: message.trim(),
-            planMode: false,
-            agentMode: 'flash',
-            workspaceStatus: 'flash',
-            ...(additionalContext ? { additionalContext } : {}),
-            ...(attachmentMeta ? { attachmentMeta } : {}),
-            ...(model ? { model } : {}),
-            ...(reasoningEffort ? { reasoningEffort } : {}),
-            ...(stateWidgetSnapshots ? { widgetSnapshots: stateWidgetSnapshots } : {}),
-          },
-        });
-      } else {
-        // PTC mode: use selected workspace or prompt user to create one
-        let workspaceId = selectedWorkspaceId;
-        if (!workspaceId) {
-          toast({
+      // The flash row is Home under the all-workspaces agent, where plan mode
+      // works as in any workspace; Flash has none.
+      const toFlashRow = allWorkspaces ? scope === 'all' : mode === 'fast';
+      const workspaceId = toFlashRow
+        ? (await queryClient.ensureQueryData(flashWorkspaceQuery(queryClient))).workspace_id
+        : selectedWorkspaceId;
+      if (!workspaceId) {
+        toast(allWorkspaces
+          ? { variant: 'destructive', title: t('agents.workspaceRequired') }
+          : {
             variant: 'destructive',
             title: 'No workspace selected',
             description: 'Please create a workspace first to use PTC mode.',
           });
-          return;
-        }
-
-        navigate(`/chat/t/__default__`, {
-          state: {
-            workspaceId,
-            initialMessage: message.trim(),
-            planMode: planMode,
-            ...(additionalContext ? { additionalContext } : {}),
-            ...(attachmentMeta ? { attachmentMeta } : {}),
-            ...(model ? { model } : {}),
-            ...(reasoningEffort ? { reasoningEffort } : {}),
-            ...(stateWidgetSnapshots ? { widgetSnapshots: stateWidgetSnapshots } : {}),
-          },
-        });
+        return;
       }
+      navigate(`/chat/t/__default__`, {
+        state: {
+          workspaceId,
+          ...(toFlashRow ? FLASH_ROUTE_STATE : {}),
+          initialMessage: message.trim(),
+          planMode: toFlashRow && !allWorkspaces ? false : planMode,
+          ...(additionalContext ? { additionalContext } : {}),
+          ...(attachmentMeta ? { attachmentMeta } : {}),
+          ...(model ? { model } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(stateWidgetSnapshots ? { widgetSnapshots: stateWidgetSnapshots } : {}),
+        },
+      });
       // Clear the dashboard deck so cards don't linger after navigate.
       // Snapshots ride `location.state` and are consumed inline by the
       // chat-side auto-send effect (no deck re-seed on this path).
@@ -194,9 +216,16 @@ export function useChatInput() {
     }
   };
 
+  // The composer's mode or scope props, by the flag, so a host never re-derives
+  // which one it shows.
+  const composerProps = allWorkspaces
+    ? { scope, onScopeChange: setScope }
+    : { mode, onModeChange: setMode };
+
   return {
     mode,
-    setMode,
+    scope,
+    composerProps,
     isLoading,
     handleSend,
     workspaces,

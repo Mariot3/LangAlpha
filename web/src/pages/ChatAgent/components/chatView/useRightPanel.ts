@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { appendPathSuffix, getPreviewUrl } from '../../utils/api';
-import { computeAgentArtifactRouting } from '../../utils/agentPaths';
+import { computeAgentArtifactRouting, type AgentArtifactRouting } from '../../utils/agentPaths';
 import { collectRecentWritePaths, collectWriteLog } from '../../utils/fileRefResolver';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useLatestRef } from '@/hooks/useLatestRef';
@@ -23,6 +23,25 @@ import { DEFAULT_PANEL_WIDTH, PLAN_TAB_WIDTH, detailPanelWidth } from '../filePa
 // A running app or a live chart opens wide, so its toolbar has room.
 const PREVIEW_MAX_RATIO = 0.92;
 
+/**
+ * The workspace override the file panel holds after a routed open; null shows
+ * the view's own workspace. Home has files of its own and names a sibling's
+ * only through a `__wsref__` link, so an open that names no other workspace
+ * returns to Home's. Flash has none, so its panel stays on the sibling it last
+ * showed.
+ */
+export function nextPanelOverride(
+  routing: Pick<AgentArtifactRouting, 'clearWorkspaceId' | 'setWorkspaceId'>,
+  current: string | null,
+  homeWorkspaceId: string | null,
+): string | null {
+  if (routing.clearWorkspaceId) return null;
+  if (homeWorkspaceId) {
+    return routing.setWorkspaceId && routing.setWorkspaceId !== homeWorkspaceId ? routing.setWorkspaceId : null;
+  }
+  return routing.setWorkspaceId ?? current;
+}
+
 /** Right-panel controller (carved out of ChatView, 5.9c): panel type/width,
  * target routing, tool-call/plan detail, multi-port preview resolution,
  * divider drag, sources provenance, and mobile back-gesture integration. */
@@ -36,7 +55,8 @@ export function useRightPanel({
   containerRef,
   setFilePanelWorkspaceId,
   filePanelWorkspaceId = null,
-  isFlashMode = false,
+  dispatches = false,
+  isHome = false,
   messages,
   subagentTranscripts = NO_TRANSCRIPTS,
   watching = false,
@@ -51,9 +71,13 @@ export function useRightPanel({
   isActive: boolean;
   containerRef: React.RefObject<HTMLDivElement | null>;
   setFilePanelWorkspaceId: Dispatch<SetStateAction<string | null>>;
-  /** The cross-workspace override; only Flash's panel shows it. */
+  /** The cross-workspace override; only Flash's and Home's panels show it. */
   filePanelWorkspaceId?: string | null;
-  isFlashMode?: boolean;
+  /** Flash or Home: the view dispatches work into other workspaces, whose
+   *  files its links open in the panel (resolveChatMode). */
+  dispatches?: boolean;
+  /** The view is the Chief of Staff's Home, whose panel shows its own files unless a link names a sibling's. */
+  isHome?: boolean;
   messages: readonly TranscriptMessage[];
   /** Each subagent's own messages, so a tool row clicked in its transcript resolves too. */
   subagentTranscripts?: readonly (readonly TranscriptMessage[])[];
@@ -370,19 +394,15 @@ export function useRightPanel({
     // Another workspace's strip replaces this one's, drafts included. Only a
     // change in the workspace the panel shows does that; clearing an unset
     // override, or PTC's panel, which never shows it, keeps the strip.
-    const shown = (override: string | null) => (isFlashMode && override) || workspaceId;
-    const nextOverride = r.clearWorkspaceId ? null : (r.setWorkspaceId ?? filePanelWorkspaceId);
+    const shown = (override: string | null) => (dispatches && override) || workspaceId;
+    const nextOverride = nextPanelOverride(r, filePanelWorkspaceId, isHome ? workspaceId : null);
     const switching = shown(nextOverride) !== shown(filePanelWorkspaceId);
     const go = () => {
-      if (r.clearWorkspaceId) {
-        setFilePanelWorkspaceId(null);
-      } else if (r.setWorkspaceId) {
-        setFilePanelWorkspaceId(r.setWorkspaceId);
-      }
+      if (nextOverride !== filePanelWorkspaceId) setFilePanelWorkspaceId(nextOverride);
       landInFilePanel(target);
     };
     if (switching) leaveFiles(go); else go();
-  }, [landInFilePanel, setFilePanelWorkspaceId, workspaceDirName, previousDirNames, leaveFiles, isFlashMode, workspaceId, filePanelWorkspaceId]);
+  }, [landInFilePanel, setFilePanelWorkspaceId, workspaceDirName, previousDirNames, leaveFiles, dispatches, isHome, workspaceId, filePanelWorkspaceId]);
 
   // A turn's sources open as a tab of the file view, one per turn; the tab
   // reads its live records through `transcript`.
@@ -687,11 +707,15 @@ export function useRightPanel({
         popPanelHistory();
       });
     } else {
+      // The header's toggle is Home's own files; a sibling shown before the
+      // panel closed was reached through a link, and the closed panel holds no
+      // draft to lose.
+      if (isHome && filePanelWorkspaceId) setFilePanelWorkspaceId(null);
       applyPanelWidth(DEFAULT_PANEL_WIDTH);
       setRightPanelType('file');
       pushPanelHistory();
     }
-  }, [rightPanelType, applyPanelWidth, pushPanelHistory, popPanelHistory, leaveFiles]);
+  }, [rightPanelType, applyPanelWidth, pushPanelHistory, popPanelHistory, leaveFiles, isHome, filePanelWorkspaceId, setFilePanelWorkspaceId]);
 
   return {
     activeTabKind,

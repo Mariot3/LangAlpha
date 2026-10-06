@@ -6,6 +6,8 @@ import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import NavigationPanel from '../NavigationPanel';
 import NavDisplayOptions from '../NavDisplayOptions';
 import { useNavTreeProps, type NavTreeAgents } from '../../hooks/useNavTreeProps';
+import { useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
+import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import type { NavWorkspace } from '../../hooks/useNavigationData';
 
 interface MobileNavDrawerProps {
@@ -29,6 +31,7 @@ interface MobileNavDrawerProps {
 export function MobileNavDrawer({ visible, slideIn, onMinimize, isActive, workspaceId, threadId, agents, workspaceName }: MobileNavDrawerProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const workspaceLabel = useWorkspaceLabel();
 
   // MOBILE INTENT: the drawer's ✎ opens a BLANK thread in that workspace, so a
   // one-tap new chat needs no second stop on the gallery. `__default__` + a
@@ -40,12 +43,11 @@ export function MobileNavDrawer({ visible, slideIn, onMinimize, isActive, worksp
     navigate('/chat/t/__default__', {
       state: {
         workspaceId: wsId,
-        workspaceName: ws?.name || '',
-        workspaceStatus: status,
-        agentMode: status === 'flash' ? 'flash' : 'ptc',
+        workspaceName: workspaceLabel(ws),
+        ...(status === 'flash' ? FLASH_ROUTE_STATE : { workspaceStatus: status, agentMode: 'ptc' }),
       },
     });
-  }, [navigate]);
+  }, [navigate, workspaceLabel]);
 
   const navTreeProps = useNavTreeProps({
     currentWorkspaceId: workspaceId,

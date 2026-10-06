@@ -12,15 +12,20 @@ import { MobileFabChat } from '@/components/ui/mobile-fab-chat';
  */
 function ChatInputCard() {
   const { t } = useTranslation();
+  const [focused, setFocused] = useState(false);
+  const chatInputRef = useRef<ChatInputHandle>(null);
+  const isMobile = useIsMobile();
+  const [chatExpanded, setChatExpanded] = useState(false);
+  // The mobile composer mounts only while expanded, and the desktop one is
+  // focused while the user writes: either way, they are composing.
   const {
-    mode,
-    setMode,
+    composerProps,
     isLoading,
     handleSend,
     workspaces,
     selectedWorkspaceId,
     setSelectedWorkspaceId,
-  } = useChatInput();
+  } = useChatInput({ composing: isMobile ? chatExpanded : focused });
 
   const SUGGESTION_CHIPS = useMemo<string[]>(
     () => [
@@ -31,11 +36,6 @@ function ChatInputCard() {
     ],
     [t],
   );
-
-  const [focused, setFocused] = useState(false);
-  const chatInputRef = useRef<ChatInputHandle>(null);
-  const isMobile = useIsMobile();
-  const [chatExpanded, setChatExpanded] = useState(false);
 
   const handleMobileSend = (...args: Parameters<typeof handleSend>) => {
     handleSend(...args);
@@ -56,8 +56,7 @@ function ChatInputCard() {
             ref={chatInputRef}
             onSend={handleMobileSend}
             disabled={isLoading}
-            mode={mode}
-            onModeChange={setMode}
+            {...composerProps}
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
             onWorkspaceChange={setSelectedWorkspaceId}
@@ -108,8 +107,7 @@ function ChatInputCard() {
             ref={chatInputRef}
             onSend={handleSend}
             disabled={isLoading}
-            mode={mode}
-            onModeChange={setMode}
+            {...composerProps}
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
             onWorkspaceChange={setSelectedWorkspaceId}

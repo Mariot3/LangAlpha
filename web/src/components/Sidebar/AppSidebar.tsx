@@ -17,6 +17,7 @@ import type { Workspace } from '@/types/api';
 import AccountMenu from './AccountMenu';
 import { useChatRoute } from './useChatRoute';
 import { useSidebarAgents } from '@/pages/ChatAgent/components/sidebarAgentsBridge';
+import { useWorkspaceLabel } from '@/hooks/useAllWorkspacesAgent';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from './sidebarWidth';
 import './Sidebar.css';
 
@@ -146,14 +147,15 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
   // DESKTOP INTENT: the tree's ✎ opens the workspace HOME (thread gallery —
   // centered composer + recent tasks, Codex-style D14), not a blank thread.
   // The mobile drawer deliberately differs; see ChatView's handleNewThread.
+  const workspaceLabel = useWorkspaceLabel();
   const openWorkspaceHome = useCallback((wsId: string, ws: NavWorkspace | undefined) => {
     navigate(`/chat/${wsId}`, {
       state: {
-        workspaceName: ws?.name || 'Workspace',
+        workspaceName: workspaceLabel(ws) || 'Workspace',
         workspaceStatus: ws?.status || null,
       },
     });
-  }, [navigate]);
+  }, [navigate, workspaceLabel]);
 
   const navTreeProps = useNavTreeProps({
     currentWorkspaceId,
