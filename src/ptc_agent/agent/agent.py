@@ -27,11 +27,9 @@ from ptc_agent.agent.middleware import (
     AskUserMiddleware,
     BackgroundSubagentMiddleware,
     BackgroundSubagentOrchestrator,
-    PlanModeMiddleware,
     SubagentEventCaptureMiddleware,
     MultimodalMiddleware,
     MultimodalStripMiddleware,
-    create_plan_mode_interrupt_config,
     CodeValidationMiddleware,
     CreditGateMiddleware,
     EmptyToolCallRetryMiddleware,
@@ -58,6 +56,10 @@ from ptc_agent.agent.middleware.direct_mcp import (
     direct_tool_summary,
 )
 from ptc_agent.agent.middleware.order_governance import OrderLedger
+from ptc_agent.agent.middleware.subagent_switch import (
+    SubagentSwitchMiddleware,
+    SubagentSwitchReader,
+)
 from ptc_agent.agent.context_stack import build_context_middleware
 from ptc_agent.agent.roles import AgentRole
 from ptc_agent.agent.filesystem_routes import (
@@ -125,11 +127,6 @@ from ptc_agent.core.mcp_registry import MCPRegistry
 from ptc_agent.core.sandbox import PTCSandbox
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 
-try:
-    from langchain.agents.middleware import HumanInTheLoopMiddleware
-except ImportError:
-    HumanInTheLoopMiddleware = None  # type: ignore[misc,assignment]
-
 from ptc_agent.agent.turn import build_model_resilience_middleware, turn_model
 
 try:
@@ -161,10 +158,10 @@ class PTCAgent:
         self,
         subagent_summary: str,
         guidance: str,
-        plan_mode: bool = False,
         thread_id: str | None = None,
         memory_enabled: bool = True,
         memo_enabled: bool = True,
+        todo_enabled: bool = False,
         crawl_enabled: bool = False,
         direct_tool_summary: str = "",
         workspace: WorkspaceLayout | None = None,
@@ -191,13 +188,13 @@ class PTCAgent:
             subagent_summary=subagent_summary,
             max_concurrent_task_units=DEFAULT_MAX_CONCURRENT_TASK_UNITS,
             ask_user_enabled=True,
-            plan_mode=plan_mode,
             include_examples=True,
             include_anti_patterns=True,
             thread_id=thread_id or "",
             memory_enabled=memory_enabled,
             memo_enabled=memo_enabled,
             market_watch_enabled=self.config.feature_enabled("market_watch"),
+            todo_enabled=todo_enabled,
             crawl_enabled=crawl_enabled,
             direct_tool_summary=direct_tool_summary,
             files_mounted=files_mounted,
@@ -224,7 +221,6 @@ class PTCAgent:
         background_registry: BackgroundTaskRegistry | None = None,
         namespace_owner: Any | None = None,
         user_profile: dict | None = None,
-        plan_mode: bool = False,
         thread_id: str | None = None,
         workspace_name: str | None = None,
         workspace_description: str | None = None,
@@ -242,11 +238,11 @@ class PTCAgent:
         project: ProjectContext | None = None,
         role: AgentRole = "analyst",
         harness_blocks: Mapping[str, str | None] | None = None,
+        subagent_switch: SubagentSwitchReader | None = None,
     ) -> Any:
         """Create a deepagent with PTC pattern capabilities.
 
         Key non-obvious parameters:
-            checkpointer: Required for submit_plan interrupt/resume workflow.
             disable_subagents: Build the agent WITHOUT the subagent machinery
                 (no Task/TaskOutput tools, no SubAgentMiddleware) — the
                 structural recursion gate for synthetic notification turns.
@@ -274,6 +270,11 @@ class PTCAgent:
                 by kind (see ``HARNESS_BLOCKS``), each the text its read
                 returned before the build, or None when that read did not
                 answer, which the baseline takes as a hole to read again.
+            subagent_switch: Reads the user's subagent switch for this
+                thread, fresh on every call. None for a build with no thread
+                row to read (thread maintenance, a synthetic turn), which
+                leaves subagents as built. It never changes the tools or the
+                prompt: it adds a history row and refuses launches instead.
 
         Returns:
             Configured BackgroundSubagentOrchestrator wrapping the deepagent.
@@ -357,7 +358,15 @@ class PTCAgent:
         show_widget_tool = create_show_widget_tool(backend)
 
         # Start with base tools
-        tools: list[Any] = [execute_code_tool, bash_tool, bash_output_tool, preview_url_tool, show_widget_tool, TodoWrite]
+        tools: list[Any] = [execute_code_tool, bash_tool, bash_output_tool, preview_url_tool, show_widget_tool]
+
+        # Opt-in while the tool is on its way out: a default build binds no
+        # todo tool, so neither the main agent nor a subagent that lists the
+        # "todo" set is given one.
+        todo_tools: list[Any] = (
+            [TodoWrite] if self.config.feature_enabled("todo_write") else []
+        )
+        tools.extend(todo_tools)
 
         # Create custom filesystem tools (override deepagents middleware tools).
         # `filesystem_backend` is the composite when a store is wired; otherwise
@@ -448,7 +457,8 @@ class PTCAgent:
         # detector's redactor scrubs secrets from snippets the content-only scan
         # never sees (provenance fingerprints the raw result/artifact).
         shared_middleware.append(ProvenanceMiddleware(redactor=leak_detection.redact))
-        shared_middleware.append(TodoWriteMiddleware())
+        if todo_tools:
+            shared_middleware.append(TodoWriteMiddleware())
 
         skill_sources = (
             [f"{self.config.skills.sandbox_skills_base}/"]
@@ -520,9 +530,16 @@ class PTCAgent:
         # Must be first: steering context must be visible before any other middleware.
         main_only_middleware.append(SteeringMiddleware())
 
-        # Ahead of the plan interrupt: consent is re-read per call and an order
-        # is put to the user against a durable attempt, which is what execution
-        # then reads.
+        # Right after steering, so a steer and a flip sent together reach the
+        # model in that order, with the operator-role row last. Its tool hook
+        # wraps BackgroundSubagentMiddleware (the one Task interceptor) and the
+        # tool node (RunWorkflow), so a refused launch starts nothing; the
+        # outer wrappers only parse, normalize and record, as for any result.
+        if subagent_switch is not None and not disable_subagents:
+            main_only_middleware.append(SubagentSwitchMiddleware(subagent_switch))
+
+        # Consent is re-read per call and an order is put to the user against
+        # a durable attempt, which is what execution then reads.
         direct_tools = list(direct_mcp.tools) if direct_mcp is not None else []
         main_only_middleware.extend(direct_tool_middleware(direct_mcp, order_ledger))
 
@@ -539,18 +556,6 @@ class PTCAgent:
         main_only_middleware.append(background_middleware)
         if not disable_subagents:
             tools.extend(background_middleware.tools)
-
-        if HumanInTheLoopMiddleware is not None:
-            hitl_middleware = HumanInTheLoopMiddleware(
-                interrupt_on=create_plan_mode_interrupt_config()
-            )
-            main_only_middleware.append(hitl_middleware)
-
-            # Only add submit_plan tool when plan_mode is enabled
-            if plan_mode:
-                plan_middleware = PlanModeMiddleware()
-                main_only_middleware.append(plan_middleware)
-                tools.extend(plan_middleware.tools)
 
         ask_user_middleware = AskUserMiddleware()
         main_only_middleware.append(ask_user_middleware)
@@ -577,7 +582,7 @@ class PTCAgent:
             "web_search": [web_search_tool, web_fetch_tool],
             "finance": finance_tools,
             "think": [think_tool],
-            "todo": [TodoWrite],
+            "todo": todo_tools,
         }
         # The compiler gets its own registry: same per-user gates, but
         # mode-unfiltered — subagent definitions may be flash-mode and preload
@@ -644,10 +649,10 @@ class PTCAgent:
             self._build_system_prompt,
             subagent_summary,
             turn.guidance,
-            plan_mode=plan_mode,
             thread_id=short_thread_id,
             memory_enabled=gates.memory,
             memo_enabled=gates.memo,
+            todo_enabled=bool(todo_tools),
             crawl_enabled=bool(crawl_tools),
             direct_tool_summary=direct_tool_summary(direct_tools),
             workspace=workspace_layout,

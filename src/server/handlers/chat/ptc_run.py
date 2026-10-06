@@ -4,7 +4,7 @@ This module contains the ``astream_ptc_workflow`` async generator, refactored
 from the monolithic ``chat_handler.py``.  Request preparation, persistence,
 error handling, and streaming logic is delegated to ``request_prep`` and
 ``services.runs.admission``; PTC-specific concerns (workspace session,
-sandbox, plan mode, background subagent orchestration, completion callback)
+sandbox, background subagent orchestration, completion callback)
 remain inline.
 """
 
@@ -15,12 +15,16 @@ import contextlib
 import json
 import time
 from datetime import datetime
+from functools import partial
 
 from fastapi import HTTPException
 from langgraph.types import Command
 
 from ptc_agent.core.project_context import ProjectContext, run_with_project
 from src.server.app import setup
+from src.server.database.conversation.threads_read import (
+    read_thread_subagents_allowed,
+)
 from src.server.database.workspace import update_workspace_activity
 from src.server.services.computer_disk import TURN_MEASURE_MIN_INTERVAL_SECONDS
 from src.server.services.runs.sse_producer import RunSSEProducer
@@ -65,8 +69,6 @@ from ptc_agent.agent.middleware.credit_gate import run_with_credit_gate
 
 from .request_prep import (
     DISPATCH_STARTED_MARKER,
-    _append_to_last_user_message,
-    _is_plan_interrupt_pending,
     _resolve_fork,
     apply_fetch_override,
     build_graph_config,
@@ -580,19 +582,8 @@ async def astream_ptc_workflow(
             name=f"update_activity_{workspace_id[:8]}",
         )
 
-        # Post-session setup — parallelize when HITL (registry + plan interrupt check)
         registry_store = BackgroundRegistryStore.get_instance()
-        if request.plan_mode:
-            effective_plan_mode = True
-            background_registry = await registry_store.get_or_create_registry(thread_id)
-        elif request.hitl_response:
-            background_registry, effective_plan_mode = await asyncio.gather(
-                registry_store.get_or_create_registry(thread_id),
-                _is_plan_interrupt_pending(thread_id),
-            )
-        else:
-            effective_plan_mode = False
-            background_registry = await registry_store.get_or_create_registry(thread_id)
+        background_registry = await registry_store.get_or_create_registry(thread_id)
 
         # Stamp the current turn's run_id on the registry so newly-registered
         # subagents inherit it (spawned_run_id). The collector filters by this
@@ -658,7 +649,6 @@ async def astream_ptc_workflow(
             namespace_owner=run_handle.guard,
             user_id=user_id,
             user_profile=user_profile,
-            plan_mode=effective_plan_mode,
             thread_id=thread_id,
             store=setup.store,
             on_signed_url=cache_workspace_preview,
@@ -668,6 +658,9 @@ async def astream_ptc_workflow(
             project=project,
             tool_view=tool_view,
             role=role,
+            # A port, not a value: the switch can flip mid-turn from any
+            # worker, so the agent re-reads the row on every call.
+            subagent_switch=partial(read_thread_subagents_allowed, thread_id),
         )
 
         _mark_phase("graph_build")
@@ -761,30 +754,6 @@ async def astream_ptc_workflow(
             # Skill tools auto-load via SkillsMiddleware (sets loaded_skills in state).
 
         # =====================================================================
-        # Plan Mode Injection
-        # =====================================================================
-        # When plan_mode is enabled, inject a reminder for the agent to create
-        # a plan and submit it for approval before executing any changes.
-        if effective_plan_mode and not request.hitl_response:
-            plan_mode_reminder = (
-                "\n\n<system-reminder>\n"
-                "[PLAN MODE ENABLED]\n"
-                "Before making any changes, you MUST:\n"
-                "1. Explore the codebase to understand the current state\n"
-                "2. Create a detailed plan describing what you intend to do\n"
-                "3. Call the `SubmitPlan` tool with your plan description\n"
-                "4. Wait for user approval before proceeding with execution\n"
-                "Do NOT execute any write operations until the plan is approved.\n"
-                "</system-reminder>"
-            )
-            # Append reminder to the last user message
-            if isinstance(input_state, dict) and input_state.get("messages"):
-                _append_to_last_user_message(
-                    input_state["messages"], plan_mode_reminder
-                )
-            logger.info(f"[PTC_CHAT] Plan mode enabled for thread_id={thread_id}")
-
-        # =====================================================================
         # Inline Context Injection (directive + widget + chart selection)
         # =====================================================================
         # Each appends a <system-reminder> to the last user message, in order.
@@ -841,7 +810,6 @@ async def astream_ptc_workflow(
             request=request,
             effective_model=effective_model,
             recursion_limit=get_ptc_recursion_limit(),
-            plan_mode=effective_plan_mode,
             skill_contexts=skill_contexts,
             skill_dirs=skill_dirs,
             run_id=run_id,

@@ -136,6 +136,7 @@ async def create_thread_endpoint(
             thread_index=None,
             title=stamped_title,
             platform=request.platform,
+            subagents_allowed=request.subagents_allowed,
         )
     except Exception as e:
         logger.exception(f"Error pre-creating thread: {e}")
@@ -155,6 +156,7 @@ async def create_thread_endpoint(
         thread_index=row["thread_index"],
         title=stamped_title,
         msg_type=msg_type,
+        subagents_allowed=row["subagents_allowed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

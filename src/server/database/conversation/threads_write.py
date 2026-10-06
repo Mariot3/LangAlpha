@@ -86,6 +86,7 @@ async def create_thread(
     external_id: Optional[str] = None,
     platform: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    subagents_allowed: Optional[bool] = None,
     conn=None,
 ) -> Dict[str, Any]:
     """
@@ -102,6 +103,8 @@ async def create_thread(
         'automation' id = automation). Absent origin key = user-initiated.
     `external_id` is only set by channel integrations and combined with platform
     is unique-indexed for dedup. Web-originated threads have external_id NULL.
+    `subagents_allowed` None, or the side the owner's default is on, stores
+    NULL, which follows the default (see ``_sql.stored_subagents_allowed``).
 
     A concurrent create that loses the `(platform, external_id)` dedup index
     raises ``errors.ExternalIdConflictError`` (routes map it to a 409 / an in-stream
@@ -116,6 +119,7 @@ async def create_thread(
         "msg_type",
         "thread_index",
         "title",
+        "subagents_allowed",
     ]
     base_params = [conversation_thread_id, workspace_id, current_status, msg_type]
     # thread_index is appended per-attempt (may be recalculated on retry)
@@ -132,7 +136,10 @@ async def create_thread(
         extra_params.append(Json(metadata))
 
     col_str = ", ".join(columns)
-    placeholders = ", ".join(["%s"] * len(columns))
+    placeholders = ", ".join(
+        _sql.stored_subagents_allowed("%s", "%s") if c == "subagents_allowed" else "%s"
+        for c in columns
+    )
     returning_str = f"{col_str}, created_at, updated_at"
 
     sql = f"""
@@ -147,7 +154,11 @@ async def create_thread(
         if thread_index is None or attempt > 0:
             thread_index = await calculate_next_thread_index(workspace_id, conn=conn)
 
-        params = tuple(base_params + [thread_index, title] + extra_params)
+        params = tuple(
+            base_params
+            + [thread_index, title, subagents_allowed, workspace_id]
+            + extra_params
+        )
 
         try:
             if conn:
@@ -220,11 +231,11 @@ async def update_thread_external_id(
         async with pool.get_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    """
+                    f"""
                     UPDATE conversation_threads
                     SET platform = %s, external_id = %s, updated_at = NOW()
                     WHERE conversation_thread_id = %s
-                    RETURNING conversation_thread_id, workspace_id, current_status, msg_type, thread_index, title, platform, metadata, is_shared, is_pinned, archived_at, llm_model, created_at, updated_at
+                    RETURNING {_sql._THREAD_COLUMNS}
                 """,
                     (platform, external_id, thread_id),
                 )
@@ -395,6 +406,7 @@ async def ensure_thread_exists(
     external_id: Optional[str] = None,
     platform: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    subagents_allowed: Optional[bool] = None,
 ) -> bool:
     """
     Ensure conversation_threads row exists before workflow starts.
@@ -414,6 +426,8 @@ async def ensure_thread_exists(
         metadata: Optional thread metadata (see create_thread; e.g. origin
             provenance). Applied only when this call creates the row —
             resume never rewrites it.
+        subagents_allowed: Applied only when this call creates the row;
+            None, or the side the owner's default is on, follows the default.
 
     Returns:
         True if this call created the thread row, False if it already existed.
@@ -502,6 +516,7 @@ async def ensure_thread_exists(
                 external_id=external_id,
                 platform=platform,
                 metadata=metadata,
+                subagents_allowed=subagents_allowed,
                 conn=conn,
             )
             # Cache the new thread's existence
@@ -652,11 +667,14 @@ async def update_thread_fields(
     is_pinned: Any = _UNSET,
     archived: Any = _UNSET,
     llm_model: Any = _UNSET,
+    subagents_allowed: Any = _UNSET,
 ) -> Optional[Dict[str, Any]]:
-    """Dynamic update of user-editable thread fields (title, pin, archive, model).
+    """Dynamic update of user-editable thread fields (title, pin, archive,
+    model, subagent switch).
 
-    Only title bumps ``updated_at``: pin, archive and model must not reorder the
-    recency sort (same reasoning as ``stamp_thread_seen``). Archiving also
+    Only title bumps ``updated_at``: pin, archive, model and the subagent
+    switch must not reorder the recency sort (same reasoning as
+    ``stamp_thread_seen``). Archiving also
     advances the seen cursor in the SAME statement (see ``_ARCHIVE_SEEN_STAMP``).
     Returns the updated row, or None when the thread doesn't exist / nothing
     to set.
@@ -680,6 +698,10 @@ async def update_thread_fields(
     if llm_model is not _UNSET:
         sets.append("llm_model = %s")
         params.append(llm_model)
+    if subagents_allowed is not _UNSET:
+        stored = _sql.stored_subagents_allowed("%s", "conversation_threads.workspace_id")
+        sets.append(f"subagents_allowed = {stored}")
+        params.append(subagents_allowed)
     if not sets:
         return None
 
@@ -691,7 +713,7 @@ async def update_thread_fields(
                     UPDATE conversation_threads
                     SET {", ".join(sets)}
                     WHERE conversation_thread_id = %s
-                    RETURNING conversation_thread_id, workspace_id, current_status, msg_type, thread_index, title, platform, metadata, is_shared, is_pinned, archived_at, last_seen_run_seq, llm_model, created_at, updated_at
+                    RETURNING {_sql._THREAD_COLUMNS}, last_seen_run_seq
                 """,
                     (*params, conversation_thread_id),
                 )

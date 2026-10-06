@@ -36,7 +36,6 @@ logger = structlog.get_logger(__name__)
 
 _PTC_SUBAGENT_DEFAULTS: dict[str, bool] = {
     "task_workflow": False,
-    "plan_mode": False,
     "workspace_paths": True,
     "tool_guide": True,
     "subagent_coordination": False,
@@ -49,7 +48,6 @@ _PTC_SUBAGENT_DEFAULTS: dict[str, bool] = {
 
 _FLASH_SUBAGENT_DEFAULTS: dict[str, bool] = {
     "task_workflow": False,
-    "plan_mode": False,
     "workspace_paths": False,
     "tool_guide": False,
     "subagent_coordination": False,
@@ -208,6 +206,7 @@ class SubagentCompiler:
         )
         return {
             "market_watch_enabled": market_watch,
+            "todo_enabled": "todo" in bound and bool(self._tool_sets.get("todo")),
             "show_widget_enabled": "show_widget" in bound,
             "chart_annotation_enabled": False,
             "finance_enabled": "finance" in bound,

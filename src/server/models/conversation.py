@@ -49,6 +49,14 @@ class WorkspaceThreadListItem(BaseModel):
         description="The model this thread runs: the last one a client named "
         "for it. NULL = follows the account default for its mode.",
     )
+    subagents_allowed: Optional[bool] = Field(
+        None,
+        description="Whether the thread's agent may start or direct subagents "
+        "(the chat input's subagent switch). Off, those calls are refused; "
+        "subagents already running keep going and their results stay "
+        "collectable. NULL = follows the owner's subagents default "
+        "(other_preference.subagents_default; on when unset).",
+    )
     turn_count: Optional[int] = Field(
         None,
         description="Number of turns (user queries) in the thread; only the "
@@ -245,6 +253,12 @@ class ThreadCreateRequest(BaseModel):
         description="IANA timezone identifier (e.g., 'America/New_York'); "
         "localizes relative-time resolution during title generation.",
     )
+    subagents_allowed: Optional[bool] = Field(
+        default=None,
+        description="The thread's subagent switch; omitted, or the side the "
+        "user's default (other_preference.subagents_default) is on, the thread "
+        "follows that default until a PATCH switches it.",
+    )
 
 
 class ThreadCreateResponse(BaseModel):
@@ -258,12 +272,18 @@ class ThreadCreateResponse(BaseModel):
     thread_index: int
     title: Optional[str] = None
     msg_type: str
+    subagents_allowed: Optional[bool] = Field(
+        None,
+        description="The switch the create stored; null follows the owner's "
+        "subagents default.",
+    )
     created_at: datetime
     updated_at: datetime
 
 
 class ThreadUpdateRequest(BaseModel):
-    """Request model for updating a thread (title, pin, archive, model).
+    """Request model for updating a thread (title, pin, archive, model,
+    subagent switch).
 
     Only fields explicitly present in the request are applied — the endpoint
     reads ``model_fields_set``, so ``{"is_pinned": true}`` cannot clear the
@@ -283,6 +303,14 @@ class ThreadUpdateRequest(BaseModel):
         description="The model this thread runs from its next turn. null "
         "returns it to the account default. A name this user cannot run is "
         "refused with a 400 of type 'model_unavailable'.",
+    )
+    subagents_allowed: Optional[bool] = Field(
+        None,
+        description="Allow (true) or refuse (false) subagents in this thread, "
+        "from the next model call on, a running turn included. The side the "
+        "user's default is on, or null, leaves the thread following the "
+        "default, so it moves when the default does; the other side is the "
+        "thread's own and stays whatever the default does.",
     )
 
     model_config = ConfigDict(json_schema_extra={

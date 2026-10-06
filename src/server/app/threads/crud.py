@@ -13,6 +13,7 @@ from src.server.services.thread_lifecycle_feed import (
     publish_thread_archived,
     publish_thread_deleted,
     publish_thread_pinned,
+    publish_thread_subagents,
     publish_thread_title,
     publish_thread_unarchived,
 )
@@ -135,6 +136,7 @@ async def list_threads(
                 is_pinned=bool(thread.get("is_pinned", False)),
                 archived_at=thread.get("archived_at"),
                 llm_model=thread.get("llm_model"),
+                subagents_allowed=thread["subagents_allowed"],
                 turn_count=thread.get("turn_count"),
                 created_at=thread["created_at"],
                 updated_at=thread["updated_at"],
@@ -323,6 +325,7 @@ def _thread_list_item(row: dict) -> WorkspaceThreadListItem:
         is_pinned=bool(row.get("is_pinned", False)),
         archived_at=row.get("archived_at"),
         llm_model=row.get("llm_model"),
+        subagents_allowed=row["subagents_allowed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -332,7 +335,8 @@ def _thread_list_item(row: dict) -> WorkspaceThreadListItem:
 async def update_thread_endpoint(
     thread_id: str, request: ThreadUpdateRequest, x_user_id: CurrentUserId
 ):
-    """Update user-editable thread fields: title, pin, archive, model.
+    """Update user-editable thread fields: title, pin, archive, model,
+    subagent switch.
 
     Applies only the fields explicitly present in the request body
     (``model_fields_set``) — a pin toggle can't clear the title.
@@ -357,6 +361,12 @@ async def update_thread_endpoint(
             if request.llm_model is not None:
                 await require_selectable_model(x_user_id, request.llm_model)
             updates["llm_model"] = request.llm_model
+        if "subagents_allowed" in provided:
+            # null, or the side the owner's default is on, returns the thread
+            # to following the default (decided in the UPDATE). Read by the
+            # running turn on its next model call and at every subagent
+            # launch, so a flip mid-turn takes effect without one.
+            updates["subagents_allowed"] = request.subagents_allowed
         if not updates:
             raise HTTPException(
                 status_code=400, detail="No updatable fields provided"
@@ -380,6 +390,13 @@ async def update_thread_endpoint(
                 thread_id=thread_id,
                 workspace_id=str(updated_thread["workspace_id"]),
                 pinned=bool(updated_thread.get("is_pinned", False)),
+            )
+        if "subagents_allowed" in updates:
+            await publish_thread_subagents(
+                user_id=x_user_id,
+                thread_id=thread_id,
+                workspace_id=str(updated_thread["workspace_id"]),
+                allowed=updated_thread["subagents_allowed"],
             )
         if "archived" in updates:
             # Post-commit only: the archive statement already stamped the

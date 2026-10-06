@@ -586,7 +586,6 @@ def get_langsmith_metadata(
     locale: Optional[str] = None,
     timezone: Optional[str] = None,
     llm_model: Optional[str] = None,
-    plan_mode: bool = False,
     platform: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build LangSmith metadata dict for a workflow run (omits None values).
@@ -613,8 +612,6 @@ def get_langsmith_metadata(
         metadata["timezone"] = timezone
     if llm_model:
         metadata["llm_model"] = llm_model
-    if plan_mode:
-        metadata["plan_mode"] = plan_mode
     if platform:
         metadata["platform"] = platform
 

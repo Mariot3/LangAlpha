@@ -35,12 +35,12 @@ from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware
 
-from ptc_agent.agent.middleware.compaction.utils import resolve_cutoff_index
 from ptc_agent.agent.middleware.runtime_context import clock
 from ptc_agent.agent.middleware.runtime_context.durable import (
     DurableUpdate,
     build_update_message,
-    runtime_update_from_message,
+    last_stated,
+    rows_in_view,
 )
 from ptc_agent.agent.middleware.runtime_context.state import STATE_BASELINE, state_get
 from ptc_agent.agent.middleware.runtime_context.surface import Surface, parse_surface
@@ -51,6 +51,15 @@ logger = logging.getLogger(__name__)
 #: Row kind of the turn anchor. Rendered verbatim by ``update_row.md.j2``,
 #: which hardcodes the same string.
 TURN_ROW_KIND = "turn_opened"
+
+#: Row kind of the subagent-switch notice, which ``update_row.md.j2`` hardcodes
+#: the same way.
+SUBAGENTS_ROW_KIND = "subagents_switched"
+
+#: Rows that are no change under the baseline: their writers state them again
+#: once a compaction takes them from view, so a rebuild does not count them
+#: and a summary does not carry them.
+NON_CHANGE_ROW_KINDS = frozenset({TURN_ROW_KIND, SUBAGENTS_ROW_KIND})
 
 # The key a manual follow-up in an automation's thread states under when it
 # has no surface of its own: the handoff is a rule, and a rule needs a key so
@@ -471,14 +480,8 @@ def _last_turn_market(state: Any) -> LastSession | None:
     unknown, and the session line then falls back to comparing the clock at
     the two instants, which is what it did before rows carried a market.
     """
-    messages = state_get(state, "messages")
-    if not isinstance(messages, (list, tuple)):
-        return None
-    event = state_get(state, "_summarization_event")
-    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
-    for message in reversed(list(messages)[cutoff:]):
-        update = runtime_update_from_message(message)
-        if update is None or update.kind != TURN_ROW_KIND:
+    for update in reversed(rows_in_view(state)):
+        if update.kind != TURN_ROW_KIND:
             continue
         zone = update.provenance.get("zone")
         if "market" in update.provenance:
@@ -490,24 +493,11 @@ def _last_turn_market(state: Any) -> LastSession | None:
 def _last_rules_key(state: Any) -> str | None:
     """The key of the last rules the model can still read, or None.
 
-    Only the last stated rules count, and only rows the compaction cutoff left
-    in place: a row that was summarized away is a row the model can no longer
-    read, so the rules have to be stated again. A row from a build that stamped
-    no ``rules_key`` never counts as having stated anything, which is what makes
-    the first turn after a deploy state its rules.
+    A row from a build that stamped no ``rules_key`` never counts as having
+    stated anything, which is what makes the first turn after a deploy state
+    its rules.
     """
-    messages = state_get(state, "messages")
-    if not isinstance(messages, (list, tuple)):
-        return None
-    event = state_get(state, "_summarization_event")
-    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
-    for message in reversed(list(messages)[cutoff:]):
-        update = runtime_update_from_message(message)
-        if update is None or update.kind != TURN_ROW_KIND:
-            continue
-        if "rules_key" in update.provenance:
-            return update.provenance["rules_key"]
-    return None
+    return last_stated(state, TURN_ROW_KIND, "rules_key")
 
 
 def _last_disk_low(state: Any) -> bool:
@@ -516,15 +506,4 @@ def _last_disk_low(state: Any) -> bool:
     Rows behind the compaction cutoff do not count: a low-disk line the model
     can no longer read needs no taking back.
     """
-    messages = state_get(state, "messages")
-    if not isinstance(messages, (list, tuple)):
-        return False
-    event = state_get(state, "_summarization_event")
-    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
-    for message in reversed(list(messages)[cutoff:]):
-        update = runtime_update_from_message(message)
-        if update is None or update.kind != TURN_ROW_KIND:
-            continue
-        if "disk_low" in update.provenance:
-            return update.provenance["disk_low"] is True
-    return False
+    return last_stated(state, TURN_ROW_KIND, "disk_low", False) is True

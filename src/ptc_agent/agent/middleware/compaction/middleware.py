@@ -18,7 +18,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage, SystemMessage
 from langchain_core.exceptions import ContextOverflowError
 from langgraph.config import get_config, get_stream_writer
 from langgraph.types import Command
@@ -72,6 +72,10 @@ from ptc_agent.agent.middleware.compaction.offloading import (
     get_thread_id,
     tool_call_ids,
 )
+from ptc_agent.agent.middleware.runtime_context.durable import (
+    runtime_update_from_message,
+)
+from ptc_agent.agent.middleware.runtime_context.turn import NON_CHANGE_ROW_KINDS
 from ptc_agent.agent.transcript import TranscriptTarget
 from ptc_agent.agent.transcript.pointer import aexport_transcript, transcript_target
 
@@ -109,22 +113,18 @@ def _summarizable(messages: list[AnyMessage]) -> list[AnyMessage]:
     the one role every provider accepts anywhere, but ``get_buffer_string``
     would render it as ``Human:`` and the summarizer would take a time stamp
     or a file diff for a request. Turn anchors are dropped, since the block
-    they annotate is rebuilt at compaction, and change rows are relabelled as
-    ``System:`` so what they say survives without being attributed to anyone.
+    they annotate is rebuilt at compaction, and so are subagent-switch
+    notices, which restate themselves after a compaction while the switch is
+    off and would otherwise leave a summary saying it is off once it is back
+    on. Change rows are relabelled as ``System:`` so what they say survives
+    without being attributed to anyone.
     """
-    from langchain_core.messages import SystemMessage
-
-    from ptc_agent.agent.middleware.runtime_context.durable import (
-        runtime_update_from_message,
-    )
-    from ptc_agent.agent.middleware.runtime_context.turn import TURN_ROW_KIND
-
     out: list[AnyMessage] = []
     for message in messages:
         update = runtime_update_from_message(message)
         if update is None:
             out.append(message)
-        elif update.kind != TURN_ROW_KIND:
+        elif update.kind not in NON_CHANGE_ROW_KINDS:
             out.append(SystemMessage(content=update.text))
     return out
 

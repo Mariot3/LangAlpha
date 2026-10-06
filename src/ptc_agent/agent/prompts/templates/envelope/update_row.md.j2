@@ -53,7 +53,14 @@
 
    A `turn_opened` row (`turn.TURN_ROW_KIND`) renders bare: it is the turn's own
    anchor, already prose with its own stamp, so a header would only label the
-   clock with a second copy of the time. A kind this template has no words for
+   clock with a second copy of the time.
+
+   A `subagents_switched` row (`turn.SUBAGENTS_ROW_KIND`) says the
+   user flipped the thread's subagent switch, which `provenance.allowed`
+   carries; its text is empty and every word is here. It names no tool, since
+   a row outlives the tool list it was written under, and it compares nothing
+   with a frozen block, so it has no paragraph explaining one: the next such
+   row is simply the later word. A kind this template has no words for
    keeps the labelled form, so a new kind reads as unlabelled rather than as
    prose that quietly describes the wrong thing.
 
@@ -62,6 +69,12 @@
 {% if update %}
 {% if update.kind == "turn_opened" %}
 {{ update.text }}
+{% elif update.kind == "subagents_switched" %}
+{% if update.provenance.get("allowed") is false %}
+The user turned subagents off for this thread. Do the work yourself rather than delegating it: starting, resuming, or redirecting a subagent will be refused until the user turns them back on. Subagents already running keep going, and their results can still be collected.
+{% else %}
+The user turned subagents back on for this thread. Delegate to them when it helps.
+{% endif %}
 {% else %}
 {% set writer = update.provenance.get("writer") if update.provenance is mapping else none %}
 {% if update.kind == "agent_md_changed" %}
