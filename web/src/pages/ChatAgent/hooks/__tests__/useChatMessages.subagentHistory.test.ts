@@ -92,7 +92,7 @@ describe('useChatMessages: subagent history getters', () => {
 
   it('carries the stream processor\'s tool-call mappings to resolveSubagentIdToAgentId', async () => {
     mockSendStream.mockImplementation(
-      async (_msg: string, _ws: string, _tid: string | null, _hist: unknown[], _plan: boolean, onEvent: (e: Record<string, unknown>) => void) => {
+      async (_msg: string, _ws: string, _tid: string | null, { onEvent }: { onEvent: (e: Record<string, unknown>) => void }) => {
         onEvent({ event: 'tool_calls', agent: 'main', tool_calls: [{ name: 'Task', id: 'toolu_spawn', args: { description: 'screen' } }] });
         // A spawn artifact maps its call to the task it opened...
         onEvent({ event: 'artifact', artifact_type: 'task', agent: 'main', tool_call_id: 'toolu_spawn', payload: { task_id: 'abc', action: 'spawned' } });
@@ -105,7 +105,7 @@ describe('useChatMessages: subagent history getters', () => {
     expect(result.current.seenSpawn).toBe('toolu_spawn');
 
     await act(async () => {
-      await result.current.chat.handleSendMessage('screen AI names', false);
+      await result.current.chat.handleSendMessage('screen AI names');
     });
 
     expect(result.current.chat.resolveSubagentIdToAgentId('toolu_spawn')).toBe('task:abc');

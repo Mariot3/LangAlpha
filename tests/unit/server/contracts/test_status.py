@@ -142,15 +142,7 @@ class TestInterruptReason:
             _pause({"type": "ask_user_question", "question": "which ticker?"})
         ) == "user_question"
 
-    def test_only_an_actual_plan_claims_plan_review(self):
-        assert classify_interrupt_reason(
-            _pause({"name": "SubmitPlan", "args": {}, "description": "a plan"})
-        ) == "plan_review_required"
-
-    def test_a_proposal_is_an_approval_not_a_plan_review(self):
-        # The regression this class exists for: every proposal used to land on
-        # 'plan_review_required' because it was the catch-all, so the lifecycle
-        # feed announced a plan review for a workspace confirmation.
+    def test_a_proposal_is_an_approval(self):
         for kind in ("create_workspace", "delete_workspace", "delete_thread"):
             assert classify_interrupt_reason(
                 _pause({"type": kind, "workspace_id": "w-1"})
@@ -174,15 +166,15 @@ class TestInterruptReason:
             + _pause({"type": "credit_pause", "message": "out of credits"})
         ) == "credit_pause"
 
-    def test_a_batched_approval_set_is_read_whole(self):
+    def test_a_payload_is_read_whole(self):
         # The approval middleware puts a turn's whole approval set in ONE
         # payload, so precedence has to hold within a payload and not just
-        # across them — reading only the leading request made the answer depend
-        # on which tool the model happened to call first.
+        # across them: reading only the leading request would make the answer
+        # depend on which request happened to come first.
         assert classify_interrupt_reason(
             _pause({"name": "run_backtest", "args": {}},
-                   {"name": "SubmitPlan", "args": {}})
-        ) == "plan_review_required"
+                   {"type": "ask_user_question", "question": "which ticker?"})
+        ) == "user_question"
 
 
 class TestMigrationCheckBinding:
@@ -209,7 +201,6 @@ class TestInterruptReasonVocabulary:
             {"type": "credit_pause"},
             {"type": "ask_user_question"},
             {"type": "some_future_action"},
-            {"name": "SubmitPlan", "args": {}},
             {"name": "any_approved_tool", "args": {}},
         ):
             assert classify_interrupt_reason(_pause(request)) in INTERRUPT_REASONS

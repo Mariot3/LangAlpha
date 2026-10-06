@@ -32,10 +32,9 @@ import { useChatMessages } from '../useChatMessages';
 const mockSendStream = sendChatMessageStream as Mock;
 const mockStatus = getWorkflowStatus as Mock;
 
-// Positional tail of sendChatMessageStream: (..., onRunIdResolved, signal, requestKey).
-const latchOf = (args: unknown[]) =>
-  args[args.length - 3] as (rid: string, tid: string) => void;
-const requestKeyOf = (args: unknown[]) => args[args.length - 1] as string | null;
+// onRunIdResolved and requestKey live in the options object (4th arg).
+const latchOf = (args: unknown[]) => (args[3] as { onRunIdResolved: (rid: string, tid: string) => void }).onRunIdResolved;
+const requestKeyOf = (args: unknown[]) => (args[3] as { requestKey: string | null }).requestKey;
 
 function duplicateError(extra: Record<string, unknown> = {}) {
   return Object.assign(new Error('This request was already accepted'), {
@@ -62,7 +61,7 @@ describe('useChatMessages — request_key dedup (409 duplicate_request)', () => 
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     // Reconnect probes the ADOPTED thread (proof the ids were latched from
@@ -81,7 +80,7 @@ describe('useChatMessages — request_key dedup (409 duplicate_request)', () => 
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -98,10 +97,10 @@ describe('useChatMessages — request_key dedup (409 duplicate_request)', () => 
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     const first = requestKeyOf(mockSendStream.mock.calls[0]);
@@ -119,10 +118,10 @@ describe('useChatMessages — request_key dedup (409 duplicate_request)', () => 
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     const first = requestKeyOf(mockSendStream.mock.calls[0]);

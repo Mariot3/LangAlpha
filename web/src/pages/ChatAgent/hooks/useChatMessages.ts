@@ -34,8 +34,8 @@ import { invalidateNewWorkspace } from './workspaceRowActions';
 import { ensureThreadId } from '../session/threadCreation';
 export { removeStoredThreadId } from './utils/threadStorage';
 import { createUserMessage, createAssistantMessage, createNotificationMessage, appendMessage, updateMessage, type AttachmentMeta } from './utils/messageHelpers';
-import type { HitlResponseBody, HitlResumeEntry } from '@/types/api';
-import type { AssistantMessage, ToolApprovalPosition, UserMessage, ChatMessage } from '@/types/chat';
+import type { HitlResponseBody } from '@/types/api';
+import type { AssistantMessage, UserMessage, ChatMessage } from '@/types/chat';
 import type { PreviewData } from './utils/types';
 import { createRecentlySentTracker } from './utils/recentlySentTracker';
 import { createRequestKeyTracker } from './utils/requestKey';
@@ -49,13 +49,13 @@ import { refreshComputersAfterTurn } from './useComputers';
 
 // --- Module scope extracted to session/types + utils (W1) ---
 import type {
-  TokenUsage, PendingInterrupt, PendingRejection,
+  TokenUsage, PendingInterrupt,
   SSEEvent, ModelOptions, OffloadBatch, TaskRefs,
   HistoryInterruptInfo, StreamProcessorRefs,
   ModelStatus, FallbackSuggestion,
 } from '../session/types';
-import { PROPOSAL_INTERRUPT_TYPES, SECRETARY_ACTION_TYPES, setCardFields, setCardStatus } from '../session/interrupts/buckets';
 import { createAnswerBoard, type AnswerBoard } from '../session/interrupts/answerBoard';
+import { useInterruptAnswers } from '../session/interrupts/useInterruptAnswers';
 export type { ModelStatus, FallbackSuggestion } from '../session/types';
 import type { ChatSessionRuntime } from '../session/runtime';
 import type { CardUpdater } from '../session/streamRefs';
@@ -177,7 +177,6 @@ export function useChatMessages(
   const [queuedSend, setQueuedSend] = useState<string | false>(false);
   const queuedSendRef = useRef<{
     message: string;
-    planMode: boolean;
     additionalContext: Record<string, unknown>[] | null;
     attachmentMeta: Record<string, unknown>[] | null;
     modelOptions: ModelOptions;
@@ -188,11 +187,8 @@ export function useChatMessages(
   const [messageError, setMessageError] = useState<string | StructuredError | null>(null);
   // Steering returned by the server (agent finished before consuming it)
   const [returnedSteering, setReturnedSteering] = useState<string | null>(null);
-  // HITL (Human-in-the-Loop) plan mode interrupt state
+  // HITL (Human-in-the-Loop) interrupt state
   const [pendingInterrupt, setPendingInterrupt] = useState<PendingInterrupt | null>(null);
-  // When user clicks Reject on a plan, this stores the interruptId so the next message
-  // sent via handleSendMessage is routed as rejection feedback via hitl_response.
-  const [pendingRejection, setPendingRejection] = useState<PendingRejection | null>(null);
 
   // Token usage tracking (for context window progress ring)
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
@@ -202,9 +198,6 @@ export function useChatMessages(
   const setMessagesForHandlers = setMessages as unknown as (
     updater: (prev: Record<string, unknown>[]) => Record<string, unknown>[]
   ) => void;
-
-  // Track current plan mode so HITL resume can forward it
-  const currentPlanModeRef = useRef(false);
 
   // The agent mode the latest run in view was started in. The server picks the
   // graph that resumes a checkpoint by agent_mode, so a resume answers in this
@@ -595,7 +588,6 @@ export function useChatMessages(
     currentToolCallIdRef,
     currentMessageRef,
     currentRunIdRef,
-    currentPlanModeRef,
     steeringAtOrderRef,
     lastEventIdRef,
     pendingInterruptIdsRef,
@@ -746,16 +738,13 @@ export function useChatMessages(
         // resumed: the card holds a disabled spinner until a full reload. Its
         // only other clears sit on paths a thread switch does not take.
         answerBoard.clear();
-        // And the two state slots the board arms. Their only other clears sit
-        // on answering or rejecting, which a thread switch also does not take,
-        // so thread A's leftovers act on B: a live `pendingInterrupt` disables
-        // B's composer outright, and a live `pendingRejection` turns B's next
-        // ordinary message into rejection feedback carrying A's interrupt id.
-        // A credit pause is the case that makes this ordinary rather than
+        // And the state slot the board arms. Its only other clear sits on
+        // answering, which a thread switch also does not take, so thread A's
+        // leftover acts on B: a live `pendingInterrupt` disables B's composer
+        // outright. A credit pause is the case that makes this ordinary rather than
         // exotic — resolving one means leaving to buy credits, so wandering off
         // to another thread with it unanswered is the expected way to meet it.
         setPendingInterrupt(null);
-        setPendingRejection(null);
         runAgentModeRef.current = null;
       }
     }
@@ -1012,42 +1001,15 @@ export function useChatMessages(
           (info) => info.type !== 'tool_approval' || info.target?.kind === 'attempt',
         );
         if (intInfos.length > 0) {
-          const intInfo = intInfos[0]; // Use first for setPendingInterrupt (single-slot state)
           console.log('[Reconnect] Workflow paused, making', intInfos.length, 'interrupt(s) interactive:', intInfos.map((p) => p.type));
 
           // Arm the board so answer/skip handlers can collect and batch-resume
           answerBoard.arm(intInfos.map((info) => info.interruptId));
 
-          if (intInfo.type === 'ask_user_question') {
-            setPendingInterrupt({
-              type: 'ask_user_question',
-              interruptId: intInfo.interruptId,
-              assistantMessageId: intInfo.assistantMessageId,
-              questionId: intInfo.questionId,
-            });
-          } else if (
-            PROPOSAL_INTERRUPT_TYPES.has(intInfo.type)
-            || intInfo.type === 'credit_pause'
-            || intInfo.type === 'tool_approval'
-          ) {
-            // Every proposal-shaped card restores the same single-slot state,
-            // and the type it wants is the one the entry already carries, so a
-            // per-type branch here only differed in re-spelling that literal.
-            setPendingInterrupt({
-              type: intInfo.type,
-              interruptId: intInfo.interruptId,
-              assistantMessageId: intInfo.assistantMessageId,
-              proposalId: intInfo.proposalId,
-            });
-          } else {
-            // plan_approval
-            setPendingInterrupt({
-              interruptId: intInfo.interruptId,
-              assistantMessageId: intInfo.assistantMessageId,
-              planApprovalId: intInfo.planApprovalId,
-              planMode: true,
-            });
-          }
+          // The slot is single, so it takes the first. Each queued family fills
+          // exactly one of questionId and proposalId, so one shape restores all.
+          const { type, interruptId, assistantMessageId, questionId, proposalId } = intInfos[0];
+          setPendingInterrupt({ type, interruptId, assistantMessageId, questionId, proposalId });
         }
         unresolvedHistoryInterruptRef.current = [];
         historyHasUnresolvedInterruptRef.current = false;
@@ -1456,7 +1418,7 @@ export function useChatMessages(
    * badge) and switch subsequent events to the standard stream processor so the
    * new turn renders normally.
    */
-  const handleSendSteering = async (message: string, planMode: boolean = false, additionalContext: Record<string, unknown>[] | null = null, attachmentMeta: Record<string, unknown>[] | null = null, { widgetSnapshots, chartSelections }: ModelOptions = {}) => {
+  const handleSendSteering = async (message: string, additionalContext: Record<string, unknown>[] | null = null, attachmentMeta: Record<string, unknown>[] | null = null, { widgetSnapshots, chartSelections }: ModelOptions = {}) => {
     // Show user message in chat with steering indicator. Preserve any inline
     // context cards (widget snapshots / chart selections) so a message queued
     // during compaction keeps them when the flush routes through steering.
@@ -1523,13 +1485,8 @@ export function useChatMessages(
     const requestKey = requestKeyRef.current.take(`send|${threadId}|${message}`);
     try {
       // Send to same endpoint — backend will auto-accept steering and return steering_accepted SSE
-      const result = await sendChatMessageStream(
-        message,
-        workspaceId,
-        threadId,
-        [],
-        planMode,
-        (event) => {
+      const result = await sendChatMessageStream(message, workspaceId, threadId, {
+        onEvent: (event) => {
           const eventType = event.event || 'message_chunk';
           if (eventType === 'steering_accepted') {
             // Snapshot the boundary so the primary stream's steering_delivered
@@ -1563,26 +1520,21 @@ export function useChatMessages(
         },
         additionalContext,
         agentMode,
-        userLocale,
-        userTimezone,
-        undefined,
-        undefined,
-        null,
-        null,
-        null,
+        locale: userLocale,
+        timezone: userTimezone,
         platform,
         // Stash the Content-Location run_id but defer the commit until
         // demoteToNewTurn fires. Backend emits Content-Location on every
         // POST including pure-steering responses; committing eagerly would
         // overwrite the active workflow's run_id with a stream key that
         // never gets written to.
-        (runId) => {
+        onRunIdResolved: (runId) => {
           requestKeyRef.current.clear();
           pendingRunIdFromHeader = runId;
         },
-        steeringAbort.signal,
+        signal: steeringAbort.signal,
         requestKey,
-      );
+      });
       if (mainStreamAbortRef.current === steeringAbort) {
         mainStreamAbortRef.current = null;
       }
@@ -1658,7 +1610,7 @@ export function useChatMessages(
     }
   };
 
-  const handleSendMessage = async (message: string, planMode: boolean = false, additionalContext: Record<string, unknown>[] | null = null, attachmentMeta: Record<string, unknown>[] | null = null, { model, reasoningEffort, fastMode, widgetSnapshots, chartSelections }: ModelOptions = {}) => {
+  const handleSendMessage = async (message: string, additionalContext: Record<string, unknown>[] | null = null, attachmentMeta: Record<string, unknown>[] | null = null, { model, reasoningEffort, fastMode, widgetSnapshots, chartSelections, subagentsAllowed }: ModelOptions = {}) => {
     const hasContent = message.trim() || (additionalContext && additionalContext.length > 0);
     if (!workspaceId || !hasContent) {
       return;
@@ -1688,9 +1640,11 @@ export function useChatMessages(
         chartSelections ?? null,
       );
       const queuedMessage: ChatMessage = { ...queuedMsg, queued: true };
+      // The subagents setting stays behind: compaction only runs on a thread
+      // that exists, whose row a flip made since has already PATCHed, and the
+      // value captured now would store over that flip when the send flushes.
       queuedSendRef.current = {
         message,
-        planMode,
         additionalContext,
         attachmentMeta,
         modelOptions: { model, reasoningEffort, fastMode, widgetSnapshots, chartSelections },
@@ -1706,33 +1660,11 @@ export function useChatMessages(
 
     // If agent is already streaming, send as steering message
     if (isLoading) {
-      return handleSendSteering(message, planMode, additionalContext, attachmentMeta, { widgetSnapshots, chartSelections });
+      return handleSendSteering(message, additionalContext, attachmentMeta, { widgetSnapshots, chartSelections });
     }
-
-    // Store planMode so HITL interrupt handler can access it
-    currentPlanModeRef.current = planMode;
 
     // Store model options so HITL resume can forward them
     lastModelOptionsRef.current = { model: model || null, reasoningEffort: reasoningEffort || null, fastMode: fastMode ?? null };
-
-    // Intercept: if a plan was rejected, route this message as rejection feedback
-    if (pendingRejection) {
-      const { interruptId, planMode: rejectionPlanMode } = pendingRejection;
-      setPendingRejection(null);
-
-      // Show user message in chat
-      const userMsg = createUserMessage(message);
-      recentlySentTrackerRef.current.track(message.trim(), userMsg.timestamp, userMsg.id);
-      setMessages((prev) => appendMessage(prev,userMsg));
-
-      // Send as rejection feedback via hitl_response
-      const hitlResponse = {
-        [interruptId]: {
-          decisions: [{ type: 'reject', message: message.trim() }],
-        },
-      };
-      return resumeWithHitlResponse(hitlResponse, rejectionPlanMode);
-    }
 
     // Create and add user message
     const userMessage = createUserMessage(
@@ -1816,6 +1748,7 @@ export function useChatMessages(
       agentMode,
       platform,
       timezone: userTimezone,
+      subagentsAllowed,
       queryClient,
       threadIdRef,
       setThreadId,
@@ -1840,19 +1773,15 @@ export function useChatMessages(
       // Create the event processor using the shared factory
       const processEvent = createStreamEventProcessor(runtime, streamRouterDeps, assistantMessageId, refs, getTaskIdFromEvent, wasInterruptedRef);
 
-      const result = await sendChatMessageStream(
-        message,
-        workspaceId,
-        effectiveThreadId,
-        [],
-        planMode,
-        processEvent,
+      const result = await sendChatMessageStream(message, workspaceId, effectiveThreadId, {
+        onEvent: processEvent,
         additionalContext,
         agentMode,
-        userLocale, userTimezone, undefined, undefined,
-        model || null,
-        reasoningEffort || null,
-        fastMode ?? null,
+        locale: userLocale,
+        timezone: userTimezone,
+        llmModel: model || null,
+        reasoningEffort: reasoningEffort || null,
+        fastMode: fastMode ?? null,
         platform,
         // Latch run_id AND the server-assigned thread_id from Content-Location
         // BEFORE the first SSE body byte. run_id closes the reconnect race
@@ -1860,16 +1789,17 @@ export function useChatMessages(
         // ('__default__' until the first event) still hard-cancel the backend
         // run instead of skipping cancel. The first event still drives the
         // route/storage update (see the thread_id branch in processEvent).
-        (runId, resolvedThreadId) => {
+        onRunIdResolved: (runId, resolvedThreadId) => {
           requestKeyRef.current.clear();
           currentRunIdRef.current = runId;
           if (resolvedThreadId && resolvedThreadId !== '__default__') {
             threadIdRef.current = resolvedThreadId;
           }
         },
-        abortController.signal,
+        signal: abortController.signal,
         requestKey,
-      );
+        threadSettings: { subagentsAllowed },
+      });
 
       // The user hit stop: stopWorkflow already finalized the message and ran
       // teardown. Skip reconnect/cleanup so we don't double-fire. Exception: a
@@ -2001,16 +1931,16 @@ export function useChatMessages(
     if (!queued) return;
     queuedSendRef.current = null;
     setQueuedSend(false);
-    const { message, planMode, additionalContext, attachmentMeta, modelOptions, messageId } = queued;
+    const { message, additionalContext, attachmentMeta, modelOptions, messageId } = queued;
     // Drop the optimistic shimmer bubble; the send path re-adds the real one
     // (steering shimmer if a turn is still running, else a normal user bubble).
     if (messageId) {
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     }
     if (isLoading) {
-      handleSendSteering(message, planMode, additionalContext, attachmentMeta, modelOptions);
+      handleSendSteering(message, additionalContext, attachmentMeta, modelOptions);
     } else {
-      handleSendMessage(message, planMode, additionalContext, attachmentMeta, modelOptions);
+      handleSendMessage(message, additionalContext, attachmentMeta, modelOptions);
     }
     // Fires on isCompacting transitions. isLoading and the send handlers are
     // captured from the render where isCompacting went false — that render is
@@ -2027,7 +1957,7 @@ export function useChatMessages(
    * long after the render that armed the interrupt, through handlers memoized
    * on it, and has to use the current runtime, callbacks and model options.
    */
-  const resumeWithHitlResponse = useStableHandler(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
+  const resumeWithHitlResponse = useStableHandler(async (hitlResponse: HitlResponseBody) => {
     // The resume opens the next run, in the same mode.
     const resumeAgentMode = runAgentModeRef.current ?? agentMode;
     // Ahead of beginResume, so the settler's fence captures this run's own
@@ -2074,21 +2004,20 @@ export function useChatMessages(
       `hitl|${threadId}|${JSON.stringify(hitlResponse)}`,
     );
     let wasDisconnected = false;
+    const { model, reasoningEffort, fastMode } = lastModelOptionsRef.current;
     try {
-      const result = await sendHitlResponse(
-        workspaceId,
-        threadId,
-        hitlResponse,
-        processEvent,
-        planMode,
-        lastModelOptionsRef.current as { model?: string; reasoningEffort?: string; fastMode?: boolean },
-        resumeAgentMode,
+      const result = await sendHitlResponse(hitlResponse, workspaceId, threadId, {
+        onEvent: processEvent,
+        llmModel: model,
+        reasoningEffort,
+        fastMode,
+        agentMode: resumeAgentMode,
         // Latch the fresh run_id from response headers before the first SSE
         // body byte. Without this, an early disconnect (between the pre-POST
         // clear above and the metadata frame) would let
         // attemptReconnectAfterDisconnect fall back to the prior run's
         // TaskInfo and silently hang.
-        (runId) => {
+        onRunIdResolved: (runId) => {
           requestKeyRef.current.clear();
           currentRunIdRef.current = runId;
           // The backend opened a run, so the resume was admitted. Settled here
@@ -2097,9 +2026,9 @@ export function useChatMessages(
           admitted = true;
           settleResume(true);
         },
-        abortController.signal,
+        signal: abortController.signal,
         requestKey,
-      );
+      });
 
       // User hit stop: stopWorkflow already finalized + tore down. Exception: a
       // foreground handler aborted this stream on tab resume (background abort,
@@ -2193,223 +2122,15 @@ export function useChatMessages(
     }
   });
 
-  const handleApproveInterrupt = useCallback(() => {
-    if (!pendingInterrupt) return;
-    const { interruptId, planApprovalId, planMode } = pendingInterrupt;
-    const approvalId = planApprovalId!;
-
-    // Flip the plan card wherever it lives: a deduped re-raise can point
-    // pendingInterrupt at a hidden resume bubble, so a single-bubble write
-    // could miss the visible card.
-    setMessages((prev) => setCardStatus(prev, 'planApprovals', approvalId, 'approved'));
-
-    const hitlResponse = {
-      [interruptId!]: { decisions: [{ type: 'approve' }] },
-    };
-    resumeWithHitlResponse(hitlResponse, planMode);
-  }, [pendingInterrupt, resumeWithHitlResponse, setMessages]);
-
-  const handleRejectInterrupt = useCallback(() => {
-    if (!pendingInterrupt) return;
-    const { interruptId, planApprovalId, planMode } = pendingInterrupt;
-    const approvalId = planApprovalId!;
-
-    // Flip the plan card wherever it lives (see approve above).
-    setMessages((prev) => setCardStatus(prev, 'planApprovals', approvalId, 'rejected'));
-
-    // Store interruptId + planMode so next handleSendMessage routes as rejection feedback
-    setPendingRejection({ interruptId: interruptId!, planMode: planMode! });
-    setPendingInterrupt(null);
-  }, [pendingInterrupt, setMessages]);
-
-  // Shared HITL collect-then-batch-resume. Parallel interrupts must be answered
-  // together (one batched resume), so each handler records its own interrupt_id's
-  // decision on the board, and we resume only once EVERY armed interrupt has an
-  // answer. Reading pendingInterrupt (a single slot N dispatches overwrite)
-  // instead would answer the wrong interrupt and leave the others to re-interrupt.
-  // Returns whether a resume actually went out, which a caller that
-  // optimistically flipped its card has to know, or the card sits in an
-  // in-flight state no stream will ever settle.
-  // planMode defaults to false; question handlers pass currentPlanModeRef.current.
-  const collectHitlResponseAndMaybeResume = useCallback((
-    interruptId: string,
-    response: HitlResumeEntry,
-    planMode: boolean = false,
-  ) => {
-    const batch = answerBoard.answer(interruptId, response);
-    if (batch) resumeWithHitlResponse(batch, planMode);
-    return !!batch;
-  }, [resumeWithHitlResponse, answerBoard]);
-
-  const handleAnswerQuestion = useCallback((answer: string, questionId: string, interruptId: string) => {
-    if (!questionId || !interruptId) return;
-
-    // Optimistically mark the card as answered
-    setMessages((prev) => setCardFields(prev, 'userQuestions', questionId, { status: 'answered', answer }));
-
-    // Collect this response for batching (parallel interrupts need all responses at once)
-    collectHitlResponseAndMaybeResume(
-      interruptId,
-      { decisions: [{ type: 'approve', message: answer }] },
-      currentPlanModeRef.current,
-    );
-  }, [collectHitlResponseAndMaybeResume, setMessages]);
-
-  const handleSkipQuestion = useCallback((questionId: string, interruptId: string) => {
-    if (!questionId || !interruptId) return;
-
-    // Mark the card as skipped
-    setMessages((prev) => setCardStatus(prev, 'userQuestions', questionId, 'skipped'));
-
-    // Collect this response for batching (parallel interrupts need all responses at once)
-    collectHitlResponseAndMaybeResume(
-      interruptId,
-      { decisions: [{ type: 'reject' }] },
-      currentPlanModeRef.current,
-    );
-  }, [collectHitlResponseAndMaybeResume, setMessages]);
-
-  // Shared helper: update a proposal's status within an AssistantMessage.
-  // Used by all HITL approve/reject handlers below.
-  const resolveProposal = useCallback((proposalKey: string, pid: string, status: string) => {
-    setMessages((prev) => setCardStatus(prev, proposalKey, pid, status));
-  }, [setMessages]);
-
-  const handleApproveCreateWorkspace = useCallback(() => {
-    if (!pendingInterrupt || pendingInterrupt.type !== 'create_workspace') return;
-    resolveProposal('workspaceProposals', pendingInterrupt.proposalId!, 'approved');
-    resumeWithHitlResponse({ [pendingInterrupt.interruptId!]: { decisions: [{ type: 'approve' }] } }, false);
-  }, [pendingInterrupt, resumeWithHitlResponse, resolveProposal]);
-
-  const handleRejectCreateWorkspace = useCallback(() => {
-    if (!pendingInterrupt || pendingInterrupt.type !== 'create_workspace') return;
-    resolveProposal('workspaceProposals', pendingInterrupt.proposalId!, 'rejected');
-    resumeWithHitlResponse({ [pendingInterrupt.interruptId!]: { decisions: [{ type: 'reject' }] } }, false);
-  }, [pendingInterrupt, resumeWithHitlResponse, resolveProposal]);
-
-  const handleApproveStartQuestion = useCallback(() => {
-    if (!pendingInterrupt || pendingInterrupt.type !== 'start_question') return;
-    resolveProposal('questionProposals', pendingInterrupt.proposalId!, 'approved');
-    resumeWithHitlResponse({ [pendingInterrupt.interruptId!]: { decisions: [{ type: 'approve' }] } }, false);
-  }, [pendingInterrupt, resumeWithHitlResponse, resolveProposal]);
-
-  const handleRejectStartQuestion = useCallback(() => {
-    if (!pendingInterrupt || pendingInterrupt.type !== 'start_question') return;
-    resolveProposal('questionProposals', pendingInterrupt.proposalId!, 'rejected');
-    resumeWithHitlResponse({ [pendingInterrupt.interruptId!]: { decisions: [{ type: 'reject' }] } }, false);
-  }, [pendingInterrupt, resumeWithHitlResponse, resolveProposal]);
-
-  // --- PTC Agent approve/reject ---
-  // The clicked card supplies its OWN proposalId + interruptId, collected then
-  // batch-resumed — `pendingInterrupt` is single-slot state that N parallel
-  // dispatches overwrite, so reading it would answer the wrong interrupt.
-  const handleApprovePTCAgent = useCallback((
-    pad?: Record<string, unknown>,
-    overrides?: { report_back?: boolean },
-    proposalId?: string,
-    interruptId?: string,
-  ) => {
-    if (!proposalId || !interruptId) return;
-
-    // Track this proposal for thread_id backfill from the resumed stream's
-    // tool_call_result. tool_call_id comes from the clicked card's own proposal
-    // data, NOT pendingInterrupt, so it's right under N parallel dispatches.
-    const toolCallId = pad?.tool_call_id as string | undefined;
-    if (toolCallId) {
-      pendingPTCBackfillRef.current.set(toolCallId, proposalId);
-    }
-
-    // Arm the report-back watch AT DISPATCH, not at the dispatch turn's stream
-    // end: the wake is pub/sub with no replay, so a fast PTC finishing mid-turn
-    // would hit zero subscribers and lose the report-back. Subscribing now
-    // latches such a wake (enqueued before the reconcile's isStreamingRef bail)
-    // to attach at stream end. No named run exists yet (approval is what
-    // dispatches), so no seed and no poke.
-    if (overrides?.report_back !== false) {
-      armReportBackWatch(threadIdRef.current, null, null);
-    }
-
-    resolveProposal('ptcAgentProposals', proposalId, 'approved');
-
-    const decision: { type: string; message?: string; overrides?: { report_back?: boolean } } = { type: 'approve' };
-    if (overrides) {
-      decision.overrides = overrides;
-    }
-
-    // Collect-then-batch: hold each card's decision keyed by its interrupt_id and
-    // resume only when ALL pending interrupts have a decision.
-    collectHitlResponseAndMaybeResume(interruptId, { decisions: [decision] });
-  }, [collectHitlResponseAndMaybeResume, resolveProposal, armReportBackWatch]);
-
-  const handleRejectPTCAgent = useCallback((
-    _pad?: Record<string, unknown>,
-    proposalId?: string,
-    interruptId?: string,
-  ) => {
-    if (!proposalId || !interruptId) return;
-    resolveProposal('ptcAgentProposals', proposalId, 'rejected');
-    collectHitlResponseAndMaybeResume(interruptId, { decisions: [{ type: 'reject' }] });
-  }, [collectHitlResponseAndMaybeResume, resolveProposal]);
-
-  // --- Secretary action approve/reject (delete_workspace, stop_workspace, delete_thread) ---
-  const handleApproveSecretaryAction = useCallback(() => {
-    if (!pendingInterrupt || !SECRETARY_ACTION_TYPES.has(pendingInterrupt.type!)) return;
-    resolveProposal('secretaryActionProposals', pendingInterrupt.proposalId!, 'approved');
-    resumeWithHitlResponse({ [pendingInterrupt.interruptId!]: { decisions: [{ type: 'approve' }] } }, false);
-  }, [pendingInterrupt, resumeWithHitlResponse, resolveProposal]);
-
-  const handleRejectSecretaryAction = useCallback(() => {
-    if (!pendingInterrupt || !SECRETARY_ACTION_TYPES.has(pendingInterrupt.type!)) return;
-    resolveProposal('secretaryActionProposals', pendingInterrupt.proposalId!, 'rejected');
-    resumeWithHitlResponse({ [pendingInterrupt.interruptId!]: { decisions: [{ type: 'reject' }] } }, false);
-  }, [pendingInterrupt, resumeWithHitlResponse, resolveProposal]);
-
-  // --- Credit pause resume ---
-  // Approve is the only decision: the gate's interrupt() discards the resume
-  // value and re-checks the verdict itself, so there is nothing to answer —
-  // resuming IS the answer. Admission re-runs the quota check and can refuse
-  // with a 429 that opens no turn at all, so the click only moves the card to
-  // `resuming`; the stream settles it either way. The card supplies its own ids
-  // (single-slot pendingInterrupt would misroute after a reload).
-  const handleResumeCreditPause = useCallback((pauseId: string, interruptId: string) => {
-    if (!pauseId || !interruptId) return;
-    answerBoard.armCreditPause(pauseId);
-    const resumed = collectHitlResponseAndMaybeResume(
-      interruptId,
-      { decisions: [{ type: 'approve' }] },
-    );
-    // Another interrupt in this turn is still unanswered, so nothing was sent
-    // and no stream will settle this card. Put it back rather than leave a
-    // disabled spinner the user can only clear by reloading.
-    if (!resumed) answerBoard.restoreCreditPause();
-  }, [collectHitlResponseAndMaybeResume, answerBoard]);
-
-  // Direct MCP tool approvals answer from the card itself: the card carries its
-  // own interrupt id, so several stopped calls in one turn each collect their
-  // decision and the batch resumes once the last one is answered.
-  const settleToolApproval = useCallback((
-    approvalId: string,
-    interruptId: string,
-    position: ToolApprovalPosition,
-    click: { approved: boolean; message?: string },
-    attemptId?: string,
-  ) => {
-    if (!approvalId || !interruptId) return;
-    const entry = answerBoard.decideToolCall(approvalId, interruptId, position, click, attemptId);
-    if (entry) collectHitlResponseAndMaybeResume(interruptId, entry);
-  }, [collectHitlResponseAndMaybeResume, answerBoard]);
-
-  const handleApproveToolCall = useCallback((
-    approvalId: string, interruptId: string, position: ToolApprovalPosition, attemptId?: string,
-  ) => {
-    settleToolApproval(approvalId, interruptId, position, { approved: true }, attemptId);
-  }, [settleToolApproval]);
-
-  const handleRejectToolCall = useCallback((
-    approvalId: string, interruptId: string, position: ToolApprovalPosition, message?: string, attemptId?: string,
-  ) => {
-    settleToolApproval(approvalId, interruptId, position, { approved: false, message }, attemptId);
-  }, [settleToolApproval]);
+  const interruptAnswers = useInterruptAnswers({
+    pendingInterrupt,
+    setMessages,
+    resumeWithHitlResponse,
+    answerBoard,
+    pendingPTCBackfillRef,
+    armReportBackWatch,
+    threadIdRef,
+  });
 
   const insertNotification = useCallback(
     (text: string, variant: 'info' | 'success' | 'warning' = 'info', detail?: string) => {
@@ -2569,27 +2290,21 @@ export function useChatMessages(
             abortController.signal,
             requestKey,
           )
-        : await sendChatMessageStream(
-            message || '',
-            workspaceId,
-            threadId,
-            [],
-            false,
-            processEvent,
-            null,
+        : await sendChatMessageStream(message || '', workspaceId, threadId, {
+            onEvent: processEvent,
             agentMode,
-            userLocale,
-            userTimezone,
+            locale: userLocale,
+            timezone: userTimezone,
             checkpointId,
             forkFromTurn,
-            modelOptions.model || null,
-            modelOptions.reasoningEffort || null,
-            modelOptions.fastMode ?? null,
+            llmModel: modelOptions.model || null,
+            reasoningEffort: modelOptions.reasoningEffort || null,
+            fastMode: modelOptions.fastMode ?? null,
             platform,
-            latchRunId,
-            abortController.signal,
+            onRunIdResolved: latchRunId,
+            signal: abortController.signal,
             requestKey,
-          );
+          });
 
       // User hit stop: stopWorkflow already finalized + tore down. Exception: a
       // foreground handler aborted this stream on tab resume (background abort,
@@ -2861,22 +2576,7 @@ export function useChatMessages(
     stopWorkflow,
     stopCompaction,
     pendingInterrupt,
-    pendingRejection,
-    handleApproveInterrupt,
-    handleRejectInterrupt,
-    handleAnswerQuestion,
-    handleSkipQuestion,
-    handleApproveCreateWorkspace,
-    handleRejectCreateWorkspace,
-    handleApproveStartQuestion,
-    handleRejectStartQuestion,
-    handleApprovePTCAgent,
-    handleRejectPTCAgent,
-    handleApproveSecretaryAction,
-    handleRejectSecretaryAction,
-    handleResumeCreditPause,
-    handleApproveToolCall,
-    handleRejectToolCall,
+    ...interruptAnswers,
     tokenUsage,
     isShared,
     insertNotification,

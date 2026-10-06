@@ -135,6 +135,98 @@ async def test_create_thread(mock_db_connection, mock_cursor):
     assert result["workspace_id"] == "ws-1"
 
 
+def _insert_values(sql, params):
+    """The INSERT's columns paired with the values each one binds.
+
+    A column's value expression can bind more than one: the switch's also
+    binds the workspace its owner's default is read from.
+    """
+    columns = sql.split("INSERT INTO conversation_threads (", 1)[1].split(")", 1)[0]
+    names = [c.strip() for c in columns.split(",")]
+    values_sql = sql.split("VALUES (", 1)[1]
+    expressions, depth, current = [], 0, ""
+    for ch in values_sql:
+        if ch == ")" and depth == 0:
+            break
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if ch == "," and depth == 0:
+            expressions.append(current)
+            current = ""
+        else:
+            current += ch
+    expressions.append(current)
+    # Placeholders and params stay aligned whichever optional columns are set.
+    assert len(expressions) == len(names)
+    assert sql.count("%s") == len(params)
+    bound, rest = {}, list(params)
+    for name, expression in zip(names, expressions):
+        count = expression.count("%s")
+        bound[name], rest = tuple(rest[:count]), rest[count:]
+    return {name: b[0] if len(b) == 1 else b for name, b in bound.items()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [True, False, None])
+async def test_create_thread_binds_the_switch_with_its_workspace(
+    mock_db_connection, mock_cursor, allowed
+):
+    """The switch is bound with the workspace whose owner's default decides
+    whether it is stored or left NULL to follow that default (proven against
+    PostgreSQL in tests/integration/test_thread_subagents_default_db.py)."""
+    from src.server.database.conversation import create_thread
+
+    mock_cursor.fetchone.side_effect = [{"next_index": 0}, _thread_row()]
+
+    await create_thread(
+        conversation_thread_id="t-1",
+        workspace_id="ws-1",
+        current_status="in_progress",
+        platform="telegram",
+        external_id="chat:42",
+        metadata={"origin": {"type": "automation", "id": "a-1"}},
+        subagents_allowed=allowed,
+    )
+
+    values = _insert_values(*mock_cursor.execute.call_args_list[-1].args)
+    assert values["subagents_allowed"] == (allowed, "ws-1")
+    assert values["platform"] == "telegram"
+
+
+@pytest.mark.asyncio
+async def test_create_thread_index_retry_keeps_the_switch_aligned(
+    mock_db_connection, mock_cursor
+):
+    """The retry rebuilds the bound values with a new thread_index; the switch
+    keeps its column on every attempt."""
+    from src.server.database.conversation import create_thread
+
+    mock_cursor.execute.side_effect = [
+        None,
+        _make_unique_violation("unique_thread_index_per_workspace"),
+        None,
+        None,
+    ]
+    mock_cursor.fetchone.side_effect = [
+        {"next_index": 0},
+        {"next_index": 1},
+        _thread_row(),
+    ]
+
+    await create_thread(
+        conversation_thread_id="t-1",
+        workspace_id="ws-1",
+        current_status="in_progress",
+        platform="web",
+        subagents_allowed=False,
+    )
+
+    first = _insert_values(*mock_cursor.execute.call_args_list[1].args)
+    second = _insert_values(*mock_cursor.execute.call_args_list[3].args)
+    assert first["subagents_allowed"] == second["subagents_allowed"] == (False, "ws-1")
+    assert (first["thread_index"], second["thread_index"]) == (0, 1)
+    assert first["platform"] == second["platform"] == "web"
+
+
 @pytest.mark.asyncio
 async def test_update_thread_status(mock_db_connection, mock_cursor):
     """update_thread_status updates status and returns True."""

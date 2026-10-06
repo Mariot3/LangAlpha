@@ -42,11 +42,10 @@ from ptc_agent.agent.middleware.provider_cache import (
     breakpoint_marker,
     tag_last_text_block,
 )
-from ptc_agent.agent.middleware.compaction.utils import resolve_cutoff_index
 from ptc_agent.agent.middleware.runtime_context.changes import SourceRead
 from ptc_agent.agent.middleware.runtime_context.durable import (
     build_update_message,
-    runtime_update_from_message,
+    rows_in_view,
 )
 from ptc_agent.agent.middleware.runtime_context.epoch import (
     MEMO_DISPLAY_CAP,
@@ -65,6 +64,7 @@ from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
 from ptc_agent.agent.middleware.runtime_context.profile import ProfileSnapshot
 from ptc_agent.agent.middleware.runtime_context.state import STATE_BASELINE, state_get
 from ptc_agent.agent.middleware.runtime_context.templates import render_template
+from ptc_agent.agent.middleware.runtime_context.turn import NON_CHANGE_ROW_KINDS
 from ptc_agent.agent.roles import AgentRole
 from ptc_agent.agent.tools.context_file_policy import MAX_AGENT_MD_SIZE, MAX_MEMORY_BLOCK_SIZE
 from ptc_agent.core.paths import (
@@ -79,25 +79,16 @@ AGENT_MD_PATH = "/agent.md"
 
 
 def _retained_change_rows(state: Any) -> tuple[str, ...]:
-    """The kinds of the change rows the model can still read, anchors excluded.
+    """The kinds of the change rows the model can still read.
 
-    Resolved the way the compaction slice is, so a row the summary swallowed
-    does not count and a row after the boundary does. A rebuilt row that kept
-    earlier rows in force stands in for them: once a compaction has taken
-    those rows and kept it, it is the only word left that their source was
-    carried unread, and the next rebuild has to keep carrying it or fold it.
+    A rebuilt row that kept earlier rows in force stands in for them: once a
+    compaction has taken those rows and kept it, it is the only word left that
+    their source was carried unread, and the next rebuild has to keep carrying
+    it or fold it.
     """
-    from ptc_agent.agent.middleware.runtime_context.turn import TURN_ROW_KIND
-
-    messages = state_get(state, "messages")
-    if not isinstance(messages, (list, tuple)):
-        return ()
-    event = state_get(state, "_summarization_event")
-    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
     kinds: list[str] = []
-    for message in list(messages)[cutoff:]:
-        update = runtime_update_from_message(message)
-        if update is None or update.kind == TURN_ROW_KIND:
+    for update in rows_in_view(state):
+        if update.kind in NON_CHANGE_ROW_KINDS:
             continue
         kinds.append(update.kind)
         if update.kind == "baseline_rebuilt":
@@ -107,6 +98,7 @@ def _retained_change_rows(state: Any) -> tuple[str, ...]:
                 if isinstance(kind, str) and kind not in kinds
             )
     return tuple(kinds)
+
 
 # A store or sandbox read at the turn boundary must not stall the turn.
 _READ_TIMEOUT_S = 2.0

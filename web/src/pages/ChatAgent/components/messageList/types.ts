@@ -25,7 +25,6 @@ export interface ContentSegmentRecord {
   toolCallId?: string;
   todoListId?: string;
   subagentId?: string;
-  planApprovalId?: string;
   questionId?: string;
   proposalId?: string;
   widgetId?: string;

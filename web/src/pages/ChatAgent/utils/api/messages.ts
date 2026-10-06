@@ -14,36 +14,70 @@ export async function replayThreadHistory(threadId: string, onEvent: (event: Rec
   await streamFetch(`/api/v1/threads/${threadId}/messages/replay`, { method: 'GET', headers: { ...authHeaders } }, onEvent);
 }
 
+/**
+ * Thread settings stored on the thread a send creates. A send to an existing
+ * thread leaves them alone: there they change only through PATCH /threads/{id}.
+ */
+export interface SendThreadSettings {
+  subagentsAllowed?: boolean;
+}
+
+type OnStreamEvent = (event: Record<string, unknown>) => void;
+
+/** What a send and a resume both carry besides their message. */
+interface StreamTurnOptions {
+  onEvent?: OnStreamEvent;
+  agentMode?: string;
+  llmModel?: string | null;
+  reasoningEffort?: string | null;
+  fastMode?: boolean | null;
+  /** Called with the run id from the response headers, before the first
+   *  event, so a disconnect that early still knows which run to rejoin. */
+  onRunIdResolved?: ((runId: string, threadId: string | null) => void) | null;
+  signal?: AbortSignal | null;
+  requestKey?: string | null;
+}
+
+export interface SendChatMessageOptions extends StreamTurnOptions {
+  additionalContext?: Record<string, unknown>[] | string | null;
+  locale?: string;
+  timezone?: string;
+  checkpointId?: string | null;
+  forkFromTurn?: number | null;
+  platform?: string | null;
+  threadSettings?: SendThreadSettings;
+}
+
+export type SendHitlResponseOptions = StreamTurnOptions;
+
 export async function sendChatMessageStream(
   message: string,
   workspaceId: string,
   threadId: string | null = null,
-  messageHistory: Array<{ role: string; content: string }> = [],
-  planMode: boolean = false,
-  onEvent: (event: Record<string, unknown>) => void = () => {},
-  additionalContext: Record<string, unknown>[] | string | null = null,
-  agentMode: string = 'ptc',
-  locale: string = 'en-US',
-  timezone: string = 'America/New_York',
-  checkpointId: string | null = null,
-  forkFromTurn: number | null = null,
-  llmModel: string | null = null,
-  reasoningEffort: string | null = null,
-  fastMode: boolean | null = null,
-  platform: string | null = null,
-  onRunIdResolved: ((runId: string, threadId: string | null) => void) | null = null,
-  signal: AbortSignal | null = null,
-  requestKey: string | null = null,
+  {
+    onEvent = () => {},
+    additionalContext = null,
+    agentMode = 'ptc',
+    locale = 'en-US',
+    timezone = 'America/New_York',
+    checkpointId = null,
+    forkFromTurn = null,
+    llmModel = null,
+    reasoningEffort = null,
+    fastMode = null,
+    platform = null,
+    onRunIdResolved = null,
+    signal = null,
+    requestKey = null,
+    threadSettings = {},
+  }: SendChatMessageOptions = {},
 ) {
   // For checkpoint replay (regenerate/retry), send empty messages
-  const messages = checkpointId && !message
-    ? []
-    : [...messageHistory, { role: 'user', content: message }];
+  const messages = checkpointId && !message ? [] : [{ role: 'user', content: message }];
   const body: Record<string, unknown> = {
     workspace_id: workspaceId,
     messages,
     agent_mode: agentMode,
-    plan_mode: planMode,
     locale,
     timezone,
   };
@@ -61,6 +95,7 @@ export async function sendChatMessageStream(
   if (reasoningEffort) body.reasoning_effort = reasoningEffort;
   if (fastMode != null) body.fast_mode = fastMode;
   if (platform) body.platform = platform;
+  if (threadSettings.subagentsAllowed !== undefined) body.subagents_allowed = threadSettings.subagentsAllowed;
   // Use /threads/{id}/messages for existing thread, /threads/messages for new
   const isNewThread = !threadId || threadId === '__default__';
   const url = isNewThread
@@ -574,37 +609,34 @@ export async function listWorkspaceFiles(
 }
 
 /**
- * Send an HITL (Human-in-the-Loop) resume response to continue an interrupted workflow.
- * Used after the agent triggers a plan-mode interrupt and the user approves or rejects.
- *
- * @param {string} workspaceId - The workspace ID
- * @param {string} threadId - The thread ID of the interrupted workflow
- * @param {Object} hitlResponse - The HITL response payload, e.g. { [interruptId]: { decisions: [{ type: "approve" }] } }
- * @param {Function} onEvent - Callback for each SSE event
- * @param {boolean} planMode - Whether plan mode is active (to preserve SubmitPlan tool)
+ * Resume an interrupted workflow with the user's answers (a question, a
+ * proposal, a tool approval, a credit pause), keyed by interrupt id, e.g.
+ * `{ [interruptId]: { decisions: [{ type: 'approve' }] } }`.
  */
 export async function sendHitlResponse(
+  hitlResponse: Record<string, unknown>,
   workspaceId: string,
   threadId: string,
-  hitlResponse: Record<string, unknown>,
-  onEvent: (event: Record<string, unknown>) => void = () => {},
-  planMode: boolean = false,
-  modelOptions: { model?: string; reasoningEffort?: string; fastMode?: boolean } = {},
-  agentMode: string = 'ptc',
-  onRunIdResolved: ((runId: string, threadId: string | null) => void) | null = null,
-  signal: AbortSignal | null = null,
-  requestKey: string | null = null,
+  {
+    onEvent = () => {},
+    agentMode = 'ptc',
+    llmModel = null,
+    reasoningEffort = null,
+    fastMode = null,
+    onRunIdResolved = null,
+    signal = null,
+    requestKey = null,
+  }: SendHitlResponseOptions = {},
 ) {
   const body: Record<string, unknown> = {
     workspace_id: workspaceId,
     messages: [],
     hitl_response: hitlResponse,
-    plan_mode: planMode,
     agent_mode: agentMode,
   };
-  if (modelOptions?.model) body.llm_model = modelOptions.model;
-  if (modelOptions?.reasoningEffort) body.reasoning_effort = modelOptions.reasoningEffort;
-  if (modelOptions?.fastMode != null) body.fast_mode = modelOptions.fastMode;
+  if (llmModel) body.llm_model = llmModel;
+  if (reasoningEffort) body.reasoning_effort = reasoningEffort;
+  if (fastMode != null) body.fast_mode = fastMode;
   if (requestKey) body.request_key = requestKey;
   return await postSSEStream(`/api/v1/threads/${threadId}/messages`, body, { onEvent, onRunIdResolved, signal });
 }

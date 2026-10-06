@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from 'react';
-import { Activity, ArrowLeft, BookMarked, BookOpen, CandlestickChart, FolderOpen, LayoutDashboard, PanelRight, Plus, ScrollText, Settings, X, XCircle, Zap, type LucideIcon } from 'lucide-react';
+import { Activity, ArrowLeft, BookMarked, BookOpen, CandlestickChart, FolderOpen, LayoutDashboard, PanelRight, Plus, ScrollText, Settings, X, XCircle, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -115,8 +115,6 @@ function describe(tab: FileTab, t: TFunction, source: TabSource): TabReading {
       toolReadings.set(proc, { t, reading });
       return reading;
     }
-    case 'plan':
-      return { name: t('filePanel.planTab'), Glyph: Zap, detail: null };
     case 'sources':
       return { name: t('filePanel.sourcesTab', { count: countDedupedSources(source as Record<string, ProvenanceRecord> | undefined) }), Glyph: BookOpen, detail: null };
   }

@@ -22,9 +22,11 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from ptc_agent.agent.middleware.compaction.utils import resolve_cutoff_index
 from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
     harness_block_for,
 )
+from ptc_agent.agent.middleware.runtime_context.state import state_get
 from ptc_agent.agent.middleware.runtime_context.templates import render_template
 
 #: ``lc_source`` tag on a persisted row. Registered in the shared message
@@ -127,6 +129,35 @@ def runtime_update_from_message(message: Any) -> DurableUpdate | None:
     data = dict(meta) if isinstance(meta, dict) else {}
     data["text"] = update_text(message)
     return DurableUpdate.from_dict(data)
+
+
+def rows_in_view(state: Any) -> list[DurableUpdate]:
+    """The rows the model can still read, oldest first.
+
+    Only rows from the compaction cutoff onward count, resolved the way the
+    compaction slice is: a row the summary swallowed is one the model no longer
+    reads, so whatever it said is no longer said.
+    """
+    messages = state_get(state, "messages")
+    if not isinstance(messages, (list, tuple)):
+        return []
+    event = state_get(state, "_summarization_event")
+    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
+    rows = (runtime_update_from_message(message) for message in list(messages)[cutoff:])
+    return [row for row in rows if row is not None]
+
+
+def last_stated(state: Any, kind: str, key: str, default: Any = None) -> Any:
+    """``provenance[key]`` of the last row in view of ``kind`` that carries it.
+
+    A row of the kind without the key is passed over rather than read as the
+    answer: it comes from a build that did not stamp it, or had nothing to say
+    on it.
+    """
+    for row in reversed(rows_in_view(state)):
+        if row.kind == kind and key in row.provenance:
+            return row.provenance[key]
+    return default
 
 
 def update_text(message: Any) -> str:

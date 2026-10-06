@@ -9,11 +9,15 @@ export interface LocationState {
   agentMode?: string;
   workspaceStatus?: string | null;
   initialMessage?: string;
-  planMode?: boolean;
   additionalContext?: Record<string, unknown>[] | null;
   attachmentMeta?: Record<string, unknown>[] | null;
   model?: string;
   reasoningEffort?: string;
+  /**
+   * The Subagents toggle of the PTC composer that sent `initialMessage`, for
+   * the thread that send starts. Absent leaves it to the user's default.
+   */
+  subagentsAllowed?: boolean;
   isOnboarding?: boolean;
   isPersonalizing?: boolean;
   isModifyingPreferences?: boolean;
@@ -43,8 +47,6 @@ export interface LocationState {
   skills?: string[];
   [key: string]: unknown;
 }
-
-export type { PlanData } from '../filePanel/types';
 
 /** Subagent message shape (matches useCardState's SubagentMessage) */
 export interface SubagentMessage {
@@ -133,6 +135,11 @@ export interface ModelOptions {
   widgetSnapshots?: WidgetContextSnapshot[];
   /** Chart selections riding this send, so the user bubble renders their cards. */
   chartSelections?: ChartSelectionSnapshot[];
+  /**
+   * The thread's subagents setting, carried only by the send that creates the
+   * thread (`useThreadSubagents`).
+   */
+  subagentsAllowed?: boolean;
 }
 
 export interface ActionCommand {

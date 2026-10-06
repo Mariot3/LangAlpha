@@ -12,8 +12,8 @@ Usage examples:
   # The Chief of Staff (the agent in Home)
   python scripts/utils/render_prompt.py --role chief_of_staff
 
-  # PTC with plan mode + storage enabled
-  python scripts/utils/render_prompt.py --plan-mode --storage
+  # PTC with the TodoWrite opt-in + storage enabled
+  python scripts/utils/render_prompt.py --todo --storage
 
   # General-purpose subagent prompt
   python scripts/utils/render_prompt.py --subagent general-purpose
@@ -124,7 +124,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # Feature flags
-    p.add_argument("--plan-mode", action="store_true", help="Enable plan mode section.")
+    p.add_argument(
+        "--todo", action="store_true", help="Render as if the user opted in to TodoWrite."
+    )
     p.add_argument(
         "--crawl", action="store_true", help="Enable the site-crawl tool section (WebCrawl/WebMap)."
     )
@@ -303,7 +305,7 @@ def render(args: argparse.Namespace) -> str:
         tool_summary=tool_summary,
         subagent_summary=subagent_summary,
         user_profile=user_profile,
-        plan_mode=args.plan_mode,
+        todo_enabled=args.todo,
         role=args.role,
         crawl_enabled=args.crawl,
         storage_enabled=args.storage,

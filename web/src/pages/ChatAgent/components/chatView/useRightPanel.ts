@@ -11,12 +11,11 @@ import { clampPanelWidth as clampPanelWidthUtil } from '@/lib/panelUtils';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
 import { CHART_SURFACE_MIN_WIDTH } from '@/pages/MarketView/components/chartSurfaceLayout';
 import type { FileTab } from '../filePanel/useFileTabs';
-import type { ChartTabSpec, PlanTabSpec, UnsequencedTarget } from '../filePanel/types';
+import type { ChartTabSpec, UnsequencedTarget } from '../filePanel/types';
 import type { PreviewData } from '../../hooks/utils/types';
-import type { PlanData } from './types';
 import { NO_TRANSCRIPTS, useToolCallLookup, type TranscriptMessage } from './toolCallLookup';
 import { useTranscriptReader } from '../filePanel/transcriptStore';
-import { DEFAULT_PANEL_WIDTH, PLAN_TAB_WIDTH, detailPanelWidth } from '../filePanel/detailWidth';
+import { DEFAULT_PANEL_WIDTH, detailPanelWidth } from '../filePanel/detailWidth';
 import { usePanelAsks, usePanelLinkOpen } from './usePanelLinks';
 
 export { nextPanelOverride } from './usePanelLinks';
@@ -25,7 +24,7 @@ export { nextPanelOverride } from './usePanelLinks';
 const PREVIEW_MAX_RATIO = 0.92;
 
 /** Right-panel controller (carved out of ChatView, 5.9c): panel type/width,
- * target routing, tool-call/plan detail, multi-port preview resolution,
+ * target routing, tool-call detail, multi-port preview resolution,
  * divider drag, sources provenance, and mobile back-gesture integration. */
 export function useRightPanel({
   isMobile,
@@ -134,7 +133,6 @@ export function useRightPanel({
   // What the mobile detail sheet shows; on desktop these land as tabs instead.
   // A tool call is held by id and read live below, like a tab holds it.
   const [detailToolCallId, setDetailToolCallId] = useState<string | null>(null);
-  const [detailPlan, setDetailPlan] = useState<PlanTabSpec | null>(null);
 
   // The cap the open content asked for. A running app opens past the default
   // cap on purpose, and the divider has to hold that width instead of snapping
@@ -276,7 +274,6 @@ export function useRightPanel({
         panelHistoryPushedRef.current = false;
         setRightPanelType(null);
         setDetailToolCallId(null);
-        setDetailPlan(null);
         setPreviewData(null);
       }
     };
@@ -466,11 +463,8 @@ export function useRightPanel({
     if (!widened) return;
     if (rightPanelType === 'detail') {
       const toolCallId = detailToolCallId;
-      const plan = detailPlan;
       setDetailToolCallId(null);
-      setDetailPlan(null);
       if (toolCallId) landInFilePanel({ kind: 'tool', toolCallId }, { width: detailPanelWidth(getToolCallProcess(toolCallId) ?? null) });
-      else if (plan) landInFilePanel({ kind: 'plan', ...plan }, { width: PLAN_TAB_WIDTH });
       else setRightPanelType(null);
       return;
     }
@@ -485,7 +479,7 @@ export function useRightPanel({
       { kind: 'preview', port: data.port, title: data.title, path: data.path, command: data.command },
       { maxRatio: PREVIEW_MAX_RATIO },
     );
-  }, [isMobile, rightPanelType, previewData, detailToolCallId, detailPlan, getToolCallProcess, landInFilePanel]);
+  }, [isMobile, rightPanelType, previewData, detailToolCallId, getToolCallProcess, landInFilePanel]);
 
   /** The full MarketView page on one symbol, with a way back to this chat. */
   const handleOpenInMarketView = useCallback((spec: ChartTabSpec) => {
@@ -561,38 +555,23 @@ export function useRightPanel({
       return;
     }
     setDetailToolCallId(toolCallId);
-    setDetailPlan(null);
     applyPanelWidth(detailPanelWidth(toolCallProcess));
     setRightPanelType('detail');
     pushPanelHistory();
   }, [isMobile, getToolCallProcess, landInFilePanel, applyPanelWidth, pushPanelHistory, workspaceId, handleOpenPreview, watching]);
 
-  /** Show a plan's text: a tab on desktop, the sheet on mobile. */
-  const handlePlanDetailClick = useCallback((planId: string, plan: PlanData) => {
-    if (!isMobile) {
-      landInFilePanel({ kind: 'plan', planId, plan }, { width: PLAN_TAB_WIDTH });
-      return;
-    }
-    setDetailPlan({ planId, plan });
-    setDetailToolCallId(null);
-    applyPanelWidth(PLAN_TAB_WIDTH);
-    setRightPanelType('detail');
-    pushPanelHistory();
-  }, [isMobile, landInFilePanel, applyPanelWidth, pushPanelHistory]);
-
   // Close the mobile detail sheet
   const handleCloseDetailPanel = useCallback(() => {
     setRightPanelType(null);
     setDetailToolCallId(null);
-    setDetailPlan(null);
     popPanelHistory();
   }, [popPanelHistory]);
 
   // A sheet reads its call live, so a record that leaves the transcript under
   // it leaves the sheet open on nothing, with the back sentinel still pushed.
   useEffect(() => {
-    if (isMobile && rightPanelType === 'detail' && !detailToolCall && !detailPlan) handleCloseDetailPanel();
-  }, [isMobile, rightPanelType, detailToolCall, detailPlan, handleCloseDetailPanel]);
+    if (isMobile && rightPanelType === 'detail' && !detailToolCall) handleCloseDetailPanel();
+  }, [isMobile, rightPanelType, detailToolCall, handleCloseDetailPanel]);
 
   // Close preview panel (keep Map cache for instant reopen, but stop background state updates)
   const handleClosePreview = useCallback(() => {
@@ -663,7 +642,6 @@ export function useRightPanel({
     handleOpenSourcesFromChat,
     handleOpenStatusFromChat,
     handleToolCallDetailClick,
-    handlePlanDetailClick,
     handleCloseDetailPanel,
     handleClosePreview,
     handleRefreshPreview,
@@ -675,7 +653,6 @@ export function useRightPanel({
     handleOpenChart,
     handleOpenInMarketView,
     detailToolCall,
-    detailPlanData: detailPlan?.plan ?? null,
     transcript,
     getRecentWritePaths,
   };

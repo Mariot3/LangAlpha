@@ -198,7 +198,7 @@ describe('ChatAgent API utilities', () => {
     });
 
     it('includes agent_mode in request body defaulting to ptc', async () => {
-      await sendHitlResponse('ws-1', 't-1', { int1: { decisions: [{ type: 'approve' }] } }, () => {});
+      await sendHitlResponse({ int1: { decisions: [{ type: 'approve' }] } }, 'ws-1', 't-1', { onEvent: () => {} });
 
       const fetchMock = global.fetch as Mock;
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -209,12 +209,9 @@ describe('ChatAgent API utilities', () => {
 
     it('passes custom agentMode', async () => {
       await sendHitlResponse(
-        'ws-1', 't-1',
         { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        {},
-        'flash',
+        'ws-1', 't-1',
+        { onEvent: () => {}, agentMode: 'flash' },
       );
 
       const fetchMock = global.fetch as Mock;
@@ -225,11 +222,9 @@ describe('ChatAgent API utilities', () => {
 
     it('includes model options when provided', async () => {
       await sendHitlResponse(
-        'ws-1', 't-1',
         { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        { model: 'gpt-4o', reasoningEffort: 'high', fastMode: true },
+        'ws-1', 't-1',
+        { onEvent: () => {}, llmModel: 'gpt-4o', reasoningEffort: 'high', fastMode: true },
       );
 
       const fetchMock = global.fetch as Mock;
@@ -263,13 +258,9 @@ describe('ChatAgent API utilities', () => {
       });
 
       await sendHitlResponse(
-        'ws-1', 't-1',
         { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        {},
-        'ptc',
-        onRunIdResolved,
+        'ws-1', 't-1',
+        { onEvent: () => {}, agentMode: 'ptc', onRunIdResolved },
       );
 
       expect(onRunIdResolved).toHaveBeenCalledTimes(1);
@@ -292,13 +283,9 @@ describe('ChatAgent API utilities', () => {
 
       const onRunIdResolved = vi.fn();
       await sendHitlResponse(
-        'ws-1', 't-1',
         { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        {},
-        'ptc',
-        onRunIdResolved,
+        'ws-1', 't-1',
+        { onEvent: () => {}, agentMode: 'ptc', onRunIdResolved },
       );
       expect(onRunIdResolved).not.toHaveBeenCalled();
     });
@@ -802,7 +789,7 @@ describe('ChatAgent API utilities', () => {
           'Market watch mode is on for this message. If the central tickers are not yet registered, register them with watch_market.',
       };
       await sendChatMessageStream(
-        'hi', 'ws-1', 't-1', [], false, () => {}, [skillItem], 'ptc',
+        'hi', 'ws-1', 't-1', { onEvent: () => {}, additionalContext: [skillItem], agentMode: 'ptc' },
       );
 
       const body = bodyOfLastSend();
@@ -816,7 +803,7 @@ describe('ChatAgent API utilities', () => {
 
     // Watch OFF: no skills item, no market_watch key.
     it('sends no market-watch skill and no market_watch flag when off', async () => {
-      await sendChatMessageStream('hi', 'ws-1', 't-1', [], false, () => {});
+      await sendChatMessageStream('hi', 'ws-1', 't-1', { onEvent: () => {} });
 
       const body = bodyOfLastSend();
       expect(body.market_watch).toBeUndefined();
@@ -1012,8 +999,8 @@ describe('sendChatMessageStream — per-turn tuning is explicit', () => {
 
   const send = async (effort: string | null, fast: boolean | null) => {
     await sendChatMessageStream(
-      'hi', 'ws-1', 't-1', [], false, () => {}, null, 'ptc',
-      'en-US', 'America/New_York', null, null, 'gpt-5.5', effort, fast,
+      'hi', 'ws-1', 't-1',
+      { onEvent: () => {}, agentMode: 'ptc', llmModel: 'gpt-5.5', reasoningEffort: effort, fastMode: fast },
     );
     const [, opts] = (global.fetch as Mock).mock.calls[0];
     return JSON.parse(opts.body) as Record<string, unknown>;
@@ -1031,5 +1018,54 @@ describe('sendChatMessageStream — per-turn tuning is explicit', () => {
     const body = await send(null, null);
     expect(body.fast_mode).toBeUndefined();
     expect(body.reasoning_effort).toBeUndefined();
+  });
+});
+
+// A send names the thread's subagents setting only when the composer hands it
+// one: the backend stores a named value on the thread, and an omitted key
+// leaves the row as it is, which is what a flash send and an unread row need.
+describe('sendChatMessageStream: the subagents setting', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+        }),
+      },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  const send = async (threadId: string | null, settings?: { subagentsAllowed?: boolean }) => {
+    await sendChatMessageStream(
+      'hi', 'ws-1', threadId, { onEvent: () => {}, agentMode: 'ptc', threadSettings: settings },
+    );
+    const [url, opts] = (global.fetch as Mock).mock.calls[0];
+    return { url: url as string, body: JSON.parse(opts.body) as Record<string, unknown> };
+  };
+
+  it('sends an explicit false', async () => {
+    expect((await send('t-1', { subagentsAllowed: false })).body).toMatchObject({ subagents_allowed: false });
+  });
+
+  it('sends it on the send that creates the thread', async () => {
+    const { url, body } = await send(null, { subagentsAllowed: true });
+    expect(url).toMatch(/\/threads\/messages$/);
+    expect(body).toMatchObject({ subagents_allowed: true });
+  });
+
+  it('omits it when the composer names no value', async () => {
+    expect('subagents_allowed' in (await send('t-1', {})).body).toBe(false);
+    (global.fetch as Mock).mockClear();
+    expect('subagents_allowed' in (await send('t-1')).body).toBe(false);
   });
 });

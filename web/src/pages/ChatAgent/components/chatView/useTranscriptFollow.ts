@@ -6,13 +6,13 @@ import { findTurnReply, useTurnEnd } from './turnEnd';
 
 type ChatHandle = ReturnType<typeof useChatMessages>;
 type TurnStarters = Pick<ChatHandle, 'handleSendMessage' | 'handleEditMessage' | 'handleRegenerate' | 'handleRetry'>;
-type TurnState = Pick<ChatHandle, 'messages' | 'isLoading' | 'pendingInterrupt' | 'pendingRejection'>;
+type TurnState = Pick<ChatHandle, 'messages' | 'isLoading' | 'pendingInterrupt'>;
 
-/** A pending interrupt or plan feedback clears isLoading, but the turn is still
- *  open: the reply resumes once the reader answers, so the follow keeps its
- *  claim and the turn-end landing waits. */
-export function isTurnOpen({ isLoading, pendingInterrupt, pendingRejection }: TurnState): boolean {
-  return isLoading || !!pendingInterrupt || !!pendingRejection;
+/** A pending interrupt clears isLoading, but the turn is still open: the reply
+ *  resumes once the reader answers, so the follow keeps its claim and the
+ *  turn-end landing waits. */
+export function isTurnOpen({ isLoading, pendingInterrupt }: TurnState): boolean {
+  return isLoading || !!pendingInterrupt;
 }
 
 /**

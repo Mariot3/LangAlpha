@@ -266,24 +266,6 @@ export const sseEvents = {
     },
   }),
 
-  interrupt: (interruptId, plan = 'Here is my plan:\n1. Step one\n2. Step two') => ({
-    event: 'interrupt',
-    data: {
-      thread_id: 'b0000001-0000-4000-8000-000000000001',
-      turn_index: 0,
-      interrupts: [
-        {
-          id: interruptId,
-          type: 'plan_approval',
-          action_request: {
-            action: 'SubmitPlan',
-            args: { plan },
-          },
-        },
-      ],
-    },
-  }),
-
   artifact: (type, payload) => ({
     event: 'artifact',
     data: {

@@ -1,7 +1,7 @@
 import React, { Suspense, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, FolderOpen, ScrollText, TextSelect, Menu, Info, Clock } from 'lucide-react';
+import { ArrowLeft, FolderOpen, TextSelect, Menu, Info, Clock } from 'lucide-react';
 import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useStableHandler } from '@/hooks/useStableHandler';
@@ -28,6 +28,7 @@ import { toast } from '@/components/ui/use-toast';
 import { mergeWarmingDisplay } from '../utils/warmWorkspace';
 import { useChatMessages } from '../hooks/useChatMessages';
 import { useThreadModel } from '../hooks/useThreadModel';
+import { useThreadSubagents } from '../hooks/useThreadSubagents';
 import { useForeignRunCatchUp } from '../hooks/useForeignRunCatchUp';
 import { useComputerFolders } from '../hooks/useComputerFolders';
 import { QueuedAutomationNotice } from './QueuedAutomationNotice';
@@ -84,7 +85,7 @@ import type {
 import SubagentStatusIndicator from './chatView/SubagentStatusIndicator';
 import { ModelStatusPill } from './chatView/ModelStatusPill';
 import { FallbackSuggestionPill } from './chatView/FallbackSuggestionPill';
-import { ThreadModelNotices } from './chatView/ThreadModelNotices';
+import { ThreadNotices } from './chatView/ThreadNotices';
 import { ChatDiskWarning } from './chatView/ChatDiskWarning';
 import { useToolCallAnnouncer } from './chatView/useToolCallAnnouncer';
 import { useNavPanel } from './chatView/useNavPanel';
@@ -154,6 +155,12 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   // The model a navigation's first message goes out with, frozen for the same
   // reason as navMode; the auto-send below clears the route state.
   const [navModel] = useState(() => (typeof state?.model === 'string' && state.model ? state.model : null));
+  // The navigation bringing a new thread's first message, with the landing
+  // composer's Subagents pick. Read per navigation rather than frozen: a new
+  // chat's view stays cached while unsent, and the next one takes it up.
+  const subagentsLanding = isActive && threadId === '__default__' && state?.initialMessage
+    ? { key: location.key, allowed: typeof state.subagentsAllowed === 'boolean' ? state.subagentsAllowed : null }
+    : null;
 
 
 
@@ -301,9 +308,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     stopWorkflow,
     stopCompaction,
     pendingInterrupt,
-    pendingRejection,
-    handleApproveInterrupt,
-    handleRejectInterrupt,
     handleAnswerQuestion,
     handleSkipQuestion,
     handleApproveCreateWorkspace,
@@ -342,6 +346,12 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     initialModel: navModel,
   });
   const { pickModel: pickThreadModel } = threadModel;
+  const threadSubagents = useThreadSubagents({
+    threadId: currentThreadId,
+    mode: composerMode,
+    landing: subagentsLanding,
+  });
+  const { toSend: subagentsToSend } = threadSubagents;
 
   // Fallback-suggestion pill action: adopt the model that actually answered,
   // for this thread only. Making it the default is the banner's offer, which
@@ -363,13 +373,12 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   );
 
   const chatPlaceholder = useMemo(() => {
-    if (pendingRejection) return t('chat.placeholderPendingRejection');
-    if (wasStopped && !isLoading && !pendingInterrupt && !pendingRejection)
+    if (wasStopped && !isLoading && !pendingInterrupt)
       return t('chat.placeholderStopped');
     if (isLoading) return t('chat.placeholderLoading');
     if (hasActiveSubagents) return t('chat.placeholderSubagentsRunning');
     return t('chat.placeholderDefault');
-  }, [pendingRejection, wasStopped, isLoading, pendingInterrupt, hasActiveSubagents, t]);
+  }, [wasStopped, isLoading, pendingInterrupt, hasActiveSubagents, t]);
 
   // Status-row visibility, hoisted so the wrapper condition and its two children
   // share one source of truth. The chip self-hides on empty symbols; the tail
@@ -582,9 +591,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
 
   const { chips: chartSelectionChips, takeForSend: takeChartSelections } = usePanelChartSelections(isActive);
 
-  // Wrapper: converts ChatInput's (message, planMode, attachments, slashCommands) into
-  // handleSendMessage(message, planMode, additionalContext, attachmentMeta)
-  const handleSendWithAttachments = useCallback((message: string, planMode: boolean, attachments: Attachment[] = [], slashCommands: SlashCommand[] = [], modelOptions: ModelOptions = {}) => {
+  // Wrapper: converts ChatInput's (message, attachments, slashCommands) into
+  // handleSendMessage(message, additionalContext, attachmentMeta)
+  const handleSendWithAttachments = useCallback((message: string, attachments: Attachment[] = [], slashCommands: SlashCommand[] = [], modelOptions: ModelOptions = {}) => {
     const contexts: Record<string, unknown>[] = [];
     let attachmentMeta: Record<string, unknown>[] | null = null;
 
@@ -641,12 +650,15 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     const additionalContext = contexts.length > 0 ? contexts : null;
     stableSendMessage(
       picked?.outgoingMessage ?? message,
-      planMode,
       additionalContext,
       attachmentMeta,
-      picked ? { ...modelOptions, chartSelections: picked.snapshots } : modelOptions,
+      {
+        ...modelOptions,
+        ...(picked ? { chartSelections: picked.snapshots } : {}),
+        subagentsAllowed: subagentsToSend,
+      },
     );
-  }, [marketWatchEnabled, stableSendMessage, takeChartSelections]);
+  }, [marketWatchEnabled, stableSendMessage, takeChartSelections, subagentsToSend]);
 
   // Handle action-type slash commands (e.g. /compact, /compaction, /offload)
   const handleAction = useCallback((cmd: ActionCommand) => {
@@ -810,7 +822,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     handleOpenSourcesFromChat,
     handleOpenStatusFromChat,
     handleToolCallDetailClick,
-    handlePlanDetailClick,
     handleCloseDetailPanel,
     handleClosePreview,
     handleRefreshPreview,
@@ -823,7 +834,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     handleOpenChart,
     handleOpenInMarketView,
     detailToolCall,
-    detailPlanData,
     transcript,
     getRecentWritePaths,
   } = useRightPanel({
@@ -902,9 +912,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     onToolCallDetailClick: handleToolCallDetailClick,
     onOpenChart: handleOpenChart,
     onOpenSubagentTask: handleOpenSubagentTask,
-    onApprovePlan: handleApproveInterrupt,
-    onRejectPlan: handleRejectInterrupt,
-    onPlanDetailClick: handlePlanDetailClick,
     onAnswerQuestion: handleAnswerQuestion,
     onSkipQuestion: handleSkipQuestion,
     onApproveCreateWorkspace: handleApproveCreateWorkspace,
@@ -1090,7 +1097,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             instruction: "Help the user set up their investment profile — watchlists, risk preferences, and alerts.",
           }
         ];
-        handleSendMessage(personalizationMessage, false, additionalContext);
+        handleSendMessage(personalizationMessage, additionalContext);
       }, 100);
       return;
     }
@@ -1108,7 +1115,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             instruction: "The user wants to review and update their existing preferences. Start by fetching their current preferences with get_user_data(entity='preferences'), show them what's currently set, then ask what they'd like to change. Use AskUserQuestion to offer options. Only update the fields they want to change.",
           }
         ];
-        handleSendMessage(modifyMessage, false, additionalContext);
+        handleSendMessage(modifyMessage, additionalContext);
       }, 100);
       return;
     }
@@ -1139,30 +1146,30 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
         // New thread - send immediately
         initialMessageSentRef.current = true;
         // Capture state values before clearing (navigate may update location ref)
-        const { initialMessage, planMode, additionalContext, attachmentMeta, model, reasoningEffort, widgetSnapshots, chartSelections, skills } = location.state;
+        const { initialMessage, additionalContext, attachmentMeta, model, reasoningEffort, widgetSnapshots, chartSelections, skills } = location.state;
         const mergedContext = mergeSkills(additionalContext, skills);
         // Clear navigation state to prevent re-sending on re-renders
         navigate(location.pathname, { replace: true, state: {} });
         // Small delay to ensure component is fully mounted
         setTimeout(() => {
-          handleSendMessage(initialMessage, planMode || false, mergedContext, attachmentMeta || null, { model, reasoningEffort, widgetSnapshots, chartSelections });
+          handleSendMessage(initialMessage, mergedContext, attachmentMeta || null, { model, reasoningEffort, widgetSnapshots, chartSelections, subagentsAllowed: subagentsToSend });
         }, 100);
       } else if (!isLoadingHistory && !isLoading) {
         // Existing thread - wait for history to load, then send
         // This ensures we don't send duplicate messages
         initialMessageSentRef.current = true;
         // Capture state values before clearing (navigate may update location ref)
-        const { initialMessage, planMode, additionalContext, attachmentMeta, model, reasoningEffort, widgetSnapshots, chartSelections, skills } = location.state;
+        const { initialMessage, additionalContext, attachmentMeta, model, reasoningEffort, widgetSnapshots, chartSelections, skills } = location.state;
         const mergedContext = mergeSkills(additionalContext, skills);
         // Clear navigation state to prevent re-sending on re-renders
         navigate(location.pathname, { replace: true, state: {} });
         // Small delay to ensure component is fully mounted
         setTimeout(() => {
-          handleSendMessage(initialMessage, planMode || false, mergedContext, attachmentMeta || null, { model, reasoningEffort, widgetSnapshots, chartSelections });
+          handleSendMessage(initialMessage, mergedContext, attachmentMeta || null, { model, reasoningEffort, widgetSnapshots, chartSelections, subagentsAllowed: subagentsToSend });
         }, 100);
       }
     }
-  }, [location.state, workspaceId, threadId, isLoading, isLoadingHistory, handleSendMessage, navigate, location.pathname, isActive]);
+  }, [location.state, workspaceId, threadId, isLoading, isLoadingHistory, handleSendMessage, navigate, location.pathname, isActive, subagentsToSend]);
 
   // Re-seed the widget context deck from navigation state when there's no
   // initialMessage (the auto-send branch above already consumes them inline).
@@ -1596,15 +1603,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         )}
                       </div>
                     )}
-                    {pendingRejection && (
-                      <div
-                        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm"
-                        style={{ backgroundColor: 'var(--color-bg-elevated)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-default)' }}
-                      >
-                        <ScrollText className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-                        <span>{t('chat.planFeedbackHint')}</span>
-                      </div>
-                    )}
                     {messageError && !isLoading && (
                       <ErrorBanner error={messageError} />
                     )}
@@ -1619,12 +1617,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       onSwitchModel={handleSwitchModel}
                       onDismiss={clearFallbackSuggestion}
                     />
-                    <ThreadModelNotices
-                      retired={threadModel.retired}
-                      offer={threadModel.offer}
-                      mode={composerMode}
-                      onDismiss={threadModel.dismissOffer}
-                    />
+                    <ThreadNotices model={threadModel} subagents={threadSubagents} mode={composerMode} />
                     {/* Report-back pending: a follow-up turn will land here —
                         a flash summary of dispatched PTC thread(s), or a PTC
                         notification for an unseen subagent result. Suppressed
@@ -1718,6 +1711,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         model={threadModel.model}
                         onPickModel={pickThreadModel}
                         threadModels={threadModels}
+                        subagentsAllowed={threadSubagents.allowed}
+                        onToggleSubagents={threadSubagents.setAllowed}
                         mode={composerMode}
                         selectedWorkspaceId={workspaceId}
                       />
@@ -1755,7 +1750,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
       {/* Mobile detail bottom sheet — always rendered so exit animation works */}
       {isMobile && (
         <MobileBottomSheet
-          open={rightPanelType === 'detail' && !!(detailToolCall || detailPlanData)}
+          open={rightPanelType === 'detail' && !!detailToolCall}
           onClose={handleCloseDetailPanel}
           sizing="fixed"
           style={{ paddingBottom: 'calc(var(--bottom-tab-height, 0px) + 16px)' }}
@@ -1763,7 +1758,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           <Suspense fallback={null}>
             <DetailPanel
               toolCallProcess={detailToolCall}
-              planData={detailPlanData}
               onOpenFile={handleOpenFileFromChat}
               onOpenSubagentTask={handleOpenSubagentTask}
             />

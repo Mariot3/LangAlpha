@@ -28,20 +28,16 @@ const PROPOSAL_DATA_KEY_MAP: Record<string, keyof AssistantMessage> = {
 /**
  * The card bucket each pending interrupt settles into, keyed by the type its
  * pending entry carries — which, unlike the action request's `type`, names a
- * plan approval too, so there is no fallback case to get wrong. Typed against
+ * tool approval too, so there is no fallback case to get wrong. Typed against
  * `AssistantMessage` so a renamed bucket fails here rather than writing a card
  * under a name nothing renders.
  */
 const CARD_BUCKET_FOR_TYPE: Record<string, keyof AssistantMessage> = {
-  plan_approval: 'planApprovals',
   ask_user_question: 'userQuestions',
   credit_pause: 'creditPauses',
   tool_approval: 'toolApprovals',
   ...PROPOSAL_DATA_KEY_MAP,
 };
-
-/** Secretary action interrupt types (for type guard in handlers). */
-const SECRETARY_ACTION_TYPES = new Set(['delete_workspace', 'stop_workspace', 'delete_thread']);
 
 /**
  * Message-map buckets whose entries carry an `interruptId` (rendered HITL
@@ -49,8 +45,8 @@ const SECRETARY_ACTION_TYPES = new Set(['delete_workspace', 'stop_workspace', 'd
  * compile error here instead of a silently-wrong dedup rebuild.
  */
 const INTERRUPT_CARD_BUCKETS = [
-  'planApprovals', 'userQuestions', 'workspaceProposals',
-  'questionProposals', 'ptcAgentProposals', 'secretaryActionProposals',
+  'userQuestions', 'workspaceProposals', 'questionProposals',
+  'ptcAgentProposals', 'secretaryActionProposals',
   'creditPauses', 'toolApprovals',
 ] as const satisfies readonly (keyof AssistantMessage)[];
 
@@ -83,13 +79,6 @@ function setCardStatus(
   return setCardFields(messages, bucket, cardId, { status });
 }
 
-/** The segment types whose id lives in a pending entry's `proposalId`. */
-const PROPOSAL_SEGMENT_TYPES = new Set([
-  'create_workspace', 'start_question', 'ptc_agent',
-  'delete_workspace', 'stop_workspace', 'delete_thread',
-  'credit_pause', 'tool_approval',
-]);
-
 /**
  * Drop the history copies of these cards from every bubble, so a reconnect
  * stream's redelivery of the same interrupt is the only copy on screen.
@@ -103,44 +92,27 @@ function stripHistoryInterruptCards(
   messages: ChatMessage[],
   strips: HistoryInterruptInfo[],
 ): ChatMessage[] {
-  if (strips.length === 0) return messages;
-  const stripQuestionIds = new Set(
-    strips.filter((s) => s.type === 'ask_user_question' && s.questionId).map((s) => s.questionId!),
-  );
-  const stripProposalIds = new Set(strips.filter((s) => s.proposalId).map((s) => s.proposalId!));
-  const stripPlanApprovalIds = new Set(
-    strips.filter((s) => s.type === 'plan_approval' && s.planApprovalId).map((s) => s.planApprovalId!),
-  );
+  // Question and proposal ids come from distinct interrupts, so one set can
+  // hold both: only card segments carry either id.
+  const ids = new Set(strips.map(historyCardKey).filter((id): id is string => !!id));
+  if (ids.size === 0) return messages;
   return messages.map((m) => {
     if (m.role !== 'assistant') return m;
     const msg = m as AssistantMessage;
-    const newSegments = (msg.contentSegments || []).filter((seg) => {
-      if (seg.type === 'user_question') return !stripQuestionIds.has(seg.questionId);
-      if (PROPOSAL_SEGMENT_TYPES.has(seg.type)) {
-        return !stripProposalIds.has((seg as unknown as { proposalId: string }).proposalId);
-      }
-      if (seg.type === 'plan_approval') return !stripPlanApprovalIds.has(seg.planApprovalId);
-      return true;
-    });
-    const next: AssistantMessage = { ...msg, contentSegments: newSegments };
-    if (stripQuestionIds.size > 0 && msg.userQuestions) {
-      const map = { ...msg.userQuestions };
-      for (const qid of stripQuestionIds) delete map[qid];
-      next.userQuestions = map;
-    }
-    if (stripProposalIds.size > 0) {
-      for (const key of INTERRUPT_CARD_BUCKETS) {
-        const bucket = msg[key];
-        if (!bucket) continue;
-        const map = { ...(bucket as Record<string, unknown>) };
-        for (const pid of stripProposalIds) delete map[pid];
-        (next as unknown as Record<string, unknown>)[key] = map;
-      }
-    }
-    if (stripPlanApprovalIds.size > 0 && msg.planApprovals) {
-      const map = { ...msg.planApprovals };
-      for (const pid of stripPlanApprovalIds) delete map[pid];
-      next.planApprovals = map;
+    const next: AssistantMessage = {
+      ...msg,
+      contentSegments: (msg.contentSegments || []).filter((seg) => {
+        const { questionId, proposalId } = seg as { questionId?: string; proposalId?: string };
+        const id = questionId ?? proposalId;
+        return !id || !ids.has(id);
+      }),
+    };
+    for (const key of INTERRUPT_CARD_BUCKETS) {
+      const bucket = msg[key];
+      if (!bucket) continue;
+      const map = { ...(bucket as Record<string, unknown>) };
+      for (const id of ids) delete map[id];
+      (next as unknown as Record<string, unknown>)[key] = map;
     }
     return next;
   });
@@ -151,7 +123,7 @@ function stripHistoryInterruptCards(
  * exactly one of these at queue time, so the first one present is its key.
  */
 function historyCardKey(info: HistoryInterruptInfo): string | undefined {
-  return info.proposalId ?? info.questionId ?? info.planApprovalId;
+  return info.proposalId ?? info.questionId;
 }
 
 /** Which card a resolved history interrupt writes to, and what it writes. */
@@ -256,7 +228,7 @@ function settleProposalFromResult(
 }
 
 export {
-  PROPOSAL_INTERRUPT_TYPES, SECRETARY_ACTION_TYPES,
+  PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP,
   INTERRUPT_CARD_BUCKETS, CARD_BUCKET_FOR_TYPE,
   setCardStatus, setCardFields, resolvePendingHistoryInterrupt, historyCardKey,
   settleProposalFromResult, dispatchResultFields,

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, RefreshCw, MessageSquare, ScrollText } from 'lucide-react';
+import { ArrowLeft, RefreshCw, MessageSquare } from 'lucide-react';
 import { queryKeys } from '@/lib/queryKeys';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { Loader } from '@/components/ui/loader';
@@ -20,7 +20,8 @@ import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { computerFolders } from '../../ChatAgent/utils/agentPaths';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { useThreadModel } from '../../ChatAgent/hooks/useThreadModel';
-import { ThreadModelNotices } from '../../ChatAgent/components/chatView/ThreadModelNotices';
+import { useThreadSubagents } from '../../ChatAgent/hooks/useThreadSubagents';
+import { ThreadNotices } from '../../ChatAgent/components/chatView/ThreadNotices';
 import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
 import { useStreamFollow } from '../../ChatAgent/components/chatView/streamFollow';
 import { useTranscriptFollow } from '../../ChatAgent/components/chatView/useTranscriptFollow';
@@ -421,11 +422,9 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     threadModels,
     stopWorkflow,
     getSubagentHistory,
-    // HITL handlers — plan approval, ask-user questions, workspace/PTC/secretary
-    // proposals. Without these wired into MessageList the cards render but their
-    // Accept/Decline buttons are dead.
-    handleApproveInterrupt,
-    handleRejectInterrupt,
+    // HITL handlers: ask-user questions, workspace/PTC/secretary proposals,
+    // credit pauses and tool approvals. Without these wired into MessageList the
+    // cards render but their Accept/Decline buttons are dead.
     handleAnswerQuestion,
     handleSkipQuestion,
     handleApproveCreateWorkspace,
@@ -440,9 +439,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     handleApproveToolCall,
     handleRejectToolCall,
     // Turn/context state — drives the stop button, input gating, and the
-    // interrupted / plan-feedback / compaction status banners.
+    // interrupted / compaction status banners.
     pendingInterrupt,
-    pendingRejection,
     hasActiveSubagents,
     workspaceStarting,
     isCompacting,
@@ -463,6 +461,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   // All workspaces runs the default model, as the full agent does in a workspace.
   const modelMode = agentMode === 'flash' ? 'fast' : 'ptc';
   const threadModel = useThreadModel({ threadId, mode: modelMode, isLoading });
+  const threadSubagents = useThreadSubagents({ threadId, mode: modelMode });
+  const { toSend: subagentsToSend } = threadSubagents;
 
   // Subagent telemetry resolver — feeds ActivityBlock's live token counts.
   // MarketView has no floating cards layer, so we resolve through history only.
@@ -500,7 +500,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const handleSend = useCallback(
     (
       message: string,
-      planMode: boolean,
       attachments: AttachmentItem[] = [],
       slashCommands: SlashCommandLike[] = [],
       modelOptions: ModelOptionsLike = {},
@@ -570,14 +569,15 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
       const additionalContext = contexts.length > 0 ? contexts : null;
       const attachmentMeta = metaItems.length > 0 ? metaItems : null;
 
-      handleSendMessage(outgoingMessage, planMode, additionalContext, attachmentMeta, {
+      handleSendMessage(outgoingMessage, additionalContext, attachmentMeta, {
         ...modelOptions,
         ...(selectionSnapshots.length > 0 ? { chartSelections: selectionSnapshots } : {}),
+        subagentsAllowed: subagentsToSend,
       });
       onClearChartImage();
       chartSelectionStore.clearAll();
     },
-    [symbol, interval, chartImage, chartImageDesc, handleSendMessage, onClearChartImage],
+    [symbol, interval, chartImage, chartImageDesc, handleSendMessage, onClearChartImage, subagentsToSend],
   );
 
   // Stop the running turn (the input's Stop button). Mirrors ChatView: the hook's
@@ -661,8 +661,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   // every settled bubble in the panel.
   const stableOpenSubagentTask = useStableHandler(handleOpenSubagentTask);
   const stableToolCallDetail = useStableHandler(handleToolCallDetailClick);
-  const stableApprovePlan = useStableHandler(handleApproveInterrupt);
-  const stableRejectPlan = useStableHandler(handleRejectInterrupt);
   const stableAnswerQuestion = useStableHandler(handleAnswerQuestion);
   const stableSkipQuestion = useStableHandler(handleSkipQuestion);
   const stableApproveCreateWorkspace = useStableHandler(handleApproveCreateWorkspace);
@@ -684,17 +682,15 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const stableThumbUp = useStableHandler(handleThumbUp);
   const stableThumbDown = useStableHandler(handleThumbDown);
   const stableReportWithAgent = useStableHandler((instruction: string) => {
-    handleSendMessage(`/self-improve ${instruction}`, false, null, null, {});
+    handleSendMessage(`/self-improve ${instruction}`, null, null, {});
   });
   const stableWidgetSendPrompt = useStableHandler((text: string) => {
-    handleSendMessage(text, false, null, null, {});
+    handleSendMessage(text, null, null, {});
   });
 
   const messageActions = useMemo<MessageActions>(() => ({
     onOpenSubagentTask: stableOpenSubagentTask,
     onToolCallDetailClick: stableToolCallDetail,
-    onApprovePlan: stableApprovePlan,
-    onRejectPlan: stableRejectPlan,
     onAnswerQuestion: stableAnswerQuestion,
     onSkipQuestion: stableSkipQuestion,
     onApproveCreateWorkspace: stableApproveCreateWorkspace,
@@ -716,7 +712,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     onReportWithAgent: stableReportWithAgent,
     onWidgetSendPrompt: stableWidgetSendPrompt,
   }), [
-    stableOpenSubagentTask, stableToolCallDetail, stableApprovePlan, stableRejectPlan,
+    stableOpenSubagentTask, stableToolCallDetail,
     stableAnswerQuestion, stableSkipQuestion, stableApproveCreateWorkspace,
     stableRejectCreateWorkspace, stableApproveStartQuestion, stableRejectStartQuestion,
     stableApprovePTCAgent, stableRejectPTCAgent, stableApproveSecretaryAction,
@@ -900,22 +896,15 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         </div>
       )}
 
-      {/* Status banners — feedback for plan-rejection, interrupt, background
-          subagents, workspace warming, and context compaction. Mirrors the
-          indicators ChatView shows above its input. */}
-      {(pendingRejection
-        || (hasActiveSubagents && !isLoading)
+      {/* Status banners: background subagents, workspace warming, and context
+          compaction. Mirrors the indicators ChatView shows above its input. */}
+      {((hasActiveSubagents && !isLoading)
         || workspaceStarting
         || isCompacting
         || threadModel.retired
-        || threadModel.offer) && (
+        || threadModel.offer
+        || threadSubagents.offer !== null) && (
         <div style={{ padding: '0 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {pendingRejection && (
-            <div style={bannerStyle('var(--color-bg-surface)')}>
-              <ScrollText style={{ width: 14, height: 14, flexShrink: 0, color: 'var(--color-accent-primary)' }} />
-              <span>{t('chat.planFeedbackHint')}</span>
-            </div>
-          )}
           {hasActiveSubagents && !isLoading && (
             <div style={bannerStyle('transparent')}>
               <span style={{ position: 'relative', display: 'flex', height: 8, width: 8 }}>
@@ -941,12 +930,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
               <span>{t(isCompacting === 'offload' ? 'chat.offloading' : 'chat.compacting')}</span>
             </div>
           )}
-          <ThreadModelNotices
-            retired={threadModel.retired}
-            offer={threadModel.offer}
-            mode={modelMode}
-            onDismiss={threadModel.dismissOffer}
-          />
+          <ThreadNotices model={threadModel} subagents={threadSubagents} mode={modelMode} />
         </div>
       )}
 
@@ -964,6 +948,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         {...composerModeProps(allWorkspaces, mode, onModeChange)}
         model={threadModel.model}
         onPickModel={threadModel.pickModel}
+        subagentsAllowed={threadSubagents.allowed}
+        onToggleSubagents={threadSubagents.setAllowed}
         ptcDisabledReason={ptcDisabledReason}
         emptyWorkspacesHint={emptyWorkspacesHint}
         workspaces={ptcWorkspaces}
@@ -976,7 +962,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         onClearPrefill={onClearPrefill}
         hasExternalContext={chips.length > 0}
         placeholder={
-          wasStopped && !isLoading && !pendingInterrupt && !pendingRejection
+          wasStopped && !isLoading && !pendingInterrupt
             ? t('chat.placeholderStopped')
             : (placeholder ?? t('marketView.chatPanel.defaultPlaceholder'))
         }

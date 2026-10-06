@@ -56,9 +56,7 @@ function mockStreamWithEvents(events: Array<Record<string, unknown>>) {
       _msg: string,
       _ws: string,
       _tid: string | null,
-      _hist: unknown[],
-      _plan: boolean,
-      onEvent: (e: Record<string, unknown>) => void,
+      { onEvent }: { onEvent: (e: Record<string, unknown>) => void },
     ) => {
       for (const e of events) onEvent(e);
       return { disconnected: false };
@@ -83,7 +81,7 @@ describe('useChatMessages — SSE error routing by error_kind', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -114,7 +112,7 @@ describe('useChatMessages — SSE error routing by error_kind', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {
@@ -143,7 +141,7 @@ describe('useChatMessages — SSE error routing by error_kind', () => {
     const { result } = renderHookWithProviders(() => useChatMessages('ws-test'));
 
     await act(async () => {
-      await result.current.handleSendMessage('hello', false);
+      await result.current.handleSendMessage('hello');
     });
 
     await waitFor(() => {

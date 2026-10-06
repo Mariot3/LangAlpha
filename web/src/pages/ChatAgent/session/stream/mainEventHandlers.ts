@@ -398,8 +398,9 @@ export function handleToolCallResult({ assistantMessageId, toolCallId, result, r
           _settledAt: settledAt,
         };
       } else {
-        // Orphaned tool_call_result without matching tool_calls (e.g., SubmitPlan
-        // result arriving in a HITL resume stream). Skip silently.
+        // Orphaned tool_call_result without matching tool_calls (e.g., the result
+        // of a tool that interrupted, arriving in the HITL resume stream while its
+        // call sits on the bubble before). Skip silently.
         return msg;
       }
 

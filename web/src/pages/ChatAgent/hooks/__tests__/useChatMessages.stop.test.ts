@@ -98,11 +98,8 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
 
     mockSendStream.mockImplementation(
       async (...args: unknown[]) => {
-        const onEvent = args[5] as OnEvent;
-        // signal is the trailing positional arg of sendChatMessageStream; find
-        // it by type so inserting a new param before it can't silently break
-        // this capture (the mock isn't typed against the real signature).
-        capturedSignal = args.find((a): a is AbortSignal => a instanceof AbortSignal);
+        const onEvent = (args[3] as { onEvent: OnEvent }).onEvent;
+        capturedSignal = (args[3] as { signal: AbortSignal }).signal;
         // metadata first (latches run_id), then open a reasoning block.
         onEvent({ event: 'metadata', thread_id: 'th-stop', run_id: 'run-1' });
         onEvent({ event: 'message_chunk', role: 'assistant', agent: 'main', content_type: 'reasoning_signal', content: 'start' });
@@ -113,7 +110,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
 
     let send: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      send = result.current.handleSendMessage('analyze AAPL', false);
+      send = result.current.handleSendMessage('analyze AAPL');
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -167,7 +164,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
 
     const hang = deferred<{ disconnected: boolean; aborted: boolean }>();
     mockSendStream.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as OnEvent;
+      const onEvent = (args[3] as { onEvent: OnEvent }).onEvent;
       onEvent({ event: 'metadata', thread_id: 'th-stop', run_id: 'run-1' });
       // An in-flight tool call: args still streaming, no tool_calls completion
       // and no result — this is what renders the "generating (~N chars)…" shimmer.
@@ -177,7 +174,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
 
     let send: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      send = result.current.handleSendMessage('analyze AAPL', false);
+      send = result.current.handleSendMessage('analyze AAPL');
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -210,7 +207,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
 
     const hang = deferred<{ disconnected: boolean; aborted: boolean }>();
     mockSendStream.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as OnEvent;
+      const onEvent = (args[3] as { onEvent: OnEvent }).onEvent;
       onEvent({ event: 'metadata', thread_id: 'th-stop', run_id: 'run-1' });
       // A started tool call with no result yet → toolCallProcesses entry with
       // isInProgress:true. Always-live tools (TaskOutput/WebFetch) render their
@@ -225,7 +222,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
 
     let send: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      send = result.current.handleSendMessage('check on the subagent', false);
+      send = result.current.handleSendMessage('check on the subagent');
       await Promise.resolve();
       await Promise.resolve();
     });

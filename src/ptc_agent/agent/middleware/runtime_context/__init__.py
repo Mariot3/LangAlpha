@@ -52,7 +52,9 @@ from .durable import (
     DurableUpdate,
     build_update_message,
     is_runtime_update_message,
+    last_stated,
     render_update_row,
+    rows_in_view,
     runtime_update_from_message,
 )
 from .envelope import (
@@ -79,6 +81,8 @@ from .tail import REQUEST_CALL_UPDATES, TailEnvelopeMiddleware
 from .templates import render_template
 from .turn import (
     ELAPSED_MIN_GAP,
+    NON_CHANGE_ROW_KINDS,
+    SUBAGENTS_ROW_KIND,
     TURN_ROW_KIND,
     TURN_SCHEMA_VERSION,
     TurnContextMiddleware,
@@ -100,11 +104,13 @@ __all__ = [
     "KNOWN_SURFACES",
     "MAX_AGENT_MD_SIZE",
     "MAX_MEMORY_BLOCK_SIZE",
+    "NON_CHANGE_ROW_KINDS",
     "REQUEST_CALL_UPDATES",
     "RUNTIME_CONTEXT_SOURCE",
     "RUNTIME_UPDATE_KEY",
     "RUNTIME_UPDATE_SOURCE",
     "STATE_BASELINE",
+    "SUBAGENTS_ROW_KIND",
     "TURN_ROW_KIND",
     "TURN_SCHEMA_VERSION",
     "UPDATE_SCHEMA_VERSION",
@@ -135,6 +141,7 @@ __all__ = [
     "frame_reminder",
     "is_known_surface",
     "is_runtime_update_message",
+    "last_stated",
     "may_hold_breakpoint",
     "parse_surface",
     "render_call_updates",
@@ -143,6 +150,7 @@ __all__ = [
     "render_update_row",
     "resolve_carrier_shape",
     "resolve_preferred_market",
+    "rows_in_view",
     "runtime_update_from_message",
     "sha256_text",
     "split_surface",

@@ -19,7 +19,8 @@ import type { Workspace } from '@/types/api';
 import type { StockSearchHit } from '@/lib/marketUtils';
 import { attachmentsToContexts } from '../ChatAgent/utils/fileUpload';
 import { useThreadModel } from '../ChatAgent/hooks/useThreadModel';
-import { ThreadModelNotices } from '../ChatAgent/components/chatView/ThreadModelNotices';
+import { useThreadSubagents } from '../ChatAgent/hooks/useThreadSubagents';
+import { ThreadNotices } from '../ChatAgent/components/chatView/ThreadNotices';
 import { motion, AnimatePresence } from '@/lib/framer';
 import CompanyOverviewPanel from './components/CompanyOverviewPanel';
 import { MobileBottomSheet } from '../../components/ui/mobile-bottom-sheet';
@@ -247,6 +248,9 @@ function MarketViewInner() {
   // runs the default model as a workspace does, so it takes the PTC side.
   const modelMode = mode === 'fast' && !allWorkspaces ? 'fast' : 'ptc';
   const threadModel = modelMode === 'fast' ? flashThreadModel : ptcThreadModel;
+  // The Subagents pick lives here too, so a fold keeps it. Only a send to the
+  // full agent carries it, into the thread that send opens.
+  const subagents = useThreadSubagents({ threadId: null, mode: modelMode });
 
   // Resolve the user's flash workspace id once so we can scope chart
   // annotations to the workspace the chat is actually running in.
@@ -473,7 +477,7 @@ function MarketViewInner() {
     setChartImageDesc(parts.join('\n'));
   }, [selectedStock, selectedInterval, stockInfo, selectedStockDisplay, overviewData, displayPrice]);
 
-  const handleSendMessage = useCallback(async (message: string, planMode: boolean, attachments: AttachmentItem[] = [], _slashCommands: string[] = [], { model, reasoningEffort }: { model?: string; reasoningEffort?: string } = {}) => {
+  const handleSendMessage = useCallback(async (message: string, attachments: AttachmentItem[] = [], _slashCommands: string[] = [], { model, reasoningEffort }: { model?: string; reasoningEffort?: string } = {}) => {
     // Build additional_context from chart image + file attachments.
     // The drawing tools are always bound; the chart-annotation skill rides
     // every send for its drawing guide and to tell the agent which ticker +
@@ -562,7 +566,7 @@ function MarketViewInner() {
             workspaceId,
             ...(toHome ? FLASH_ROUTE_STATE : {}),
             initialMessage: outgoingMessage,
-            planMode: planMode || false,
+            ...(subagents.toSend !== undefined ? { subagentsAllowed: subagents.toSend } : {}),
             additionalContext: imageContext,
             // Carry the chart-annotation skill over so the PTC agent starts
             // with the drawing guide (the tools themselves are always bound).
@@ -585,7 +589,7 @@ function MarketViewInner() {
     }
     setChartImage(null);
     setChartImageDesc(null);
-  }, [handleFastModeSend, navigate, toast, t, chartImage, chartImageDesc, mode, selectedWorkspaceId, selectedStock, selectedInterval, allWorkspaces, flashWorkspaceId]);
+  }, [handleFastModeSend, navigate, toast, t, chartImage, chartImageDesc, mode, selectedWorkspaceId, selectedStock, selectedInterval, allWorkspaces, flashWorkspaceId, subagents.toSend]);
 
   const handleSidebarSymbolClick = useCallback((symbol: string) => {
     setSelectedStock(symbol);
@@ -689,19 +693,14 @@ function MarketViewInner() {
             onCollapse={() => setChatExpanded(false)}
             className="market-mobile-chat-float"
           >
-            {(threadModel.retired || threadModel.offer) && (
+            {(threadModel.retired || threadModel.offer || subagents.offer !== null) && (
               // A card of its own: the retired notice is transparent, and the
               // FAB floats over the chart.
               <div
                 className="flex flex-col gap-1.5 mb-1.5 p-1.5 rounded-2xl border"
                 style={{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border-muted)' }}
               >
-                <ThreadModelNotices
-                  retired={threadModel.retired}
-                  offer={threadModel.offer}
-                  mode={modelMode}
-                  onDismiss={threadModel.dismissOffer}
-                />
+                <ThreadNotices model={threadModel} subagents={subagents} mode={modelMode} />
               </div>
             )}
             <ChatInput
@@ -710,6 +709,8 @@ function MarketViewInner() {
               {...composerModeProps(allWorkspaces, mode, setMode)}
               model={threadModel.model}
               onPickModel={threadModel.pickModel}
+              subagentsAllowed={subagents.allowed}
+              onToggleSubagents={subagents.setAllowed}
               workspaces={selectableWorkspaces}
               selectedWorkspaceId={selectedWorkspaceId}
               onWorkspaceChange={selectWorkspace}

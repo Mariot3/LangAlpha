@@ -23,7 +23,6 @@ from src.config.settings import (
     get_langsmith_tags,
     get_locale_config,
 )
-from src.server.app import setup
 from src.server.database import conversation as qr_db
 from src.server.database.conversation.threads_write import remember_thread_llm_model
 from src.server.services.llm.thread_model import NamedModel
@@ -135,47 +134,6 @@ def _resolve_fork(*, request: ChatRequest) -> tuple[str, Optional[ForkSpec]]:
         )
 
     return query_type, fork
-
-
-async def _is_plan_interrupt_pending(thread_id: str) -> bool:
-    """Check if the pending interrupt is a SubmitPlan (plan mode) interrupt.
-
-    Plan interrupts from HumanInTheLoopMiddleware have action_requests with
-    name="SubmitPlan". Other interrupts (AskUserQuestion, onboarding) use
-    a "type" field instead. Returns False on any error.
-    """
-    try:
-        checkpointer = setup.checkpointer
-        if not checkpointer:
-            return False
-        config = {"configurable": {"thread_id": thread_id}}
-        checkpoint_tuple = await checkpointer.aget_tuple(config)
-        if not checkpoint_tuple or not checkpoint_tuple.pending_writes:
-            return False
-        for _task_id, channel, value in checkpoint_tuple.pending_writes:
-            if channel != "__interrupt__":
-                continue
-            interrupts = value if isinstance(value, list) else [value]
-            for intr in interrupts:
-                intr_value = (
-                    getattr(intr, "value", intr)
-                    if not isinstance(intr, dict)
-                    else intr.get("value", intr)
-                )
-                if not isinstance(intr_value, dict):
-                    continue
-                action_requests = intr_value.get("action_requests", [])
-                if action_requests and isinstance(action_requests[0], dict):
-                    if action_requests[0].get("name") == "SubmitPlan":
-                        return True
-        return False
-    except Exception:
-        logger.warning(
-            f"[PTC_CHAT] Failed to check pending interrupt type for "
-            f"thread_id={thread_id}, defaulting to non-plan mode",
-            exc_info=True,
-        )
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +427,9 @@ async def ensure_thread(
         ensure_kwargs["metadata"] = {
             "origin": request.origin.model_dump(exclude_none=True)
         }
+    # Applied only if this send creates the thread; PATCH owns it after.
+    if request.subagents_allowed is not None:
+        ensure_kwargs["subagents_allowed"] = request.subagents_allowed
     created = await qr_db.ensure_thread_exists(**ensure_kwargs)
 
     # Threads born here (automations, channel gateways, legacy clients) never
@@ -696,7 +657,6 @@ def build_graph_config(
     request: ChatRequest,
     effective_model: str | None,
     recursion_limit: int,
-    plan_mode: bool | None = None,
     extra_configurable: dict | None = None,
     skill_contexts: list[dict] | None = None,
     skill_dirs: list[str] | None = None,
@@ -728,7 +688,6 @@ def build_graph_config(
         timezone=timezone_str,
         llm_model=effective_model,
         platform=request.platform,
-        **({"plan_mode": plan_mode} if plan_mode is not None else {}),
     )
     if run_id is not None:
         langsmith_metadata["run_id"] = run_id

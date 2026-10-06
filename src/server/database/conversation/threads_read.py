@@ -175,11 +175,7 @@ async def get_workspace_threads(
                 query = f"""
                     SELECT t.*, tc.turn_count, {_LATEST_ATTEMPT_LATERAL_COLS}
                     FROM (
-                        SELECT
-                            conversation_thread_id, workspace_id, current_status,
-                            msg_type, thread_index, title, platform, metadata,
-                            is_shared, is_pinned, archived_at, llm_model,
-                            last_seen_run_seq, created_at, updated_at
+                        SELECT {_sql._THREAD_COLUMNS}, last_seen_run_seq
                         FROM conversation_threads
                         WHERE workspace_id = %s{archived_filter}{where_extra}
                         ORDER BY {inner_order}{sort_by} {sort_order.upper()},
@@ -258,12 +254,7 @@ async def get_threads_for_user(
                     SELECT t.*, fq.content AS first_query_content,
                            tc.turn_count, {_LATEST_ATTEMPT_LATERAL_COLS}
                     FROM (
-                        SELECT
-                            t.conversation_thread_id, t.workspace_id,
-                            t.current_status, t.msg_type, t.thread_index,
-                            t.title, t.platform, t.metadata, t.is_shared,
-                            t.is_pinned, t.archived_at, t.llm_model,
-                            t.last_seen_run_seq, t.created_at, t.updated_at
+                        SELECT {_sql._THREAD_COLUMNS_T}, t.last_seen_run_seq
                         FROM conversation_threads t
                         JOIN workspaces w ON t.workspace_id = w.workspace_id
                         WHERE w.user_id = %s AND w.status != 'deleted'
@@ -574,11 +565,9 @@ async def get_thread_by_id(conversation_thread_id: str) -> Optional[Dict[str, An
         async with pool.get_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    """
-                    SELECT conversation_thread_id, workspace_id, current_status,
-                           msg_type, thread_index, title, platform, metadata,
-                           share_token, is_shared, share_permissions, shared_at,
-                           is_pinned, archived_at, llm_model, created_at, updated_at
+                    f"""
+                    SELECT {_sql._THREAD_COLUMNS},
+                           share_token, share_permissions, shared_at
                     FROM conversation_threads
                     WHERE conversation_thread_id = %s
                 """,
@@ -636,6 +625,35 @@ async def get_thread_auth_meta(thread_id: str, *, conn=None) -> Optional[Dict[st
     except Exception as e:
         logger.error(f"Error getting thread auth meta: {e}")
         raise
+
+
+async def read_thread_subagents_allowed(thread_id: str) -> bool | None:
+    """The thread's effective subagent switch; None for a malformed id or no row.
+
+    Read on every main-agent model call and before every subagent launch,
+    never cached, so a flip, or a change to the owner's default, reaches a
+    running turn whichever worker served it. A failed read raises: the caller
+    decides what an unknown switch means.
+    """
+    thread_id = normalize_uuid(thread_id)
+    if thread_id is None:
+        return None
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # A thread with no value of its own (NULL) follows its owner's default.
+            await cur.execute(
+                f"""
+                SELECT COALESCE(
+                    t.subagents_allowed,
+                    {_sql.owner_subagents_default("t.workspace_id")}
+                ) AS allowed
+                FROM conversation_threads t
+                WHERE t.conversation_thread_id = %s
+                """,
+                (thread_id,),
+            )
+            row = await cur.fetchone()
+    return None if row is None else row["allowed"]
 
 
 async def get_thread_by_share_token(share_token: str) -> Optional[Dict[str, Any]]:

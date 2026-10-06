@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  Check, ChevronDown, FileStack, FolderOpen, Layers, Radar, ScrollText, Zap,
+  Check, ChevronDown, FileStack, FolderOpen, Layers, Radar, Zap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
 } from './dropdown-menu';
-import { PillToggle } from './chat-input.parts';
+import { IconToggle, PillToggle, SubagentsGlyph } from './chat-input.parts';
 import type { ToolbarItem } from './chat-input.useToolbarFold';
 import type { ComposerScope, Workspace } from './chat-input.types';
 
@@ -22,8 +22,8 @@ export function useToolbarItems({
   mode,
   onModeChange,
   ptcDisabledReason,
-  planMode,
-  setPlanMode,
+  subagentsAllowed,
+  onToggleSubagents,
   watchMode,
   setWatchMode,
   marketWatchEnabled,
@@ -37,8 +37,9 @@ export function useToolbarItems({
   mode?: 'fast' | 'ptc';
   onModeChange?: (mode: 'fast' | 'ptc') => void;
   ptcDisabledReason?: string | null;
-  planMode: boolean;
-  setPlanMode: (v: boolean) => void;
+  /** Null while the thread's value is not read, which hides the toggle. */
+  subagentsAllowed: boolean | null;
+  onToggleSubagents: (next: boolean) => void;
   watchMode: boolean;
   setWatchMode: (v: boolean) => void;
   marketWatchEnabled: boolean;
@@ -69,10 +70,11 @@ export function useToolbarItems({
 
   const hasModeToggle = mode !== undefined && onModeChange !== undefined;
   // Under the all-workspaces agent there is no Flash/PTC choice, only where the
-  // agent works, so the host passes a scope and no mode: plan and watch then
-  // show on either scope, as they do for any host without a mode toggle.
+  // agent works, so the host passes a scope and no mode.
   const hasScopePicker = !!onScopeChange;
-  const showPlanWatchSlot = !hasModeToggle || mode === 'ptc';
+  // PTC unless the composer says flash: a host with no mode toggle either
+  // enforces PTC (no mode at all) or names the thread's mode.
+  const ptcSelected = mode !== 'fast';
   const showWorkspaceSelector = !!(hasModeToggle && mode === 'ptc' && workspaces && workspaces.length > 0);
   const ptcBlocked = mode === 'fast' && !!ptcDisabledReason;
   const selectedWorkspaceName = useMemo(() => {
@@ -96,6 +98,8 @@ export function useToolbarItems({
     if (id !== selectedWorkspaceId) onWorkspaceChange?.(id);
     if (scope !== 'workspace') onScopeChange?.('workspace');
   }, [scope, onScopeChange, selectedWorkspaceId, onWorkspaceChange]);
+
+  const subagentsOn = subagentsAllowed === true;
 
   return useMemo<ToolbarItem[]>(() => [
     {
@@ -229,36 +233,40 @@ export function useToolbarItems({
       ),
     },
     {
-      id: 'plan',
+      id: 'subagents',
       group: 'toggle',
-      // Shown when the host enforces PTC (no mode toggle) or PTC is selected.
-      visible: showPlanWatchSlot,
-      active: planMode,
+      // Subagents are a PTC capability. Pressed means on, the default, so the
+      // ⋯ dot stays off: lit for the usual state it would never mean anything.
+      visible: ptcSelected && subagentsAllowed !== null,
       inline: ({ measureOnly }) => (
-        <PillToggle
-          active={planMode}
-          onToggle={() => setPlanMode(!planMode)}
-          icon={ScrollText}
-          label={t('chat.pills.plan')}
-          title={t('chat.pills.planTitle')}
+        <IconToggle
+          active={subagentsOn}
+          onToggle={() => onToggleSubagents(!subagentsOn)}
+          label={t('chat.pills.subagents')}
+          tooltip={t(subagentsOn ? 'chat.pills.subagentsOn' : 'chat.pills.subagentsOff')}
           measureOnly={measureOnly}
-        />
+        >
+          <SubagentsGlyph on={subagentsOn} />
+        </IconToggle>
       ),
       menu: () => (
         <DropdownMenuItem
-          title={t('chat.pills.planTitle')}
-          onSelect={(e) => { e.preventDefault(); setPlanMode(!planMode); }}
+          onSelect={(e) => { e.preventDefault(); onToggleSubagents(!subagentsOn); }}
         >
-          <ScrollText className="h-4 w-4" style={planMode ? { color: 'var(--color-accent-light)' } : undefined} />
-          <span>{t('chat.pills.plan')}</span>
-          {planMode && <Check className="ml-auto h-4 w-4" style={{ color: 'var(--color-accent-light)' }} />}
+          <SubagentsGlyph
+            on={subagentsOn}
+            style={subagentsOn ? { color: 'var(--color-accent-light)' } : undefined}
+          />
+          <span>{t('chat.pills.subagents')}</span>
+          {subagentsOn && <Check className="ml-auto h-4 w-4" style={{ color: 'var(--color-accent-light)' }} />}
         </DropdownMenuItem>
       ),
     },
     {
       id: 'watch',
       group: 'toggle',
-      visible: showPlanWatchSlot && marketWatchEnabled,
+      // Market watch is a PTC capability too.
+      visible: ptcSelected && marketWatchEnabled,
       active: watchMode,
       inline: ({ measureOnly }) => (
         <PillToggle
@@ -350,7 +358,8 @@ export function useToolbarItems({
     },
   ], [
     hasModeToggle, mode, onModeChange, ptcBlocked, ptcDisabledReason,
-    showPlanWatchSlot, planMode, setPlanMode, watchMode, setWatchMode, marketWatchEnabled,
+    ptcSelected, subagentsAllowed, subagentsOn, onToggleSubagents,
+    watchMode, setWatchMode, marketWatchEnabled,
     showWorkspaceSelector, showWorkspaceMenu, selectedWorkspaceName,
     workspaces, selectedWorkspaceId, onWorkspaceChange, t,
     hasScopePicker, allSelected, scopeLabel, noWorkspacesHint, hasSecondSection,

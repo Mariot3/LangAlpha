@@ -14,7 +14,7 @@ import { StatusPill } from '@/components/mcp/McpPrimitives';
 import { OrderModeBadge } from '@/components/orders/OrderModeBadge';
 import { OrderCard } from './OrderCard';
 import { ORDER_ACTION_KEY, orderSummaryRows } from './orderSummary';
-import { SettledToolStep } from './SettledToolStep';
+import { SettledStep } from '../SettledStep';
 import { useDirectToolVendorLabel } from './useDirectToolVendor';
 
 /**
@@ -221,8 +221,8 @@ function SettledOrderStep({
     ? t('toolArtifact.directTool.orderApproval.approved')
     : t('toolArtifact.directTool.orderApproval.rejected');
   const step = (
-    <SettledToolStep
-      approved={approved}
+    <SettledStep
+      verdict={approved ? 'approved' : 'rejected'}
       order
       reason={reason}
       label={`${verb} · ${t(ORDER_ACTION_KEY[order.action] || ORDER_ACTION_KEY.place)}`}
@@ -236,7 +236,7 @@ function SettledOrderStep({
       <div className="rounded-lg px-4 py-3" style={{ border: '1px solid var(--color-border-muted)' }}>
         {args}
       </div>
-    </SettledToolStep>
+    </SettledStep>
   );
   if (!attemptId) return step;
   // Outside the row, because the row is the button that opens the fold and a

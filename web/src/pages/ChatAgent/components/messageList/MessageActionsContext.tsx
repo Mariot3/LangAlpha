@@ -40,10 +40,6 @@ export interface MessageActions {
   onOpenChart?: (spec: ChartTabSpec) => void;
   /** Opens a tool call's result by id; the host reads the live record. */
   onToolCallDetailClick?: (toolCallId: string) => void;
-  onApprovePlan?: () => void;
-  onRejectPlan?: () => void;
-  /** Opens a plan's text; the approval id keeps one tab per plan. */
-  onPlanDetailClick?: (planApprovalId: string, planData: Record<string, unknown>) => void;
   onAnswerQuestion?: (answer: string, questionId: string, interruptId: string) => void;
   onSkipQuestion?: (questionId: string, interruptId: string) => void;
   onApproveCreateWorkspace?: (proposalData: Record<string, unknown>) => void;

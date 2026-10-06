@@ -40,6 +40,9 @@ export interface ModelOptions {
   fastMode: boolean;
   /** Per-message market-watch toggle — stamps live prices for tracked tickers. */
   marketWatch?: boolean;
+  /** The Subagents pick of a composer with no thread host, for the thread its
+   *  PTC send starts; absent leaves the user's default to the server. */
+  subagentsAllowed?: boolean;
   /**
    * Widget context snapshots attached via the deck rail. Forwarded to the
    * backend as `additional_context` items of `type: "widget"`. Image-bearing

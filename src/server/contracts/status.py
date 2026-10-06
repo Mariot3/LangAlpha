@@ -151,7 +151,6 @@ _QUESTION_TYPE = "ask_user_question"
 INTERRUPT_REASONS = (
     INTERRUPT_REASON_CREDIT_PAUSE,
     "user_question",
-    "plan_review_required",
     "approval_required",
 )
 
@@ -184,10 +183,7 @@ def _classify_one(request: dict) -> Optional[str]:
         # left is "approve this", so the generalization holds where naming a
         # specific action would be a guess.
         return "approval_required"
-    name = request.get("name")
-    if name == "SubmitPlan":
-        return "plan_review_required"
-    return "approval_required" if name else None
+    return "approval_required" if request.get("name") else None
 
 
 def classify_interrupt_reason(interrupts: Any) -> Optional[str]:

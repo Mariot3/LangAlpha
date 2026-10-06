@@ -9,6 +9,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
+import { ToggleSwitch } from '@/components/ui/switch';
+import { readSubagentsDefault, subagentsDefaultPatch } from '@/lib/subagentsDefault';
 import { getFlashWorkspace } from '@/pages/ChatAgent/utils/api';
 import { FLASH_ROUTE_STATE } from '@/hooks/useFlashWorkspace';
 import ConfirmDialog from '@/pages/Dashboard/components/ConfirmDialog';
@@ -16,8 +18,9 @@ import { useOnboarding } from '@/pages/Onboarding';
 import type { Preferences } from './types';
 import { AutoApproveSettings } from './AutoApproveSettings';
 
-/** Preferences tab: investment-preference summary, output format, onboarding
- * replay/reset entry points, and the reset-preferences flow. */
+/** Preferences tab: investment-preference summary, output format, the
+ * subagents default that every thread without a value of its own follows,
+ * onboarding replay/reset entry points, and the reset-preferences flow. */
 export function PreferencesTab() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -51,6 +54,19 @@ export function PreferencesTab() {
           output_format: nextOutputFormat,
         },
       });
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: t('settings.failedToSaveSettings'),
+      });
+    }
+  };
+
+  const subagentsDefault = readSubagentsDefault(prefsData);
+  const handleSubagentsDefaultChange = async (next: boolean) => {
+    try {
+      await updatePrefsMutation.mutateAsync(subagentsDefaultPatch(next));
     } catch {
       toast({
         variant: 'destructive',
@@ -259,6 +275,22 @@ export function PreferencesTab() {
         );
       })()}
 
+      {/* The subagents default, which every thread without a value of its own follows */}
+      <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border-muted)' }}>
+        <div className="flex items-center justify-between gap-3">
+          <label className="text-[0.8125rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>
+            {t('settings.subagentsDefault')}
+          </label>
+          <ToggleSwitch
+            checked={subagentsDefault}
+            onChange={() => { void handleSubagentsDefaultChange(!subagentsDefault); }}
+            ariaLabel={t('settings.subagentsDefault')}
+          />
+        </div>
+        <p className="text-xs mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+          {t('settings.subagentsDefaultDesc')}
+        </p>
+      </div>
       <AutoApproveSettings />
 
       {/* Column until there is room for a row. The two actions are a fixed

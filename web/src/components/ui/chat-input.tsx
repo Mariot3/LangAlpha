@@ -39,6 +39,7 @@ import { useSlashCommands } from './chat-input.useSlashCommands';
 import { speechSupported, useVoiceInput } from './chat-input.useVoiceInput';
 import { useFileAttachments } from './chat-input.useFileAttachments';
 import { modelProfile } from '@/lib/modelPreferences';
+import { readSubagentsDefault } from '@/lib/subagentsDefault';
 import { formatContextBlock } from './chat-input.contextBlocks';
 
 /** Autosize cap for the composer textarea; past this the box scrolls. */
@@ -60,7 +61,7 @@ export interface ChatInputHandle {
 
 
 export interface ChatInputProps {
-  onSend: (message: string, planMode: boolean, attachments: ReadyAttachment[], slashCommands: SlashCommand[], modelOptions: ModelOptions) => void;
+  onSend: (message: string, attachments: ReadyAttachment[], slashCommands: SlashCommand[], modelOptions: ModelOptions) => void;
   disabled?: boolean;
   isLoading?: boolean;
   /**
@@ -85,6 +86,16 @@ export interface ChatInputProps {
   onScopeChange?: ((scope: ComposerScope) => void) | null;
   /** Shown in the scope picker while there is no workspace to pick. */
   emptyWorkspacesHint?: string | null;
+  /**
+   * The Subagents switch, owned by a thread host (`useThreadSubagents`),
+   * which also receives each flip through `onToggleSubagents`. Null while the
+   * host has not read its thread's value, which hides the toggle rather than
+   * claim one. A composer with no thread behind it leaves both unset: it then
+   * holds the pick itself, shown over the user's default, and a PTC send
+   * carries it in its options.
+   */
+  subagentsAllowed?: boolean | null;
+  onToggleSubagents?: ((next: boolean) => void) | null;
   workspaces?: Workspace[] | null;
   selectedWorkspaceId?: string | null;
   onWorkspaceChange?: ((wsId: string) => void) | null;
@@ -133,6 +144,9 @@ function ChatInput({
   scope,
   onScopeChange = null,
   emptyWorkspacesHint = null,
+  // Subagents switch
+  subagentsAllowed: hostSubagents,
+  onToggleSubagents = null,
   // Workspace selector
   workspaces = null,
   selectedWorkspaceId = null,
@@ -163,13 +177,12 @@ function ChatInput({
 }: ChatInputProps & { ref?: React.Ref<ChatInputHandle> }) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
-  const { preferences } = usePreferences();
+  const { preferences, isLoaded: preferencesRead } = usePreferences();
   const marketWatchEnabled = useFeatureEnabled('market_watch');
   const { validModelNames, metadata: modelMetadata, isLoading: modelsLoading } = useAllModels();
   const otherPref = (preferences as Record<string, Record<string, unknown>> | null)?.other_preference;
   const [message, setMessage] = useState('');
   const { attachedFiles, setAttachedFiles, isDragging, handleFiles, removeFile, onDragOver, onDragLeave, onDrop, handlePaste } = useFileAttachments({ mode });
-  const [planMode, setPlanMode] = useState(false);
   const [watchMode, setWatchMode] = useState(false);
   // Market watch is a PTC capability. The toggle state survives a switch to
   // flash (the pill just hides), so every payload derives from this gated
@@ -209,6 +222,23 @@ function ChatInput({
   // disagree with it.
   const resolvedEffort = effective.reasoning_effort;
   const resolvedFastMode = effective.fast_mode;
+
+  // The Subagents switch a send names. A thread host owns it. Without one the
+  // composer holds a pick, null until touched so the toggle shows the user's
+  // default, and a send names only that pick, leaving the default to the
+  // server. Until the default is read the toggle shows what no preference
+  // means, which a stored default may contradict, so a send names what it
+  // shows. A PTC capability, gated like market watch.
+  const [ownSubagents, setOwnSubagents] = useState<boolean | null>(null);
+  const ownShown = ownSubagents ?? readSubagentsDefault(preferences);
+  const shownSubagents = hostSubagents === undefined ? ownShown : hostSubagents;
+  const draftSubagents = hostSubagents === undefined && mode !== 'fast'
+    ? ownSubagents ?? (preferencesRead ? undefined : ownShown)
+    : undefined;
+  const handleToggleSubagents = useCallback((next: boolean) => {
+    if (hostSubagents === undefined) setOwnSubagents(next);
+    else onToggleSubagents?.(next);
+  }, [hostSubagents, onToggleSubagents]);
 
   const handlePickModel = useCallback((model: string) => {
     // The checked row is the model the composer already runs.
@@ -514,11 +544,12 @@ function ChatInput({
       const blocks = snippetMentions.map((f) => formatContextBlock(f, t));
       finalMessage = finalMessage.trimEnd() + '\n' + blocks.join('\n');
     }
-    onSend(finalMessage, planMode, readyAttachments, slashCommands, {
+    onSend(finalMessage, readyAttachments, slashCommands, {
       model: pillModel,
       reasoningEffort: resolvedEffort,
       fastMode: resolvedFastMode,
       marketWatch: effectiveMarketWatch,
+      subagentsAllowed: draftSubagents,
       widgetSnapshots: widgetSnapshots.length ? widgetSnapshots : undefined,
     });
     setMessage('');
@@ -536,7 +567,7 @@ function ChatInput({
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [hasContent, disabled, message, planMode, effectiveMarketWatch, attachedFiles, setAttachedFiles, onSend, onAction,
+  }, [hasContent, disabled, message, effectiveMarketWatch, draftSubagents, attachedFiles, setAttachedFiles, onSend, onAction,
     mentionedFiles, resetMentions, slashCommands, resetSlash,
     pillModel, resolvedEffort, resolvedFastMode, widgetSnapshots, t]);
 
@@ -585,7 +616,8 @@ function ChatInput({
    * is measured, never guessed. */
   const toolbarItems = useToolbarItems({
     mode, onModeChange, ptcDisabledReason, scope, onScopeChange, emptyWorkspacesHint,
-    planMode, setPlanMode, watchMode, setWatchMode, marketWatchEnabled,
+    subagentsAllowed: shownSubagents, onToggleSubagents: handleToggleSubagents,
+    watchMode, setWatchMode, marketWatchEnabled,
     workspaces, selectedWorkspaceId, onWorkspaceChange,
   });
 

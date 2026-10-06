@@ -1,12 +1,13 @@
 import type React from 'react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Info, X } from 'lucide-react';
+import { Info } from 'lucide-react';
 import { getModelDisplayName } from '@/components/ui/chat-input.helpers';
 import { DefaultModelScopeChoice } from '@/components/model/DefaultModelScopeChoice';
 import { useAllModels } from '@/hooks/useAllModels';
 import { useDefaultModelChange } from '@/hooks/useDefaultModelChange';
 import type { ComposerMode } from '@/lib/modelPreferences';
+import { ThreadOfferRow } from './ThreadOfferRow';
 
 /** Prints a model the way the composer pill does, so the banner names it as
  *  the control right below it. */
@@ -16,10 +17,9 @@ function useComposerModelLabel(): (model: string) => string {
 }
 
 /* The offer that follows a pick: this thread now runs on a model other than
-   the account default, and the user may want every new thread to. Neutral on
-   purpose: nothing is wrong, so it does not borrow the warning treatment the
-   fallback pill uses. Accepting goes through the shared default change, which
-   may first ask about the threads on the old default. */
+   the account default, and the user may want every new thread to. Accepting
+   goes through the shared default change, which may first ask about the
+   threads on the old default. */
 interface ThreadModelBannerProps {
   model: string;
   defaultModel: string;
@@ -46,43 +46,17 @@ function ThreadModelOffer({ model, defaultModel, mode, onDismiss }: ThreadModelB
 
   const name = label(model);
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-2 rounded-md text-sm"
-      role="status" aria-live="polite"
-      style={{
-        backgroundColor: 'var(--color-bg-elevated)',
-        color: 'var(--color-text-secondary)',
-        border: '1px solid var(--color-border-default)',
-      }}>
-      <Info aria-hidden="true" className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
-      {/* The floor is what lets the row wrap: with none, a narrow composer (the
-          market panel) squeezes the sentence to a word per line beside the
-          button instead of moving the button below it. */}
-      <span className="flex-1 min-w-48">
-        {t('chat.threadModel.offer', { model: name, defaultModel: label(defaultModel) })}
-      </span>
-      <button
-        type="button"
-        onClick={() => {
-          setAsked(true);
-          request({ [mode]: model });
-        }}
-        disabled={saving}
-        autoFocus={asked}
-        className="text-xs font-medium whitespace-nowrap rounded-md px-2.5 py-1 shrink-0 hover:bg-(--color-bg-hover) disabled:opacity-50"
-        style={{ color: 'var(--color-text-primary)', border: '1px solid var(--color-border-elevated)' }}
-      >
-        {t('chat.threadModel.makeDefault', { model: name })}
-      </button>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label={t('common.close')}
-        className="p-1 rounded shrink-0 hover:opacity-70"
-        style={{ color: 'var(--color-text-tertiary)' }}
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
-    </div>
+    <ThreadOfferRow
+      text={t('chat.threadModel.offer', { model: name, defaultModel: label(defaultModel) })}
+      action={t('chat.threadModel.makeDefault', { model: name })}
+      onAction={() => {
+        setAsked(true);
+        request({ [mode]: model });
+      }}
+      busy={saving}
+      focusAction={asked}
+      onDismiss={onDismiss}
+    />
   );
 }
 

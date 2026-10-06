@@ -134,12 +134,12 @@ describe('ChatInput with the all-workspaces agent', () => {
     expect(pill('Flash')).toBeInTheDocument();
   });
 
-  it('replaces the mode toggle with a scope picker that keeps plan mode', () => {
+  it('replaces the mode toggle with a scope picker that keeps the Subagents switch', () => {
     renderInput();
     expect(screen.queryByText('Flash')).not.toBeInTheDocument();
     expect(screen.queryByText('PTC')).not.toBeInTheDocument();
     expect(pill('All workspaces')).toBeInTheDocument();
-    expect(pill('Plan')).toBeInTheDocument();
+    expect(pill('Subagents')).toBeInTheDocument();
   });
 
   it('picks a workspace before switching the scope to it', () => {
@@ -153,10 +153,10 @@ describe('ChatInput with the all-workspaces agent', () => {
     expect(calls).toEqual(['ws:ws-2', 'scope:workspace']);
   });
 
-  it('switches back to All workspaces from a workspace, keeping plan mode', () => {
+  it('switches back to All workspaces from a workspace, keeping the Subagents switch', () => {
     const onScopeChange = vi.fn();
     renderInput({ scope: 'workspace', onScopeChange });
-    expect(pill('Plan')).toBeInTheDocument();
+    expect(pill('Subagents')).toBeInTheDocument();
     fireEvent.click(pill('Alpha desk'));
     fireEvent.mouseDown(pickerRow('All workspaces'));
     expect(onScopeChange).toHaveBeenCalledWith('all');

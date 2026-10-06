@@ -68,9 +68,7 @@ function mockHangFirstStream(threadId: string): Deferred<{ disconnected: boolean
       _msg: string,
       _ws: string,
       _tid: string | null,
-      _hist: unknown[],
-      _plan: boolean,
-      onEvent: OnEvent,
+      { onEvent }: { onEvent: OnEvent },
     ) => {
       if (mockSendStream.mock.calls.length === 1) {
         onEvent({ event: 'thread_id', thread_id: threadId });
@@ -89,9 +87,7 @@ function mockEmptyStream() {
       _msg: string,
       _ws: string,
       _tid: string | null,
-      _hist: unknown[],
-      _plan: boolean,
-      _onEvent: (e: Record<string, unknown>) => void,
+            _onEvent: (e: Record<string, unknown>) => void,
     ) => {
       return { disconnected: false };
     },
@@ -415,7 +411,7 @@ describe('useChatMessages – queued send during compaction', () => {
       result.current.setIsCompacting('summarize');
     });
     await act(async () => {
-      await result.current.handleSendMessage('deferred with widget', false, null, null, {
+      await result.current.handleSendMessage('deferred with widget', null, null, {
         widgetSnapshots: [snapshot],
       });
     });

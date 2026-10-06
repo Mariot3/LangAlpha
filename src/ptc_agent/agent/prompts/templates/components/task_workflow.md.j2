@@ -3,7 +3,7 @@
 Every task gets a directory of its own, named for the task, directly in your working directory. Never write task files loose at the root: the root holds `agent.md`, the shared `data/` and the task directories.
 
 1. **Create task directory**: `mkdir -p <task_name>/` (e.g., `sector_analysis/`, `earnings_q3_review/`), with `data/` and `charts/` inside it as needed
-2. **Plan**: Use `TodoWrite` to break down the task.
+2. **Plan**: Break the task down before executing{% if todo_enabled | default(false) %}, tracking the steps with `TodoWrite`{% endif %}.
 3. **Execute**: All intermediate files go in your task directory. Delegate to sub-agents with the directory path.
 4. **Produce deliverables**: For complex analysis, write the report into the task directory; simple queries need no file. When unsure of the format, ask the user.
 {% if role | default("analyst") == "chief_of_staff" %}

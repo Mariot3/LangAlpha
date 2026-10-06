@@ -7,8 +7,8 @@ import type { ToolApprovalState } from '@/types/chat';
 import { ArgsTable } from './mcp/ArgsTable';
 import { DirectToolTileMark } from './mcp/DirectToolMark';
 import { OrderApprovalCard } from './mcp/OrderApprovalCard';
-import { SettledToolStep } from './mcp/SettledToolStep';
 import { useDirectToolVendorLabel } from './mcp/useDirectToolVendor';
+import { SettledStep } from './SettledStep';
 import { humanizeKey } from '../utils/structuredResult';
 
 interface ToolApprovalCardProps {
@@ -69,8 +69,8 @@ function ToolApprovalCard({ data, onApprove, onReject, resultPending, resultLost
 
   if (isApproved || isRejected) {
     return (
-      <SettledToolStep
-        approved={isApproved}
+      <SettledStep
+        verdict={isApproved ? 'approved' : 'rejected'}
         reason={isRejected ? data.reason : null}
         label={
           isApproved
@@ -79,7 +79,7 @@ function ToolApprovalCard({ data, onApprove, onReject, resultPending, resultLost
         }
       >
         {detailBlock}
-      </SettledToolStep>
+      </SettledStep>
     );
   }
 

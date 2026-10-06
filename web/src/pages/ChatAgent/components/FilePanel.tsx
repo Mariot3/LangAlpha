@@ -482,8 +482,8 @@ function FilePanel({
 
   // Every way out of this mount asks the question closing a dirty tab asks: a
   // route change fires no beforeunload, so the drafts would go with it. The
-  // same guard is handed down to the tool and plan tabs, whose result views
-  // carry links off the route.
+  // same guard is handed down to the tool tabs, whose result views carry links
+  // off the route.
   const askDiscard = useCallback((discard: () => void) => ask(
     { title: t('filePanel.discardTitle'), message: t('filePanel.discardUnsaved'), confirmLabel: t('filePanel.discard') },
     discard,

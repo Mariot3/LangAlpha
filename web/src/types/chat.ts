@@ -81,6 +81,9 @@ export interface SubagentTaskRecord {
    *  the task's eventual outcome. A refused launch never starts a task, so for
    *  those this reply is the whole account of what happened. */
   result?: string;
+  /** The reply itself was a failure, so nothing ran. Kept apart from `status`,
+   *  which a started task's own settle can also set to `error`. */
+  launchFailed?: boolean;
 }
 
 export interface NotificationSegment {
@@ -136,12 +139,6 @@ export interface DeleteThreadSegment {
   order: number;
 }
 
-export interface PlanApprovalSegment {
-  type: 'plan_approval';
-  planApprovalId: string;
-  order: number;
-}
-
 export interface CreditPauseSegment {
   type: 'credit_pause';
   proposalId: string;
@@ -169,7 +166,6 @@ export type ContentSegment =
   | DeleteWorkspaceSegment
   | StopWorkspaceSegment
   | DeleteThreadSegment
-  | PlanApprovalSegment
   | CreditPauseSegment
   | ToolApprovalSegment;
 
@@ -311,13 +307,6 @@ export interface PendingToolCallChunk {
 }
 
 // --- HITL Interrupt State Records ---
-
-export interface PlanApprovalState {
-  status: string;
-  description?: string;
-  planApprovalId?: string;
-  interruptId?: string;
-}
 
 /** Where one approval card sits among the action requests its interrupt raised.
  *  The resume answers all of them in order, so the card carries its own slot. */
@@ -479,7 +468,6 @@ export type AssistantMessage = {
   subagentTasks?: Record<string, SubagentTaskRecord>;
   pendingToolCallChunks?: Record<string, PendingToolCallChunk>;
   // HITL interrupt state
-  planApprovals?: Record<string, PlanApprovalState>;
   userQuestions?: Record<string, UserQuestionState>;
   workspaceProposals?: Record<string, WorkspaceProposalState>;
   questionProposals?: Record<string, QuestionProposalState>;

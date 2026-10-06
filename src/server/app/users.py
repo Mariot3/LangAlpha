@@ -593,6 +593,15 @@ def _validate_default_model_choices(model_pref: dict) -> None:
             )
 
 
+def _validate_subagents_default(other_pref: dict) -> None:
+    """Refuse a non-boolean ``subagents_default``, which the gate would read as on."""
+    value = other_pref.get("subagents_default")
+    if value is not None and not isinstance(value, bool):
+        raise HTTPException(
+            status_code=400, detail="subagents_default must be true, false, or null"
+        )
+
+
 def _validate_agent_preference(agent_pref: dict) -> None:
     """Validate agent_preference before persisting. Raises HTTPException 400 on invalid data."""
     # output_format may be absent or None (delete/default); else must be a
@@ -706,6 +715,9 @@ async def update_preferences(
                     status_code=400,
                     detail=f"search_depth must be one of {sorted(valid_depths)}",
                 )
+
+    if other_pref:
+        _validate_subagents_default(other_pref)
 
     # Validate agent_preference (output_format shape). None = key deletion.
     if agent_pref:

@@ -194,6 +194,28 @@ def test_state_only_fragments_are_level_agnostic():
         )
 
 
+@pytest.mark.parametrize("allowed", [False, True])
+def test_the_subagent_switch_row_is_level_agnostic(allowed):
+    """The row persists and is replayed to whatever model runs next, so its
+    words cannot depend on the level the writing model ran at."""
+    update = {
+        "kind": "subagents_switched",
+        "text": "",
+        "provenance": {"source": "user", "allowed": allowed},
+        "created_at": "2026-09-08T14:02:00+00:00",
+        "schema_version": 1,
+    }
+    renders = {
+        init_loader().render(
+            "envelope/update_row.md.j2", **guidance_template_vars(level), update=update
+        )
+        for level in ("lean", "detailed")
+    }
+    assert len(renders) == 1
+    (text,) = renders
+    assert "subagents" in text
+
+
 class TestBaselineDeterminism:
     """These land in the cached per-thread prefix; a byte of wobble costs the
     whole remaining thread."""

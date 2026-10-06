@@ -101,7 +101,9 @@ export function deriveTaskSegment(
  * artifact, or a live `chan_close`). The exception is a launch that never ran:
  * it opens no run, produces no task artifact and no channel, so nothing else
  * will ever settle its card and the reply has to. A *refused* launch says so
- * with its "Error" prefix; one a stop refused mid-setup carries
+ * with an error status or its "Error" prefix (a thread with subagents turned
+ * off answers "Refused: ..." under an error status), and the record keeps
+ * that apart as `launchFailed`; one a stop refused mid-setup carries
  * `artifact.launch === 'cancelled'` and settles as stopped, since a stop is a
  * cancellation rather than a failure.
  *
@@ -110,7 +112,7 @@ export function deriveTaskSegment(
  */
 export function applyLaunchReply(
   record: SubagentTaskRecord,
-  result: { content?: unknown; artifact?: unknown },
+  result: { content?: unknown; artifact?: unknown; status?: unknown },
 ): SubagentTaskRecord {
   const stopped =
     (result.artifact as { launch?: unknown } | null | undefined)?.launch === 'cancelled';
@@ -119,6 +121,7 @@ export function applyLaunchReply(
     ...record,
     ...(typeof result.content === 'string' ? { result: result.content } : {}),
     ...(status ? { status } : {}),
+    ...(status === 'error' ? { launchFailed: true } : {}),
   };
 }
 

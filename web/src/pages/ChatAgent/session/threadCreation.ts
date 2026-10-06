@@ -20,6 +20,9 @@ export interface EnsureThreadIdArgs {
   platform: string | null | undefined;
   /** The user's zone, which the title reads relative dates on. */
   timezone: string;
+  /** The composer's subagents pick for the new thread; absent leaves the
+   *  owner's default to the server. */
+  subagentsAllowed?: boolean;
   queryClient: QueryClient;
   /** Kept in sync so in-flight closures see the real id immediately. */
   threadIdRef: { current: string };
@@ -45,6 +48,7 @@ export async function ensureThreadId({
   agentMode,
   platform,
   timezone,
+  subagentsAllowed,
   queryClient,
   threadIdRef,
   setThreadId,
@@ -61,6 +65,7 @@ export async function ensureThreadId({
       agentMode: agentMode === 'flash' ? 'flash' : 'ptc',
       platform,
       timezone,
+      subagentsAllowed,
     });
     // Stop landed during the round-trip: adopting the id now (navigate,
     // optimistic row, nav bump) would resurrect the UI the stop finalized.

@@ -3,7 +3,6 @@
 This module provides middleware for LangChain/LangGraph agents:
 
 - background/: Background subagent orchestration
-- plan_mode: Human-in-the-loop plan review
 - tool/: Tool argument parsing, error handling, result normalization
 - caching/: Tool result caching with SSE events
 - file_operations/: File operation SSE event emission and vision middleware
@@ -15,12 +14,6 @@ from .background_subagent import (
     BackgroundSubagentMiddleware,
     BackgroundSubagentOrchestrator,
     SubagentEventCaptureMiddleware,
-)
-
-# Plan mode middleware
-from .plan_mode import (
-    PlanModeMiddleware,
-    create_plan_mode_interrupt_config,
 )
 
 # Ask user middleware
@@ -130,9 +123,6 @@ __all__ = [
     "BackgroundSubagentMiddleware",
     "BackgroundSubagentOrchestrator",
     "SubagentEventCaptureMiddleware",
-    # Plan mode
-    "PlanModeMiddleware",
-    "create_plan_mode_interrupt_config",
     # Ask user
     "AskUserMiddleware",
     "CreditGateMiddleware",

@@ -50,6 +50,10 @@ defaults:
   # tool_guide. Agent render overrides with the config.yaml master switch.
   market_watch_enabled: true
 
+  # TodoWrite (opt-in feature). Gates the task_workflow line that names the
+  # tool; the agent render and the subagent compiler pass the real value.
+  todo_enabled: false
+
   # Tool-tier gates for tool_guide. The main agent binds all three, so the
   # default matches it; the subagent compiler passes the real per-agent value
   # because a subagent that cannot call a tool must not be taught to.

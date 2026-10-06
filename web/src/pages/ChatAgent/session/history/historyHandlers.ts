@@ -477,8 +477,9 @@ export function handleHistoryToolCallResult({ assistantMessageId, toolCallId, re
           isFailed: isFailed, // Track if tool call failed
         };
       } else {
-        // Orphaned tool_call_result without matching tool_calls (e.g., SubmitPlan
-        // result in a HITL resume pair). Skip silently.
+        // Orphaned tool_call_result without matching tool_calls (e.g., the result
+        // of a tool that interrupted, replayed in the HITL resume pair while its
+        // call sits on the bubble before). Skip silently.
         return msg;
       }
 

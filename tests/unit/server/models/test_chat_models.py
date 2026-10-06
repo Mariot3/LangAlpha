@@ -284,8 +284,12 @@ class TestChatRequest:
         req = ChatRequest()
         assert req.agent_mode is None
         assert req.messages == []
-        assert req.plan_mode is False
         assert req.hitl_response is None
+
+    def test_retired_plan_mode_field_is_ignored(self):
+        # Channel gateways still send it; a 422 would drop their turns.
+        req = ChatRequest(plan_mode=True)
+        assert not hasattr(req, "plan_mode")
 
     def test_agent_mode_validation(self):
         req = ChatRequest(agent_mode="flash")

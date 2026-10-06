@@ -15,12 +15,6 @@
 {% include 'components/task_workflow.md.j2' %}
 </task_workflow>
 {% endif %}
-{% if section_plan_mode | default(false) and plan_mode | default(false) %}
-
-<plan_mode>
-{% include 'components/plan_mode.md.j2' %}
-</plan_mode>
-{% endif %}
 {% if section_workspace_paths | default(false) %}
 
 <workspace_paths>

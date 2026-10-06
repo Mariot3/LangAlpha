@@ -28,6 +28,7 @@ LIFECYCLE_TYPES = {
     "run_settled",
     "thread_title",
     "thread_pinned",
+    "thread_subagents",
     "thread_deleted",
     "thread_archived",
     "thread_unarchived",
@@ -101,6 +102,21 @@ async def test_automation_wait_events_name_their_firing(waiting):
         "interrupt_reason",
         "automation_execution_id",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [True, False, None])
+async def test_subagent_switch_event_carries_the_switch(allowed):
+    with patch.object(thread_lifecycle_feed, "publish_user_event", AsyncMock()) as sent:
+        await thread_lifecycle_feed.publish_thread_subagents(
+            user_id="user-1", thread_id="t-1", workspace_id="ws-1", allowed=allowed
+        )
+    user_id, event = sent.await_args.args
+    assert user_id == "user-1"
+    assert event["type"] == "thread_subagents"
+    # Present even as null, which tells a tab the thread follows the default.
+    assert "subagents_allowed" in event
+    assert event["subagents_allowed"] is allowed
 
 
 def test_interrupt_reason_is_nulled_off_the_interrupted_status():

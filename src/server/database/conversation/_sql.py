@@ -1,4 +1,4 @@
-"""Shared SQL fragments for conversation_responses readers."""
+"""Shared SQL fragments for the conversation thread and response queries."""
 
 
 def sql_literals(statuses: tuple) -> str:
@@ -11,6 +11,47 @@ def sql_literals(statuses: tuple) -> str:
     planner the constant folding that keeps the branch filters index-friendly.
     """
     return ", ".join(f"'{s}'" for s in statuses)
+
+# The thread row that every thread response model is built from. A query
+# appends what only it serves (the seen cursor, the share fields), so a new
+# column added here reaches every reader and writer that returns a whole
+# thread. Writes that answer only their own fields (the title CAS, the share
+# update) project those alone.
+_THREAD_COLUMN_NAMES = (
+    "conversation_thread_id", "workspace_id", "current_status", "msg_type",
+    "thread_index", "title", "platform", "metadata", "is_shared", "is_pinned",
+    "archived_at", "llm_model", "subagents_allowed", "created_at", "updated_at",
+)
+_THREAD_COLUMNS = ", ".join(_THREAD_COLUMN_NAMES)
+# For a query that joins another table under the ``t`` alias.
+_THREAD_COLUMNS_T = ", ".join(f"t.{c}" for c in _THREAD_COLUMN_NAMES)
+
+def owner_subagents_default(workspace_id_sql: str) -> str:
+    """The subagents default of a workspace's owner, as a SQL boolean.
+
+    ``other_preference.subagents_default``, where only a stored JSON ``false``
+    turns it off: no preferences row, no key, or a value no writer should have
+    stored all compare distinct from it, so a bad preference never fails a
+    statement. Kept out of ``agent_preference``, which the agent can write.
+    """
+    return f"""((
+        SELECT p.other_preference -> 'subagents_default'
+        FROM workspaces w
+        JOIN user_preferences p ON p.user_id = w.user_id
+        WHERE w.workspace_id = {workspace_id_sql}
+    ) IS DISTINCT FROM 'false'::jsonb)"""
+
+
+def stored_subagents_allowed(value_sql: str, workspace_id_sql: str) -> str:
+    """The subagent switch a write stores: NULL when it equals the default.
+
+    A thread set to the side its owner's default is on follows the default,
+    so it moves when the default does. Decided in the statement, against the
+    default as committed, never by a client: one tab's copy of the default can
+    be behind a change made in another.
+    """
+    return f"NULLIF({value_sql}::boolean, {owner_subagents_default(workspace_id_sql)})"
+
 
 # ``usage_settled_at`` rides along because it is the settle instant itself, and
 # replay pairs it with the query timestamp to say how long a turn took. Readers

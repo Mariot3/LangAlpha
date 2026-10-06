@@ -135,6 +135,47 @@ describe('turn fold — a stamp on a bubble the list never paints', () => {
   });
 });
 
+describe('turn fold — a running turn whose bubble is hidden between model calls', () => {
+  it('leaves the turn before it settled', () => {
+    // Between two model calls the bubble is not streaming, and one whose only
+    // call so far is TodoWrite draws nothing, so the list hides it. The
+    // session still loading belongs to that turn, not to the last one painted.
+    const { container } = renderList([
+      { id: 'u0', role: 'user', content: 'ask', contentType: 'text', timestamp: new Date(), isStreaming: false },
+      {
+        id: 'a0', role: 'assistant', content: 'answer', contentType: 'text',
+        timestamp: new Date(), isStreaming: false, completedAt: Date.now(),
+        contentSegments: [
+          { type: 'tool_call', order: 0, toolCallId: 'tc-0' },
+          { type: 'text', content: 'answer', order: 1 },
+        ],
+        reasoningProcesses: {},
+        toolCallProcesses: {
+          'tc-0': { toolName: 'WebSearch', toolCall: { args: {} }, isInProgress: false, isComplete: true, isFailed: false },
+        },
+      },
+      { id: 'u1', role: 'user', content: 'track the steps', contentType: 'text', timestamp: new Date(), isStreaming: false },
+      {
+        id: 'a1', role: 'assistant', content: '', contentType: 'text',
+        timestamp: new Date(), isStreaming: false,
+        contentSegments: [{ type: 'tool_call', order: 0, toolCallId: 'tc-todo' }],
+        reasoningProcesses: {},
+        toolCallProcesses: {
+          'tc-todo': {
+            toolName: 'TodoWrite',
+            toolCall: { args: { todos: [{ content: 'Pull the 10-K', status: 'pending' }] } },
+            toolCallResult: { content: 'Updated todo list' },
+            isInProgress: false, isComplete: true, isFailed: false,
+          },
+        },
+      },
+    ], true);
+
+    expect(container.querySelector('[data-message-id="a1"]')).toBeNull();
+    expect(foldState(container)).toBe('collapsed');
+  });
+});
+
 describe('turn fold — a background task outliving its stream', () => {
   const taskTurn = (inProgress: boolean): Msg[] => [
     { id: 'u0', role: 'user', content: 'ask', contentType: 'text', timestamp: new Date(), isStreaming: false },

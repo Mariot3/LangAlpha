@@ -75,12 +75,6 @@ export function ActiveTabBody({
           onOpenSubagentTask={onOpenSubagentTask}
         />
       );
-    case 'plan':
-      return (
-        <Suspense fallback={null}>
-          <DetailPanel key={activeTab.planId} toolCallProcess={null} planData={activeTab.plan} />
-        </Suspense>
-      );
     case 'memory':
     case 'memo':
     case 'status':

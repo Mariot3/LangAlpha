@@ -1,14 +1,14 @@
 import type { ToolCallProcessRecord } from '../ToolCallDetailView';
 import { isTaskTool } from '../toolDisplayConfig';
 
-/** What a plan's text opens at. */
-export const PLAN_TAB_WIDTH = 550;
+/** What a tool result opens at before its record is there to size it. */
+const UNSIZED_DETAIL_WIDTH = 550;
 /** What the file panel opens at before a drag has said otherwise. */
 export const DEFAULT_PANEL_WIDTH = 850;
 
 /** How wide a tool result wants the panel: a filing or a file read needs the room, a data card does not. */
 export function detailPanelWidth(toolCallProcess: ToolCallProcessRecord | null): number {
-  if (!toolCallProcess) return PLAN_TAB_WIDTH;
+  if (!toolCallProcess) return UNSIZED_DETAIL_WIDTH;
   const toolName = toolCallProcess.toolName || '';
   const artifactType = toolCallProcess.toolCallResult?.artifact?.type;
   if (artifactType === 'sec_filing') return DEFAULT_PANEL_WIDTH;

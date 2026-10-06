@@ -113,6 +113,21 @@ FEATURES: dict[str, FeatureSpec] = {
             "chats run on your Default model."
         ),
     ),
+    "todo_write": FeatureSpec(
+        key="todo_write",
+        label="Task checklist (legacy)",
+        description=(
+            "Gives the agent a TodoWrite tool to keep a checklist of its steps "
+            "on long tasks, shown as a live todo list in chat."
+        ),
+        enabled=True,
+        gate=FeatureGate.OPT_IN,
+        tradeoffs=(
+            "Each checklist update is an extra tool call, which adds a little "
+            "time and cost to long turns. Legacy, and may be removed in a "
+            "future release."
+        ),
+    ),
 }
 
 

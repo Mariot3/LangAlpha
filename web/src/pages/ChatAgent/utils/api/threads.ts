@@ -29,14 +29,17 @@ export async function createThreadWithTitle(opts: {
   /** Lets title generation resolve relative dates ("today") on the user's
    *  wall clock; the server reads UTC without it. */
   timezone?: string;
+  /** Left out, the thread stores no value and follows the owner's default. */
+  subagentsAllowed?: boolean;
   timeoutMs?: number;
 }): Promise<ThreadCreatedInfo> {
-  const { workspaceId, firstQuery, agentMode = 'ptc', platform, timezone, timeoutMs = 8000 } = opts;
+  const { workspaceId, firstQuery, agentMode = 'ptc', platform, timezone, subagentsAllowed, timeoutMs = 8000 } = opts;
 
   const body: Record<string, unknown> = { first_query: firstQuery, agent_mode: agentMode };
   if (workspaceId) body.workspace_id = workspaceId;
   if (platform) body.platform = platform;
   if (timezone) body.timezone = timezone;
+  if (subagentsAllowed !== undefined) body.subagents_allowed = subagentsAllowed;
 
   const { data } = await api.post<ThreadCreatedInfo>('/api/v1/threads', body, { timeout: timeoutMs });
   return data;
@@ -122,10 +125,13 @@ export interface ThreadUpdates {
   /** `null` returns the thread to the account default. A name the server
    *  cannot resolve is refused with a 400. */
   llm_model?: string | null;
+  /** Whether the agent may hand work to subagents on this thread. `null`
+   *  returns it to following the user's default. */
+  subagents_allowed?: boolean | null;
 }
 
 /**
- * Update user-editable thread fields (title, pin, archive, model) via PATCH.
+ * Update user-editable thread fields (title, pin, archive, model, subagents) via PATCH.
  * Only the keys present in `updates` are applied server-side.
  */
 export async function updateThread(threadId: string, updates: ThreadUpdates): Promise<Thread> {

@@ -895,7 +895,7 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
   }, [onOpenFile, onAnchorLink, variant, config.components, codeTheme, folders]);
 
   // Rendered markdown is always long-form reading content — every call site
-  // (transcript, detail panels, memos, plans) gets the content face here.
+  // (transcript, detail panels, memos) gets the content face here.
   return (
     <div
       ref={rootRef}

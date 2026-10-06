@@ -6,6 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from ptc_agent.agent.agent import AgentRole, PTCAgent
 from ptc_agent.agent.middleware.runtime_context import TurnContext
+from ptc_agent.agent.middleware.subagent_switch import SubagentSwitchReader
 from ptc_agent.config import AgentConfig
 from ptc_agent.core.project_context import ProjectContext
 from ptc_agent.core.session import Session
@@ -265,7 +266,6 @@ async def build_ptc_graph_with_session(
     background_registry: Any | None = None,
     user_id: str | None = None,
     user_profile: dict[str, Any] | None = None,
-    plan_mode: bool = False,
     thread_id: str | None = None,
     store: Any | None = None,
     on_signed_url: Any | None = None,
@@ -277,6 +277,7 @@ async def build_ptc_graph_with_session(
     project: ProjectContext | None = None,
     tool_view: Any | None = None,
     role: AgentRole = "analyst",
+    subagent_switch: SubagentSwitchReader | None = None,
 ) -> Any:
     """Build a BackgroundSubagentOrchestrator from a pre-acquired session (WorkspaceManager path).
 
@@ -291,6 +292,9 @@ async def build_ptc_graph_with_session(
 
     ``tool_view`` is the project's frozen registry and summary. The session's
     own fields belong to whichever project on the machine resolved last.
+
+    ``subagent_switch`` reads the thread's subagent switch on every call; a
+    build without one leaves subagents as built.
     """
     mcp_registry = (
         tool_view.mcp_registry if tool_view is not None else session.mcp_registry
@@ -343,7 +347,6 @@ async def build_ptc_graph_with_session(
         background_registry=background_registry,
         namespace_owner=namespace_owner,
         user_profile=user_profile,
-        plan_mode=plan_mode,
         session=session,
         thread_id=thread_id,
         workspace_name=workspace_name,
@@ -364,6 +367,7 @@ async def build_ptc_graph_with_session(
         project=project,
         role=role,
         harness_blocks=harness_blocks,
+        subagent_switch=subagent_switch,
     )
 
     logger.debug(

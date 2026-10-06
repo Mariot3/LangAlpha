@@ -6,7 +6,6 @@ React frontend for LangAlpha — a vibe investing agent with AI-powered research
 
 - **Supabase Auth** — OAuth login with session management and protected routes
 - **SSE Streaming Chat** — Real-time agent responses with subagent task cards, tool call display, and reasoning blocks
-- **HITL Plan Approval** — Review and approve/reject agent plans before execution
 - **React Query Data Layer** — Hierarchical cache key factory with prefix-based invalidation, shared hooks across pages
 - **Configurable Dashboard** — Drag-and-drop widget gallery with 30+ widgets (watchlist, portfolio, news, TradingView heatmaps, screeners, ticker tape, mini-chart grid). Per-widget settings persisted to user preferences with Zod schema validation at the boundary, cross-tab sync, and an offline banner when the network drops.
 - **TradingView-Style Charting** — Interactive candlestick charts with AI chat sidebar for stock analysis

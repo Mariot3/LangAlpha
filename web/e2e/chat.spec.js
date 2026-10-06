@@ -2,7 +2,7 @@
  * E2E tests for the ChatAgent page (/chat).
  *
  * Covers: WorkspaceGallery, ThreadGallery, ChatView (SSE streaming),
- * error handling, HITL plan approval, message editing, and file panel.
+ * error handling, message editing, and file panel.
  */
 import {
   configureSSE,
@@ -453,71 +453,6 @@ test.describe('Chat View -- SSE Streaming', () => {
     // search/file/generic) — for a single WebSearch call it reads
     // "made 1 web call".
     await expect(page.getByText(/made \d+ web call/i)).toBeVisible({ timeout: 10000 });
-  });
-
-  test('plan mode interrupt shows approval UI', async ({ page }) => {
-    await mockAPI(page, chatViewOverrides());
-
-    // Replay that ends with an interrupt
-    await configureSSE({
-      method: 'GET',
-      path: '/api/v1/threads/b0000001-0000-4000-8000-000000000001/messages/replay',
-      events: [
-        sseEvents.userMessage('Analyze TSLA'),
-        sseEvents.interrupt('int-1', 'Here is my plan:\n1. Fetch TSLA financials\n2. Create a chart'),
-        sseEvents.replayDone(),
-      ],
-      delay: 10,
-    });
-
-    await page.goto('/chat/t/b0000001-0000-4000-8000-000000000001');
-
-    // Plan approval card should be visible
-    await expect(page.getByText('Plan Approval Required')).toBeVisible({ timeout: 10000 });
-    // Approve and Reject buttons should be present
-    await expect(page.getByText('Approve')).toBeVisible();
-    await expect(page.getByText('Reject')).toBeVisible();
-  });
-
-  test('approve plan resumes workflow', async ({ page }) => {
-    await mockAPI(page, {
-      ...chatViewOverrides(),
-    });
-
-    // Replay with interrupt
-    await configureSSE({
-      method: 'GET',
-      path: '/api/v1/threads/b0000001-0000-4000-8000-000000000001/messages/replay',
-      events: [
-        sseEvents.userMessage('Analyze TSLA'),
-        sseEvents.interrupt('int-1', 'Plan:\n1. Fetch data\n2. Analyze'),
-        sseEvents.replayDone(),
-      ],
-      delay: 10,
-    });
-
-    // Configure the POST for plan approval (HITL response sends as message)
-    await configureSSE({
-      method: 'POST',
-      path: '/api/v1/threads/b0000001-0000-4000-8000-000000000001/messages',
-      events: [
-        sseEvents.messageChunk('Executing the plan...'),
-        sseEvents.finishStop(),
-        sseEvents.creditUsage(),
-      ],
-      delay: 30,
-    });
-
-    await page.goto('/chat/t/b0000001-0000-4000-8000-000000000001');
-
-    // Wait for approval UI
-    await expect(page.getByText('Plan Approval Required')).toBeVisible({ timeout: 10000 });
-
-    // Click Approve
-    await page.getByText('Approve').click();
-
-    // After approval, status should change to "Plan Approved"
-    await expect(page.getByText('Plan Approved')).toBeVisible({ timeout: 10000 });
   });
 
   test('stop button cancels streaming', async ({ page }) => {

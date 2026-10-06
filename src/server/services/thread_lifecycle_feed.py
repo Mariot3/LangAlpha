@@ -5,7 +5,7 @@ lifecycle transitions to that user's open tabs. The channel is TRANSPORT, not
 truth: ``run_settled`` rides the hook outbox (at-least-once, enqueued inside
 the finalize transaction), and the feed endpoint's 30s DB reconcile backs it
 up — every settle status is representable in the snapshot. The thread events
-(title, pinned, deleted, archived, unarchived) are NOT: they have no snapshot
+(title, pinned, subagents, deleted, archived, unarchived) are NOT: they have no snapshot
 representation, so a dropped publish for those is repaired only by the
 client's stream-cap reconnect, never by the reconcile.
 """
@@ -169,6 +169,24 @@ async def publish_thread_pinned(
             pinned=pinned,
         ),
     )
+
+
+async def publish_thread_subagents(
+    *,
+    user_id: Optional[str],
+    thread_id: str,
+    workspace_id: Optional[str],
+    allowed: Optional[bool],
+) -> None:
+    """Subagent-switch hint: the switch lives only on the thread row, so a tab
+    with the thread open learns of a flip made in another one only from this
+    event or its next read of the thread."""
+    event = build_lifecycle_event(
+        type="thread_subagents", thread_id=thread_id, workspace_id=workspace_id
+    )
+    # Always present: null is the thread following the owner's default.
+    event["subagents_allowed"] = allowed
+    await publish_user_event(user_id, event)
 
 
 async def publish_thread_deleted(

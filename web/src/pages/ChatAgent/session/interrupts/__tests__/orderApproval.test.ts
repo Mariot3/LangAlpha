@@ -65,12 +65,12 @@ describe('the card an order interrupt builds', () => {
   });
 
   // The order gate raises its own interrupt, so its requests need not be named
-  // the way a directly bound MCP tool is. One that fell through would render a
-  // plan-approval card over a live order.
+  // the way a directly bound MCP tool is. One that fell through would get no
+  // card, leaving a live order waiting with nothing to answer it.
   it('recognizes a keyed request whatever it is named', () => {
     expect(isToolApprovalRequest({ name: 'place_equity_order', attempt_id: 'a-1' })).toBe(true);
     expect(isToolApprovalRequest({ name: 'place_equity_order', order: ORDER })).toBe(true);
-    expect(isToolApprovalRequest({ name: 'SubmitPlan', args: { plan: 'x' } })).toBe(false);
+    expect(isToolApprovalRequest({ name: 'web_search', args: { query: 'x' } })).toBe(false);
     expect(isToolApprovalRequest(undefined)).toBe(false);
   });
 
@@ -163,15 +163,14 @@ describe('the live projection of an order interrupt', () => {
       setPendingInterrupt: vi.fn(),
       pendingInterruptIdsRef: { current: new Set<string>() },
       renderedInterruptIdsRef: { current: new Set<string>() },
-      currentPlanModeRef: { current: false },
     } as unknown as StreamRuntime;
     const refs = { contentOrderCounterRef: { current: 0 } } as unknown as StreamProcessorRefs;
     return { rt, refs, read: () => current };
   }
 
   // The gate raises its own interrupt, so its requests need not be named the
-  // way a directly bound MCP tool is. Falling through here would draw a plan
-  // card over a live order and leave the resume with nothing to answer it.
+  // way a directly bound MCP tool is. Falling through here would draw no card
+  // and leave the resume with nothing to answer it.
   it('draws approval cards for a request the direct-name test would miss', () => {
     const { rt, refs, read } = build();
     projectLiveInterrupt(
@@ -187,7 +186,6 @@ describe('the live projection of an order interrupt', () => {
     );
 
     const msg = read()[0] as AssistantMessage;
-    expect(msg.planApprovals).toBeUndefined();
     expect(msg.toolApprovals?.['int-1']).toMatchObject({
       status: 'pending',
       attemptId: 'attempt-1',

@@ -294,10 +294,6 @@ class ChatRequest(BaseModel):
         default=None,
         description="List of subagent names to enable (default: from config)",
     )
-    plan_mode: bool = Field(
-        default=False,
-        description="When True, agent must submit a plan for approval via submit_plan tool before execution",
-    )
     steer_only: bool = Field(
         default=False,
         description="When True, this POST may only steer an in-flight workflow; "
@@ -371,6 +367,16 @@ class ChatRequest(BaseModel):
             "default. A named model is stored on the thread once the turn is "
             "admitted, so later turns keep it."
         ),
+    )
+
+    # Unrelated to ``subagents_enabled``, which names the subagents a build
+    # compiles.
+    subagents_allowed: Optional[bool] = Field(
+        default=None,
+        description="The subagent switch for a thread this send creates; "
+        "omitted, or the side the user's default is on, the thread follows "
+        "that default. Ignored for an existing thread, which "
+        "PATCH /threads/{id} changes.",
     )
 
     # Reasoning effort override (optional - defaults to model's configured level)

@@ -138,6 +138,7 @@ vi.mock('@/hooks/useAllModels', () => ({
 }));
 
 vi.mock('@/hooks/useUpdatePreferences', () => ({
+  PREFERENCE_MUTATION_KEY: ['user-preferences'],
   useUpdatePreferences: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 }));
 
@@ -172,8 +173,12 @@ function prefs(flash: string, ptc = 'model-p0') {
 }
 
 function ChatPage() {
-  const { state } = useLocation();
-  return <div data-testid="chat-page">{(state as { model?: string } | null)?.model ?? ''}</div>;
+  const state = useLocation().state as { model?: string; subagentsAllowed?: boolean } | null;
+  return (
+    <div data-testid="chat-page" data-subagents={String(state?.subagentsAllowed)}>
+      {state?.model ?? ''}
+    </div>
+  );
 }
 
 let queryClient: QueryClient;
@@ -314,5 +319,49 @@ describe('the mobile market composer on a Fast thread', () => {
     expect(mocks.sendFlashChatMessage.mock.calls[1][THREAD_ID]).toBe('t-1');
     expect(mocks.sendFlashChatMessage.mock.calls[1][MODEL]).toBe('model-x');
     expect(mocks.updateThread).not.toHaveBeenCalled();
+  });
+});
+
+describe('the mobile market composer on PTC', () => {
+  const pill = () => screen.queryByRole('button', { name: /^Subagents$/ });
+
+  beforeEach(() => {
+    ContextBus.__resetForTests();
+    ChatInputRegistry.__resetForTests();
+    Element.prototype.scrollIntoView = vi.fn();
+    localStorage.clear();
+    sessionStorage.clear();
+    mocks.sendFlashChatMessage.mockReset();
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    queryClient.setQueryData(queryKeys.user.preferences(), {
+      ...prefs('model-d'),
+      other_preference: { subagents_default: true },
+    });
+  });
+  afterEach(() => {
+    ContextBus.__resetForTests();
+    ChatInputRegistry.__resetForTests();
+  });
+
+  it('shows the Subagents toggle, keeps a flip across a fold, and sends it into the new chat', async () => {
+    renderPage();
+    expand();
+    expect(pill()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Flash' }));
+    expect(pill()).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(pill()!);
+    expect(pill()).toHaveAttribute('aria-pressed', 'false');
+
+    // A tap outside folds the FAB, unmounting the composer.
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expand();
+    expect(pill()).toHaveAttribute('aria-pressed', 'false');
+
+    await send('Build me a DCF');
+    expect(await screen.findByTestId('chat-page')).toHaveAttribute('data-subagents', 'false');
+    expect(mocks.sendFlashChatMessage).not.toHaveBeenCalled();
   });
 });

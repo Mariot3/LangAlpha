@@ -53,7 +53,7 @@
 - **Secretary** — Flash agent は secretary としても動作します。workspace の作成と管理、バックグラウンドでの深い PTC 分析の dispatch、実行中タスクの監視、結果取得を、human-in-the-loop 承認付きの会話コマンドで行えます。
 - **Agent swarm** — 分離された context window、事前ロードされた toolset/skills、実行中 steering、checkpoint ベースの resume、UI でのライブ進捗監視を備えた、並列非同期 subagent 群です。
 - **Live steering** — agent や subagent の作業中に追加メッセージを送り、完了を待たずに方向修正、補足、リダイレクトができます。
-- **Middleware stack** — skill loading、plan mode、マルチモーダル入力、auto-compaction、context management を扱う深く composable な middleware stack により、長時間の agent session を支えます。
+- **Middleware stack** — skill loading、マルチモーダル入力、auto-compaction、context management を扱う深く composable な middleware stack により、長時間の agent session を支えます。
 - **Security & vault** — pgcrypto による保存時暗号化、credential 漏えいの自動検出と redaction、sandboxed execution、agent が安全に利用できる account ごとの secret storage を提供します。
 - **Channel integrations** — Slack、Discord、Feishu、Telegram から LangAlpha を使えます。スケジュール結果はメール配信もできます。
 - **Production-ready infrastructure** — Redis buffer による再接続 replay 付きの SSE-streamed agent activity、HTTP 接続から切り離された background execution、PostgreSQL-backed state persistence を備えます。
@@ -265,7 +265,7 @@ flowchart TB
         direction LR
         MW1["Tool Safety<br/>Leak Detection<br/>Protected Paths<br/>Error Handling"]
         MW2["Context & Skills<br/>agent.md Injection<br/>Skill Loading<br/>Multimodal"]
-        MW3["Coordination<br/>HITL · Plan Mode<br/>Steering<br/>Subagent Dispatch"]
+        MW3["Coordination<br/>HITL<br/>Steering<br/>Subagent Dispatch"]
         MW4["Resilience<br/>Compaction<br/>Retry + Fallback<br/>Prompt Caching"]
     end
 
@@ -313,7 +313,6 @@ agent には以下を含む middleware stack が同梱されています。
 - **Live steering** — agent が分析中に誤った方向へ進んだり、関係の薄いデータを追ったり、意図を誤解したりすることがあります。steering により、完了を待たずに軌道修正できます。agent の作業中いつでも follow-up message を送り、更新した指示、補足、まったく新しい質問を伝えると、agent は次の step の前にそれを受け取ります。steering はすべての layer で機能します。main agent を redirect し、個別の background subagent に follow-up を送り、workflow が先に終わった場合は未消費 message を input box に戻します。作業は失われず、restart も不要です。
 - **Dynamic skill loading** — `LoadSkill` tool により、agent は必要に応じて skill toolsets を発見・有効化できます。default tool surface を小さく保ちながら、必要なときだけ専門機能を利用できます。
 - **Multimodal** — images と PDFs の file read を捕捉し、sandbox や URL から content を download して base64 として conversation に注入します。multimodal models がネイティブに解釈できます。
-- **Plan mode** — human-in-the-loop interrupt により、実行前に agent の strategy を review and approve できます。
 - **Auto-compaction** — token limit に近づくと conversation history を圧縮し、重要 context を保持しながら空き容量を作ります。
 - **Context management** — 大きな tool result を workspace filesystem に自動退避し、context には短い preview だけを残します。conversation が長くなると古い turn を要約しつつ compaction し、full transcript は workspace から復元できます。research session は context limit に突き当たらず長期間動かせます。
 

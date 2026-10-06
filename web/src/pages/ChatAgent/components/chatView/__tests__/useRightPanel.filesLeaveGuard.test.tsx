@@ -4,14 +4,13 @@ import { renderHook, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
 import { useRightPanel } from '../useRightPanel';
-import type { PlanData } from '../types';
 import type { ToolCallProcessRecord } from '../../ToolCallDetailView';
 import type { RouteLeaveGuard } from '../../../contexts/RouteLeaveGuardContext';
 
 // The Files panel's drafts live in its mount, and closing the panel unmounts
 // it. Those exits leave through the guard the panel hands up, and a declined
-// ask leaves the panel where it is. A tool result or a plan is a tab of the
-// same panel, so opening one never asks.
+// ask leaves the panel where it is. A tool result is a tab of the same
+// panel, so opening one never asks.
 
 const setFilePanelWorkspaceId = vi.fn();
 
@@ -32,7 +31,6 @@ function open(panel: { dispatches?: boolean; filePanelWorkspaceId?: string | nul
 }
 
 const TOOL_CALL = { toolCall: { id: 'tc1' }, toolCallResult: { artifact: null } } as unknown as ToolCallProcessRecord;
-const PLAN = { steps: [] } as unknown as PlanData;
 
 // The panel's guard, answered the way the reader answers its dialog.
 const guard = vi.fn<RouteLeaveGuard>();
@@ -50,15 +48,6 @@ describe('leaving the Files panel with a draft open', () => {
     expect(guard).not.toHaveBeenCalled();
     expect(result.current.rightPanelType).toBe('file');
     expect(result.current.panelTarget).toMatchObject({ kind: 'tool', toolCallId: 'tc1' });
-  });
-
-  it('opens a plan detail as a Files tab without asking', () => {
-    answer(false);
-    const result = open();
-    act(() => result.current.handlePlanDetailClick('p1', PLAN));
-    expect(guard).not.toHaveBeenCalled();
-    expect(result.current.rightPanelType).toBe('file');
-    expect(result.current.panelTarget).toMatchObject({ kind: 'plan', planId: 'p1', plan: PLAN });
   });
 
   it('holds the panel on a declined Workspace toggle', () => {

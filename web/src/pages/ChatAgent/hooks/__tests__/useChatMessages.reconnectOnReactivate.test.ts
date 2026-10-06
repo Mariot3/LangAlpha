@@ -299,16 +299,16 @@ describe('useChatMessages — reconnect-on-reactivation (cached view, run starte
     return Promise.resolve();
   };
   /** Sends a turn whose stream stays open until the returned end() is called. */
-  const sendHeldTurn = async (result: { current: { handleSendMessage: (text: string, planMode: boolean) => Promise<unknown> } }) => {
+  const sendHeldTurn = async (result: { current: { handleSendMessage: (text: string) => Promise<unknown> } }) => {
     let finish!: () => void;
     mockSend.mockImplementationOnce((...args: unknown[]) => {
-      const onRunIdResolved = args[16] as (runId: string, threadId: string | null) => void;
+      const onRunIdResolved = (args[3] as { onRunIdResolved: (runId: string, threadId: string | null) => void }).onRunIdResolved;
       onRunIdResolved('run-own', 'th');
       return new Promise((resolve) => { finish = () => resolve({ disconnected: false, aborted: false }); });
     });
     let sent: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      sent = result.current.handleSendMessage('a question sent mid-load', false);
+      sent = result.current.handleSendMessage('a question sent mid-load');
       await new Promise((r) => setTimeout(r, 0));
     });
     return () => act(async () => { finish(); await sent; });
