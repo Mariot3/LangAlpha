@@ -160,9 +160,9 @@ def markdown_to_html(md: str) -> str:
     return "".join(out)
 
 
-def wrap_email(body_html: str, automation_name: str, sent_at: str) -> str:
+def wrap_email(body_html: str, source: str, kind: str, sent_at: str) -> str:
     """Brand header and source footer around the rendered report."""
-    name = html.escape(automation_name)
+    name = html.escape(source)
     return (
         f'<html><body style="margin:0;padding:0;background:#ffffff">'
         f'<div style="font-family:{_FONT};font-size:15px;line-height:1.6;color:{_INK};'
@@ -172,16 +172,16 @@ def wrap_email(body_html: str, automation_name: str, sent_at: str) -> str:
         f"LangAlpha &middot; {name}</div>"
         f"{body_html}"
         f'<div style="margin-top:28px;padding-top:12px;border-top:1px solid {_RULE};'
-        f'font-size:12px;color:{_MUTED}">Sent by the LangAlpha automation '
+        f'font-size:12px;color:{_MUTED}">Sent by the LangAlpha {html.escape(kind)} '
         f"&ldquo;{name}&rdquo; &middot; {html.escape(sent_at)}. AI-generated research; "
         f"not investment advice.</div>"
         f"</div></body></html>"
     )
 
 
-def _sent_at(automation: Dict[str, Any]) -> str:
+def _sent_at(timezone_name: str | None) -> str:
     try:
-        tz = ZoneInfo(automation.get("timezone") or "UTC")
+        tz = ZoneInfo(timezone_name or "UTC")
     except Exception:
         tz = timezone.utc
     return datetime.now(tz).strftime("%a %d %b %Y, %I:%M %p %Z")
@@ -201,10 +201,10 @@ def _send(msg: EmailMessage) -> None:
         smtp.send_message(msg)
 
 
-async def deliver_automation_email(
-    automation: Dict[str, Any], thread_id: str | None, run_id: str | None = None
+async def send_report_email(
+    subject: str, body_md: str, source: str, kind: str, timezone_name: str | None
 ) -> Dict[str, Any]:
-    """Email the finished report. Never raises; returns a delivery_result row."""
+    """Render and send one report to the configured recipients. Never raises."""
     from src.config import settings
 
     result: Dict[str, Any] = {"method": "email", "success": False}
@@ -220,22 +220,16 @@ async def deliver_automation_email(
         logger.warning(f"[EMAIL] not configured, skipping: {result['error']}")
         return result
     try:
-        body = await _final_report_text(thread_id, run_id) if thread_id else ""
-        if not body.strip():
-            result["error"] = "run produced no report text"
-            return result
-        heading = _HEADING_RE.search(body)
-        subject = (heading.group(1) if heading else automation.get("name") or "Automation update")
         subject = re.sub(r"[*_`]", "", subject).strip()
-
+        sent_at = _sent_at(timezone_name)
         msg = EmailMessage()
         msg["Subject"] = f"{SUBJECT_PREFIX} {subject}"
         msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
         msg["To"] = ", ".join(recipients)
-        name = automation.get("name") or "Automation"
-        sent_at = _sent_at(automation)
-        msg.set_content(f"{body}\n\n--\nSent by the LangAlpha automation \"{name}\" · {sent_at}")
-        msg.add_alternative(wrap_email(markdown_to_html(body), name, sent_at), subtype="html")
+        msg.set_content(f"{body_md}\n\n--\nSent by the LangAlpha {kind} \"{source}\" · {sent_at}")
+        msg.add_alternative(
+            wrap_email(markdown_to_html(body_md), source, kind, sent_at), subtype="html"
+        )
         await asyncio.to_thread(_send, msg)
         result["success"] = True
         logger.info(f"[EMAIL] sent '{subject}' to {len(recipients)} recipient(s)")
@@ -243,3 +237,48 @@ async def deliver_automation_email(
         logger.error(f"[EMAIL] delivery failed: {e}")
         result["error"] = str(e)
     return result
+
+
+async def deliver_automation_email(
+    automation: Dict[str, Any], thread_id: str | None, run_id: str | None = None
+) -> Dict[str, Any]:
+    """Email an automation run's final report. Never raises; returns a delivery_result row."""
+    name = automation.get("name") or "Automation"
+    try:
+        body = await _final_report_text(thread_id, run_id) if thread_id else ""
+    except Exception as e:
+        logger.error(f"[EMAIL] could not read report: {e}")
+        return {"method": "email", "success": False, "error": str(e)}
+    if not body.strip():
+        return {"method": "email", "success": False, "error": "run produced no report text"}
+    heading = _HEADING_RE.search(body)
+    return await send_report_email(
+        heading.group(1) if heading else name, body, name, "automation", automation.get("timezone")
+    )
+
+
+_BRIEF_LABELS = {
+    "pre_market": "Pre-market brief",
+    "market_update": "Market update",
+    "post_market": "Post-market recap",
+}
+
+
+async def deliver_insight_email(
+    job_type: str, parsed: Dict[str, Any], timezone_name: str | None
+) -> Dict[str, Any]:
+    """Email a scheduled market brief from its structured output. Never raises."""
+    label = _BRIEF_LABELS.get(job_type, "Market brief")
+    lines = [f"# {label}: {parsed['headline']}", "", parsed["summary"], ""]
+    if parsed.get("topics"):
+        lines += ["**Topics:** " + " · ".join(t["text"] for t in parsed["topics"]), ""]
+    if parsed.get("news_items"):
+        lines += ["## Top stories", ""]
+        for item in parsed["news_items"]:
+            lines += [f"### {item['title']}", "", item["body"]]
+            if item.get("url"):
+                lines += ["", f"[Source]({item['url']})"]
+            lines.append("")
+    return await send_report_email(
+        f"{label}: {parsed['headline']}", "\n".join(lines), label, "market brief", timezone_name
+    )

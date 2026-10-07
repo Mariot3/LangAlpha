@@ -20,7 +20,7 @@ def test_rule_above_a_heading_is_dropped():
 
 
 def test_wrap_names_the_source_automation():
-    html = email_delivery.wrap_email("<p>x</p>", "MSFT daily summary", "Wed 07 Oct 2026")
+    html = email_delivery.wrap_email("<p>x</p>", "MSFT daily summary", "automation", "Wed 07 Oct 2026")
     assert "LangAlpha" in html and "MSFT daily summary" in html
 
 
@@ -39,6 +39,27 @@ async def test_refused_outside_single_user_mode(monkeypatch):
     from src.config import settings
 
     monkeypatch.setattr(settings, "HOST_MODE", "platform")
-    result = await email_delivery.deliver_automation_email({"name": "x"}, "thread")
+    result = await email_delivery.send_report_email("s", "# s", "x", "automation", None)
     assert result["success"] is False
     assert "single-user" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_brief_email_is_assembled_from_structured_output(monkeypatch):
+    sent = {}
+
+    async def fake_send(subject, body_md, source, kind, tz):
+        sent.update(subject=subject, body=body_md, kind=kind)
+        return {"method": "email", "success": True}
+
+    monkeypatch.setattr(email_delivery, "send_report_email", fake_send)
+    parsed = {
+        "headline": "Stocks climb",
+        "summary": "Broad gains.",
+        "topics": [{"text": "AI", "trend": "up"}],
+        "news_items": [{"title": "Chip rally", "body": "Details.", "url": "https://a.test/x"}],
+    }
+    await email_delivery.deliver_insight_email("pre_market", parsed, "America/New_York")
+    assert sent["subject"] == "Pre-market brief: Stocks climb"
+    assert sent["kind"] == "market brief"
+    assert "### Chip rally" in sent["body"] and "[Source](https://a.test/x)" in sent["body"]
