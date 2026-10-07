@@ -1,5 +1,6 @@
 """Generic webhook client for firing automation lifecycle events."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -80,10 +81,16 @@ class WebhookClient:
 
             from src.config import settings
 
+            # Email goes out in-process over SMTP; every other method rides the webhook.
+            wants_email = "email" in methods and event == "automation.completed"
+            methods = [m for m in methods if m != "email"]
+
             webhook_url = settings.AUTOMATION_WEBHOOK_URL
             webhook_secret = settings.AUTOMATION_WEBHOOK_SECRET
-            if not webhook_url:
+            if methods and not webhook_url:
                 logger.warning("[WEBHOOK] AUTOMATION_WEBHOOK_URL not configured, skipping delivery")
+                methods = []
+            if not methods and not wants_email:
                 return None
 
             base_payload = {
@@ -108,8 +115,8 @@ class WebhookClient:
             )
             return None
 
-        return [
-            {
+        async def send(method: str) -> dict:
+            return {
                 "method": method,
                 "success": await self.fire(
                     webhook_url,
@@ -117,5 +124,11 @@ class WebhookClient:
                     webhook_secret or None,
                 ),
             }
-            for method in methods
-        ]
+
+        # Concurrent so a slow SMTP handshake doesn't hold up the webhook sends.
+        jobs = [send(m) for m in methods]
+        if wants_email:
+            from src.server.services.email_delivery import deliver_automation_email
+
+            jobs.insert(0, deliver_automation_email(automation, thread_id, run_id))
+        return list(await asyncio.gather(*jobs))

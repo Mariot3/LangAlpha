@@ -21,7 +21,7 @@ import { MIN_COOLDOWN_MINUTES, RETRIGGER_MODES } from '../utils/price';
 import CountInput from './CountInput';
 import FormRow from './FormRow';
 
-type DeliveryChoice = 'none' | 'slack' | 'discord';
+type DeliveryChoice = 'none' | 'email' | 'slack' | 'discord';
 
 /** The one segment the delivery control can press, or null for a set it
  *  cannot show: several channels, or one the agent chose that the form does
@@ -29,7 +29,7 @@ type DeliveryChoice = 'none' | 'slack' | 'discord';
 function deliveryChoice(methods: string[]): DeliveryChoice | null {
   if (methods.length === 0) return 'none';
   if (methods.length > 1) return null;
-  return methods[0] === 'slack' || methods[0] === 'discord' ? methods[0] : null;
+  return methods[0] === 'email' || methods[0] === 'slack' || methods[0] === 'discord' ? methods[0] : null;
 }
 
 interface MoreOptionsProps {
@@ -142,6 +142,7 @@ export default function MoreOptions({ form, patch, open, onOpenChange }: MoreOpt
             onChange={(choice) => patch('delivery_methods', choice === 'none' ? [] : [choice])}
             options={[
               { value: 'none', label: t('automation.deliverNone') },
+              { value: 'email', label: deliveryMethodName('email', t) },
               { value: 'slack', label: deliveryMethodName('slack', t) },
               { value: 'discord', label: deliveryMethodName('discord', t) },
             ]}

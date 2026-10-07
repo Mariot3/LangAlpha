@@ -90,6 +90,15 @@ USD_TO_CREDITS_RATE: int = int(os.getenv("USD_TO_CREDITS_RATE", "1000"))
 AUTOMATION_WEBHOOK_URL: str = os.getenv("AUTOMATION_WEBHOOK_URL", "")
 AUTOMATION_WEBHOOK_SECRET: str = os.getenv("AUTOMATION_WEBHOOK_SECRET", "")
 
+# Automation email delivery (SMTP). Gmail needs an app password, not the account password.
+SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+_smtp_port = os.getenv("SMTP_PORT", "587")
+SMTP_PORT: int = int(_smtp_port) if _smtp_port.isdigit() else 587
+SMTP_USER: str = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM: str = os.getenv("SMTP_FROM", "")
+AUTOMATION_EMAIL_TO: str = os.getenv("AUTOMATION_EMAIL_TO", "")  # comma-separated
+
 # Host IP for local LLM providers (Ollama, LM Studio, vLLM).
 # In Docker, "localhost" means the container — use host.docker.internal to reach the host.
 _IN_DOCKER: bool = os.path.exists("/.dockerenv")
