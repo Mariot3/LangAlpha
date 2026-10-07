@@ -85,7 +85,10 @@ def _table(lines: list[str]) -> str:
     def cells(line: str) -> list[str]:
         return [c.strip() for c in line.strip().strip("|").split("|")]
 
-    head, *body = [cells(ln) for ln in lines if not re.fullmatch(r"[\s|:-]+", ln)]
+    rows_ = [cells(ln) for ln in lines if not re.fullmatch(r"[\s|:-]+", ln)]
+    if not rows_:  # only separator lines: nothing to tabulate
+        return ""
+    head, *body = rows_
     th = "".join(f'<th style="{_TD};background:#f3f4f6">{_inline(c)}</th>' for c in head)
     rows = "".join(
         "<tr>"
@@ -294,7 +297,7 @@ async def deliver_insight_email(
             for item in parsed["news_items"]:
                 lines += [f"### {item['title']}", "", item.get("body") or ""]
                 if item.get("url"):
-                    lines += ["", f"[Source]({item['url']})"]
+                    lines += ["", "[Source](" + item["url"].replace("(", "%28").replace(")", "%29") + ")"]
                 lines.append("")
     except Exception as e:
         logger.error(f"[EMAIL] could not assemble {job_type} brief: {e}")

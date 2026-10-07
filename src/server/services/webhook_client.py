@@ -39,6 +39,20 @@ class WebhookClient:
             logger.error(f"[WEBHOOK] Request failed: url={url} error={e}")
             return False
 
+    async def _email_with_deadline(
+        self, automation: Dict[str, Any], thread_id: str | None, run_id: str | None
+    ) -> dict:
+        """Email delivery is awaited while the automation settles; bound the total."""
+        from src.server.services.email_delivery import deliver_automation_email
+
+        try:
+            return await asyncio.wait_for(
+                deliver_automation_email(automation, thread_id, run_id), timeout=25
+            )
+        except asyncio.TimeoutError:
+            logger.error("[EMAIL] delivery exceeded 25s; abandoned")
+            return {"method": "email", "success": False, "error": "timed out after 25s"}
+
     async def fire_event(
         self,
         event: str,
@@ -130,7 +144,5 @@ class WebhookClient:
         # Concurrent so a slow SMTP handshake doesn't hold up the webhook sends.
         jobs = [send(m) for m in methods]
         if wants_email:
-            from src.server.services.email_delivery import deliver_automation_email
-
-            jobs.insert(0, deliver_automation_email(automation, thread_id, run_id))
+            jobs.insert(0, self._email_with_deadline(automation, thread_id, run_id))
         return list(await asyncio.gather(*jobs))

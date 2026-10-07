@@ -63,3 +63,8 @@ async def test_brief_email_is_assembled_from_structured_output(monkeypatch):
     assert sent["subject"] == "Pre-market brief: Stocks climb"
     assert sent["kind"] == "market brief"
     assert "### Chip rally" in sent["body"] and "[Source](https://a.test/x)" in sent["body"]
+
+
+def test_separator_only_table_does_not_lose_the_report():
+    html = markdown_to_html("|\n---\n\nstill here")
+    assert "still here" in html

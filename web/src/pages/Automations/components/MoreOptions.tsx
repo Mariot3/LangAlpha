@@ -1,4 +1,3 @@
-import { HOST_MODE } from '@/config/hostMode';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
@@ -10,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/aria-select';
+import { HOST_MODE } from '@/config/hostMode';
 import { Disclosure } from '@/components/ui/Disclosure';
 import { Input } from '@/components/ui/input';
 import { SegmentedControl } from '@/components/ui/segmented-control';

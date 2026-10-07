@@ -364,6 +364,9 @@ class InsightService:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        # A stored brief has no email retry path, so let in-flight sends finish (bounded).
+        if self._email_tasks:
+            await asyncio.wait(set(self._email_tasks), timeout=15)
         logger.info("[MARKET_INSIGHT] Shutdown complete")
 
     # ------------------------------------------------------------------

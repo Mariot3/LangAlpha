@@ -26,7 +26,8 @@ type SortDir = 'asc' | 'desc';
 interface SortState { key: SortKey; dir: SortDir }
 
 const SORT_KEYS: SortKey[] = ['added', 'symbol', 'price', 'change'];
-const SORT_STORAGE_KEY = 'dashboard.watchlist.sort';
+// Not dotted: the locale-key test treats dotted string literals as i18n keys.
+const SORT_STORAGE_KEY = 'langalpha:watchlist-sort';
 const DEFAULT_SORT: SortState = { key: 'added', dir: 'asc' };
 // Numeric sorts default to biggest-first; names default to A–Z.
 const FIRST_DIR: Record<SortKey, SortDir> = { added: 'asc', symbol: 'asc', price: 'desc', change: 'desc' };
@@ -61,6 +62,7 @@ function WatchlistWidget({ instance }: WidgetRenderProps<WatchlistConfig>) {
   const { watchlist, watchlistHandlers, dashboard } = useDashboardContext();
   const showSkeleton = watchlist.loading && watchlist.rows.length === 0;
   const [sort, setSort] = useState<SortState>(loadSort);
+  const SortArrow = sort.dir === 'asc' ? ArrowUp : ArrowDown;
   const sortedRows = useMemo(() => sortRows(watchlist.rows, sort), [watchlist.rows, sort]);
 
   const selectSort = (key: SortKey) => {
@@ -154,7 +156,6 @@ function WatchlistWidget({ instance }: WidgetRenderProps<WatchlistConfig>) {
       <div className="flex items-center gap-1 mb-2" role="group" aria-label={t('dashboard.widgets.watchlist.sort.label')}>
         {SORT_KEYS.map((key) => {
           const active = sort.key === key;
-          const Arrow = sort.dir === 'asc' ? ArrowUp : ArrowDown;
           return (
             <button
               key={key}
@@ -168,7 +169,7 @@ function WatchlistWidget({ instance }: WidgetRenderProps<WatchlistConfig>) {
               }}
             >
               {t(`dashboard.widgets.watchlist.sort.${key}`)}
-              {active && key !== 'added' && <Arrow className="h-2.5 w-2.5" />}
+              {active && key !== 'added' && <SortArrow className="h-2.5 w-2.5" />}
             </button>
           );
         })}
