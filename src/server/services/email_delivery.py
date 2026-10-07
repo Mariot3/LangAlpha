@@ -23,6 +23,10 @@ from src.server.database import pool
 
 logger = logging.getLogger(__name__)
 
+# Per socket operation (connect, STARTTLS, login, send). Short because delivery is
+# awaited while an automation settles, and a mail outage must not stall that.
+_SMTP_TIMEOUT = 10
+
 # Marks mail as automation output so it's recognisable (and filterable) in an inbox.
 SUBJECT_PREFIX = "[LangAlpha]"
 
@@ -104,6 +108,8 @@ def markdown_to_html(md: str) -> str:
     Hand-rolled rather than adding a dependency: a new package would bust the
     backend image's dependency layer, and reports only use this subset. The
     first heading is the report title; later h1-h3 are section headings.
+    Code fences, blockquotes and nested lists are not handled and render as plain
+    paragraphs.
     """
     out: list[str] = []
     lines = md.splitlines()
@@ -195,9 +201,9 @@ def _send(msg: EmailMessage) -> dict:
     # Explicit context: the credentials must only ever go to a verified server.
     ctx = ssl.create_default_context()
     if settings.SMTP_PORT == 465:  # implicit TLS; 587 upgrades with STARTTLS
-        smtp_cm = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30, context=ctx)
+        smtp_cm = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=_SMTP_TIMEOUT, context=ctx)
     else:
-        smtp_cm = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+        smtp_cm = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=_SMTP_TIMEOUT)
     with smtp_cm as smtp:
         if settings.SMTP_PORT != 465:
             smtp.starttls(context=ctx)
