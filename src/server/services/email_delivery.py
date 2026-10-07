@@ -2,7 +2,8 @@
 
 Sends the run's final assistant message over SMTP. The subject is the report's
 own first heading (e.g. "MSFT Trading Day Update — Tuesday, October 6") because
-the model dates it correctly, falling back to the automation name.
+the model dates it correctly, falling back to the automation name, behind a
+fixed source prefix.
 """
 
 import asyncio
@@ -18,6 +19,9 @@ from psycopg.rows import dict_row
 from src.server.database import pool
 
 logger = logging.getLogger(__name__)
+
+# Marks mail as automation output so it's recognisable (and filterable) in an inbox.
+SUBJECT_PREFIX = "[LangAlpha]"
 
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,3}\s+(.+?)\s*#*\s*$", re.M)
 
@@ -165,7 +169,7 @@ async def deliver_automation_email(
         subject = re.sub(r"[*_`]", "", subject).strip()
 
         msg = EmailMessage()
-        msg["Subject"] = subject
+        msg["Subject"] = f"{SUBJECT_PREFIX} {subject}"
         msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
         msg["To"] = ", ".join(recipients)
         msg.set_content(body)
