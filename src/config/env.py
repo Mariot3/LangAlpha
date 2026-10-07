@@ -93,7 +93,11 @@ AUTOMATION_WEBHOOK_SECRET: str = os.getenv("AUTOMATION_WEBHOOK_SECRET", "")
 # Automation email delivery (SMTP). Gmail needs an app password, not the account password.
 SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
 _smtp_port = os.getenv("SMTP_PORT", "587")
-SMTP_PORT: int = int(_smtp_port) if _smtp_port.isdigit() else 587
+if not _smtp_port.strip().isdigit() and _smtp_port != "587":
+    import logging
+
+    logging.getLogger(__name__).warning(f"Ignoring malformed SMTP_PORT={_smtp_port!r}; using 587")
+SMTP_PORT: int = int(_smtp_port.strip()) if _smtp_port.strip().isdigit() else 587
 SMTP_USER: str = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM: str = os.getenv("SMTP_FROM", "")

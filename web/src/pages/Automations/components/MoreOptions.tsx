@@ -1,3 +1,4 @@
+import { HOST_MODE } from '@/config/hostMode';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
@@ -142,7 +143,8 @@ export default function MoreOptions({ form, patch, open, onOpenChange }: MoreOpt
             onChange={(choice) => patch('delivery_methods', choice === 'none' ? [] : [choice])}
             options={[
               { value: 'none', label: t('automation.deliverNone') },
-              { value: 'email', label: deliveryMethodName('email', t) },
+              // Email goes to one operator-configured list, so the backend refuses it outside OSS.
+              ...(HOST_MODE === 'oss' ? [{ value: 'email' as const, label: deliveryMethodName('email', t) }] : []),
               { value: 'slack', label: deliveryMethodName('slack', t) },
               { value: 'discord', label: deliveryMethodName('discord', t) },
             ]}

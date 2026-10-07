@@ -280,6 +280,7 @@ class InsightService:
         self._pre_market = datetime.strptime("04:00", "%H:%M").time()
         self._post_market = datetime.strptime("20:30", "%H:%M").time()
         self._email_types: set[str] = {"pre_market", "post_market"}
+        self._email_tasks: set[asyncio.Task] = set()  # strong refs until done
         self._update_start = datetime.strptime("10:00", "%H:%M").time()
         self._update_end = datetime.strptime("20:00", "%H:%M").time()
         self._update_interval_min = 60
@@ -755,8 +756,14 @@ class InsightService:
             if job_type in self._email_types:
                 from src.server.services.email_delivery import deliver_insight_email
 
-                # Never raises; a mail failure must not fail a stored brief.
-                await deliver_insight_email(job_type, parsed, self._tz.key)
+                # Detached: SMTP can take ~30s per step, which must not count against
+                # the generation timeout or turn a stored brief into a failure.
+                task = asyncio.create_task(
+                    deliver_insight_email(job_type, parsed, self._tz.key),
+                    name=f"insight_email_{insight_id}",
+                )
+                self._email_tasks.add(task)
+                task.add_done_callback(self._email_tasks.discard)
 
         except (asyncio.TimeoutError, asyncio.CancelledError):
             elapsed_ms = int((time.monotonic() - start_time) * 1000)

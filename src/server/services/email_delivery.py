@@ -11,6 +11,7 @@ import html
 import logging
 import re
 import smtplib
+import ssl
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any, Dict
@@ -187,18 +188,21 @@ def _sent_at(timezone_name: str | None) -> str:
     return datetime.now(tz).strftime("%a %d %b %Y, %I:%M %p %Z")
 
 
-def _send(msg: EmailMessage) -> None:
+def _send(msg: EmailMessage) -> dict:
+    """Send over verified TLS; returns the recipients the server refused."""
     from src.config import settings
 
+    # Explicit context: the credentials must only ever go to a verified server.
+    ctx = ssl.create_default_context()
     if settings.SMTP_PORT == 465:  # implicit TLS; 587 upgrades with STARTTLS
-        smtp_cm = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+        smtp_cm = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30, context=ctx)
     else:
         smtp_cm = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
     with smtp_cm as smtp:
         if settings.SMTP_PORT != 465:
-            smtp.starttls()
+            smtp.starttls(context=ctx)
         smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        smtp.send_message(msg)
+        return smtp.send_message(msg)
 
 
 async def send_report_email(
@@ -230,9 +234,14 @@ async def send_report_email(
         msg.add_alternative(
             wrap_email(markdown_to_html(body_md), source, kind, sent_at), subtype="html"
         )
-        await asyncio.to_thread(_send, msg)
-        result["success"] = True
-        logger.info(f"[EMAIL] sent '{subject}' to {len(recipients)} recipient(s)")
+        refused = await asyncio.to_thread(_send, msg)
+        # send_message accepts the mail if any recipient is accepted; surface the rest.
+        result["success"] = len(refused) < len(recipients)
+        if refused:
+            result["error"] = f"refused by server: {', '.join(refused)}"
+            logger.warning(f"[EMAIL] '{subject}' refused for {len(refused)} recipient(s)")
+        else:
+            logger.info(f"[EMAIL] sent '{subject}' to {len(recipients)} recipient(s)")
     except Exception as e:
         logger.error(f"[EMAIL] delivery failed: {e}")
         result["error"] = str(e)
@@ -269,16 +278,21 @@ async def deliver_insight_email(
 ) -> Dict[str, Any]:
     """Email a scheduled market brief from its structured output. Never raises."""
     label = _BRIEF_LABELS.get(job_type, "Market brief")
-    lines = [f"# {label}: {parsed['headline']}", "", parsed["summary"], ""]
-    if parsed.get("topics"):
-        lines += ["**Topics:** " + " · ".join(t["text"] for t in parsed["topics"]), ""]
-    if parsed.get("news_items"):
-        lines += ["## Top stories", ""]
-        for item in parsed["news_items"]:
-            lines += [f"### {item['title']}", "", item["body"]]
-            if item.get("url"):
-                lines += ["", f"[Source]({item['url']})"]
-            lines.append("")
+    try:
+        headline = parsed["headline"]
+        lines = [f"# {label}: {headline}", "", parsed.get("summary") or "", ""]
+        if parsed.get("topics"):
+            lines += ["**Topics:** " + " · ".join(t["text"] for t in parsed["topics"]), ""]
+        if parsed.get("news_items"):
+            lines += ["## Top stories", ""]
+            for item in parsed["news_items"]:
+                lines += [f"### {item['title']}", "", item.get("body") or ""]
+                if item.get("url"):
+                    lines += ["", f"[Source]({item['url']})"]
+                lines.append("")
+    except Exception as e:
+        logger.error(f"[EMAIL] could not assemble {job_type} brief: {e}")
+        return {"method": "email", "success": False, "error": f"malformed brief: {e}"}
     return await send_report_email(
-        f"{label}: {parsed['headline']}", "\n".join(lines), label, "market brief", timezone_name
+        f"{label}: {headline}", "\n".join(lines), label, "market brief", timezone_name
     )

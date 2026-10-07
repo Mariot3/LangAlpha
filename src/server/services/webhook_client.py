@@ -83,6 +83,8 @@ class WebhookClient:
 
             # Email goes out in-process over SMTP; every other method rides the webhook.
             wants_email = "email" in methods and event == "automation.completed"
+            if "email" in methods and not wants_email:
+                logger.debug(f"[WEBHOOK] email is sent on automation.completed only; skipping for {event}")
             methods = [m for m in methods if m != "email"]
 
             webhook_url = settings.AUTOMATION_WEBHOOK_URL
