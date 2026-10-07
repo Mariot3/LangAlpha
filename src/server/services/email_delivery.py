@@ -11,8 +11,10 @@ import html
 import logging
 import re
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any, Dict
+from zoneinfo import ZoneInfo
 
 from psycopg.rows import dict_row
 
@@ -56,12 +58,22 @@ async def _final_report_text(thread_id: str, run_id: str | None = None) -> str:
     return (row or {}).get("content") or ""
 
 
+# Inline styles throughout: mail clients (Outlook especially) drop or rewrite <style> blocks.
+_INK, _MUTED, _RULE, _LINK = "#1f2328", "#6b7280", "#e5e7eb", "#1a56db"
+_FONT = "-apple-system,'Segoe UI',Helvetica,Arial,sans-serif"
+_TD = f"border:1px solid {_RULE};padding:7px 10px;text-align:left;vertical-align:top"
+
+
 def _inline(text: str) -> str:
     text = html.escape(text)
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"`([^`]+)`", r'<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px">\1</code>', text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"(?<![*\w])\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"<em>\1</em>", text)
-    return re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', text)
+    return re.sub(
+        r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+        rf'<a href="\2" style="color:{_LINK}">\1</a>',
+        text,
+    )
 
 
 def _table(lines: list[str]) -> str:
@@ -69,62 +81,110 @@ def _table(lines: list[str]) -> str:
         return [c.strip() for c in line.strip().strip("|").split("|")]
 
     head, *body = [cells(ln) for ln in lines if not re.fullmatch(r"[\s|:-]+", ln)]
-    th = "".join(f"<th>{_inline(c)}</th>" for c in head)
+    th = "".join(f'<th style="{_TD};background:#f3f4f6">{_inline(c)}</th>' for c in head)
     rows = "".join(
-        "<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in r) + "</tr>" for r in body
+        "<tr>"
+        + "".join(
+            f'<td style="{_TD}{";background:#fafafa" if n % 2 else ""}">{_inline(c)}</td>'
+            for c in r
+        )
+        + "</tr>"
+        for n, r in enumerate(body)
     )
-    return f"<table><thead><tr>{th}</tr></thead><tbody>{rows}</tbody></table>"
+    return (
+        f'<table style="border-collapse:collapse;width:100%;margin:4px 0 16px;font-size:14px">'
+        f"<thead><tr>{th}</tr></thead><tbody>{rows}</tbody></table>"
+    )
 
 
 def markdown_to_html(md: str) -> str:
     """Small markdown subset (headings, lists, tables, emphasis, links, rules).
 
     Hand-rolled rather than adding a dependency: a new package would bust the
-    backend image's dependency layer, and reports only use this subset.
+    backend image's dependency layer, and reports only use this subset. The
+    first heading is the report title; later h1-h3 are section headings.
     """
     out: list[str] = []
     lines = md.splitlines()
+    seen_title = False
     i = 0
     while i < len(lines):
         line = lines[i]
         if not line.strip():
             i += 1
         elif m := re.match(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$", line):
-            level = min(len(m.group(1)) + 1, 4)
-            out.append(f"<h{level}>{_inline(m.group(2))}</h{level}>")
+            if not seen_title:
+                out.append(
+                    f'<h1 style="font-size:22px;line-height:1.3;margin:0 0 16px;color:{_INK}">'
+                    f"{_inline(m.group(2))}</h1>"
+                )
+                seen_title = True
+            elif len(m.group(1)) <= 3:
+                out.append(
+                    f'<h2 style="font-size:17px;margin:26px 0 10px;padding-bottom:6px;'
+                    f'border-bottom:1px solid {_RULE};color:{_INK}">{_inline(m.group(2))}</h2>'
+                )
+            else:
+                out.append(
+                    f'<h3 style="font-size:15px;margin:18px 0 6px;color:{_INK}">{_inline(m.group(2))}</h3>'
+                )
             i += 1
         elif re.fullmatch(r"\s*([-*_])(\s*\1){2,}\s*", line):
-            out.append("<hr>")
             i += 1
+            nxt = next((ln for ln in lines[i:] if ln.strip()), "")
+            # A rule right above a heading would stack with the heading's own underline.
+            if not re.match(r"^\s{0,3}#{1,6}\s", nxt):
+                out.append(f'<hr style="border:0;border-top:1px solid {_RULE};margin:20px 0">')
         elif "|" in line and i + 1 < len(lines) and re.fullmatch(r"[\s|:-]+", lines[i + 1]) and "-" in lines[i + 1]:
             j = i
             while j < len(lines) and "|" in lines[j]:
                 j += 1
             out.append(_table(lines[i:j]))
             i = j
-        elif re.match(r"^\s*([-*•]|\d+[.)])\s+", line):
+        elif re.match(r"^\s*([-*\u2022]|\d+[.)])\s+", line):
             ordered = bool(re.match(r"^\s*\d", line))
             items = []
-            while i < len(lines) and (m := re.match(r"^\s*(?:[-*•]|\d+[.)])\s+(.*)", lines[i])):
-                items.append(f"<li>{_inline(m.group(1))}</li>")
+            while i < len(lines) and (m := re.match(r"^\s*(?:[-*\u2022]|\d+[.)])\s+(.*)", lines[i])):
+                items.append(f'<li style="margin:0 0 5px">{_inline(m.group(1))}</li>')
                 i += 1
             tag = "ol" if ordered else "ul"
-            out.append(f"<{tag}>{''.join(items)}</{tag}>")
+            out.append(f'<{tag} style="margin:0 0 14px;padding-left:22px">{"".join(items)}</{tag}>')
         else:
             para = []
-            while i < len(lines) and lines[i].strip() and not re.match(r"^\s{0,3}#{1,6}\s|^\s*([-*•]|\d+[.)])\s+", lines[i]):
+            while i < len(lines) and lines[i].strip() and not re.match(
+                r"^\s{0,3}#{1,6}\s|^\s*([-*\u2022]|\d+[.)])\s+", lines[i]
+            ):
                 para.append(_inline(lines[i]))
                 i += 1
-            out.append(f"<p>{'<br>'.join(para)}</p>")
-    style = (
-        "font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;"
-        "line-height:1.5;color:#1a1a1a;max-width:720px"
+            out.append(f'<p style="margin:0 0 14px">{"<br>".join(para)}</p>')
+    return "".join(out)
+
+
+def wrap_email(body_html: str, automation_name: str, sent_at: str) -> str:
+    """Brand header and source footer around the rendered report."""
+    name = html.escape(automation_name)
+    return (
+        f'<html><body style="margin:0;padding:0;background:#ffffff">'
+        f'<div style="font-family:{_FONT};font-size:15px;line-height:1.6;color:{_INK};'
+        f'max-width:680px;padding:20px 16px">'
+        f'<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:{_MUTED};'
+        f'padding-bottom:10px;margin-bottom:18px;border-bottom:1px solid {_RULE}">'
+        f"LangAlpha &middot; {name}</div>"
+        f"{body_html}"
+        f'<div style="margin-top:28px;padding-top:12px;border-top:1px solid {_RULE};'
+        f'font-size:12px;color:{_MUTED}">Sent by the LangAlpha automation '
+        f"&ldquo;{name}&rdquo; &middot; {html.escape(sent_at)}. AI-generated research; "
+        f"not investment advice.</div>"
+        f"</div></body></html>"
     )
-    css = (
-        "<style>table{border-collapse:collapse}th,td{border:1px solid #ddd;padding:4px 8px;"
-        "text-align:left}th{background:#f5f5f5}code{background:#f2f2f2;padding:1px 4px}</style>"
-    )
-    return f'<html><body style="{style}">{css}{"".join(out)}</body></html>'
+
+
+def _sent_at(automation: Dict[str, Any]) -> str:
+    try:
+        tz = ZoneInfo(automation.get("timezone") or "UTC")
+    except Exception:
+        tz = timezone.utc
+    return datetime.now(tz).strftime("%a %d %b %Y, %I:%M %p %Z")
 
 
 def _send(msg: EmailMessage) -> None:
@@ -172,8 +232,10 @@ async def deliver_automation_email(
         msg["Subject"] = f"{SUBJECT_PREFIX} {subject}"
         msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
         msg["To"] = ", ".join(recipients)
-        msg.set_content(body)
-        msg.add_alternative(markdown_to_html(body), subtype="html")
+        name = automation.get("name") or "Automation"
+        sent_at = _sent_at(automation)
+        msg.set_content(f"{body}\n\n--\nSent by the LangAlpha automation \"{name}\" · {sent_at}")
+        msg.add_alternative(wrap_email(markdown_to_html(body), name, sent_at), subtype="html")
         await asyncio.to_thread(_send, msg)
         result["success"] = True
         logger.info(f"[EMAIL] sent '{subject}' to {len(recipients)} recipient(s)")

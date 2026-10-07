@@ -7,10 +7,21 @@ from src.server.services.email_delivery import markdown_to_html
 
 
 def test_renders_headings_tables_and_lists():
-    html = markdown_to_html("## Title\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n- one\n- two\n")
-    assert "<h3>Title</h3>" in html
-    assert "<th>A</th>" in html and "<td>2</td>" in html
-    assert "<ul><li>one</li><li>two</li></ul>" in html
+    html = markdown_to_html("## Title\n\n### Section\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n- one\n- two\n")
+    assert "<h1 " in html and ">Title</h1>" in html  # first heading is the title
+    assert "<h2 " in html and ">Section</h2>" in html  # h1-h3 after the title are sections
+    assert ">A</th>" in html and ">2</td>" in html
+    assert html.count("<li ") == 2
+
+
+def test_rule_above_a_heading_is_dropped():
+    html = markdown_to_html("# T\n\npara\n\n---\n\n### Next\n\nmore\n\n---\n\nend\n")
+    assert html.count("<hr") == 1  # only the one not followed by a heading
+
+
+def test_wrap_names_the_source_automation():
+    html = email_delivery.wrap_email("<p>x</p>", "MSFT daily summary", "Wed 07 Oct 2026")
+    assert "LangAlpha" in html and "MSFT daily summary" in html
 
 
 def test_link_cannot_break_out_of_href():
