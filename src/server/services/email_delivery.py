@@ -168,12 +168,16 @@ def wrap_email(body_html: str, source: str, kind: str, sent_at: str) -> str:
     )
 
 
-def _sent_at(timezone_name: str | None) -> str:
+def _now(timezone_name: str | None) -> datetime:
     try:
         tz = ZoneInfo(timezone_name or "UTC")
     except Exception:
         tz = timezone.utc
-    return datetime.now(tz).strftime("%a %d %b %Y, %I:%M %p %Z")
+    return datetime.now(tz)
+
+
+def _sent_at(timezone_name: str | None) -> str:
+    return _now(timezone_name).strftime("%a %d %b %Y, %I:%M %p %Z")
 
 
 def _send(msg: EmailMessage) -> dict:
@@ -249,9 +253,10 @@ async def deliver_automation_email(
     if not body.strip():
         return {"method": "smtp", "success": False, "error": "run produced no report text"}
     heading = _HEADING_RE.search(body)
-    return await send_report_email(
-        heading.group(1) if heading else name, body, name, "automation", automation.get("timezone")
-    )
+    tz = automation.get("timezone")
+    # Without a title of its own the report is dated, so a run's mail is told apart by day.
+    subject = heading.group(1) if heading else f"{name} — {_now(tz).strftime('%a %d %b')}"
+    return await send_report_email(subject, body, name, "automation", tz)
 
 
 _BRIEF_LABELS = {

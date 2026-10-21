@@ -68,3 +68,40 @@ async def test_brief_email_is_assembled_from_structured_output(monkeypatch):
 def test_separator_only_table_does_not_lose_the_report():
     html = markdown_to_html("|\n---\n\nstill here")
     assert "still here" in html
+
+
+@pytest.mark.asyncio
+async def test_untitled_report_is_dated_in_the_subject(monkeypatch):
+    sent = {}
+
+    async def fake_text(thread_id, run_id):
+        return "No heading here, just text."
+
+    async def fake_send(subject, body_md, source, kind, tz):
+        sent["subject"] = subject
+        return {"method": "smtp", "success": True}
+
+    monkeypatch.setattr(email_delivery, "_final_report_text", fake_text)
+    monkeypatch.setattr(email_delivery, "send_report_email", fake_send)
+    await email_delivery.deliver_automation_email(
+        {"name": "MSFT daily summary", "timezone": "Australia/Sydney"}, "t", "r"
+    )
+    assert sent["subject"].startswith("MSFT daily summary — ")
+    assert len(sent["subject"]) > len("MSFT daily summary — ")
+
+
+@pytest.mark.asyncio
+async def test_a_report_title_is_kept_as_the_subject(monkeypatch):
+    sent = {}
+
+    async def fake_text(thread_id, run_id):
+        return "## MSFT Trading Day Update — Tuesday, October 6\n\nbody"
+
+    async def fake_send(subject, body_md, source, kind, tz):
+        sent["subject"] = subject
+        return {"method": "smtp", "success": True}
+
+    monkeypatch.setattr(email_delivery, "_final_report_text", fake_text)
+    monkeypatch.setattr(email_delivery, "send_report_email", fake_send)
+    await email_delivery.deliver_automation_email({"name": "x"}, "t", "r")
+    assert sent["subject"] == "MSFT Trading Day Update — Tuesday, October 6"
