@@ -12,6 +12,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Above the worst case of four sequential 10s SMTP socket operations (connect,
+# STARTTLS, login, send), so "timed out" is not reported for a mail that still
+# goes out, which a re-run would then duplicate.
+EMAIL_DEADLINE_SECONDS = 45
+
 
 class WebhookClient:
     """Fires webhook events to configured URLs with optional HMAC signing."""
@@ -52,11 +57,16 @@ class WebhookClient:
 
         try:
             return await asyncio.wait_for(
-                deliver_automation_email(automation, thread_id, run_id), timeout=25
+                deliver_automation_email(automation, thread_id, run_id),
+                timeout=EMAIL_DEADLINE_SECONDS,
             )
         except asyncio.TimeoutError:
-            logger.error("[EMAIL] delivery exceeded 25s; abandoned")
-            return {"method": "smtp", "success": False, "error": "timed out after 25s"}
+            logger.error(f"[EMAIL] delivery exceeded {EMAIL_DEADLINE_SECONDS}s; abandoned")
+            return {
+                "method": "smtp",
+                "success": False,
+                "error": f"timed out after {EMAIL_DEADLINE_SECONDS}s",
+            }
 
     async def fire_event(
         self,

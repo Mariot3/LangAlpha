@@ -78,7 +78,7 @@ function WatchlistWidget({ instance }: WidgetRenderProps<WatchlistConfig>) {
   // Register snapshot exporters: full table + per-row.
   useWidgetContextExport(instance.id, {
     full: () => {
-      const rows = watchlist.rows.map(watchlistQuoteRow);
+      const rows = sortedRows.map(watchlistQuoteRow);
       const body = serializeQuoteRowsToMarkdown(rows);
       const text = wrapWidgetContext('watchlist.list', { count: rows.length }, body);
       return {

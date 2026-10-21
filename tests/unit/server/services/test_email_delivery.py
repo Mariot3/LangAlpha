@@ -105,3 +105,10 @@ async def test_a_report_title_is_kept_as_the_subject(monkeypatch):
     monkeypatch.setattr(email_delivery, "send_report_email", fake_send)
     await email_delivery.deliver_automation_email({"name": "x"}, "t", "r")
     assert sent["subject"] == "MSFT Trading Day Update — Tuesday, October 6"
+
+
+def test_fenced_code_and_blockquotes_keep_their_structure():
+    html = markdown_to_html("intro\n\n```\na < b\n  indented\n```\n\n> quoted line\n> second\n\nafter")
+    assert "<pre " in html and "a &lt; b\n  indented" in html
+    assert "<blockquote " in html and "quoted line<br>second" in html
+    assert "after" in html

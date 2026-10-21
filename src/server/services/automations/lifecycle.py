@@ -207,6 +207,12 @@ async def check_delivery(
     overflow = delivery_overflow(list(methods))
     if overflow:
         raise DeliveryRefused(overflow)
+    # One operator-configured recipient list, so only a single-user deployment can
+    # offer it; refused here rather than as a failed delivery after the run.
+    if "smtp" in methods and "smtp" not in stored and settings.HOST_MODE != "oss":
+        raise DeliveryRefused(
+            [("smtp", "email delivery is only available on a single-user (HOST_MODE=oss) deployment")]
+        )
     fresh = [m for m in dict.fromkeys(methods) if checks_entry(m) and m not in stored]
     if not fresh:
         return list(dict.fromkeys(methods))

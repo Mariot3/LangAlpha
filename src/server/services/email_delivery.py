@@ -90,8 +90,7 @@ def markdown_to_html(md: str) -> str:
     Hand-rolled rather than adding a dependency: a new package would bust the
     backend image's dependency layer, and reports only use this subset. The
     first heading is the report title; later h1-h3 are section headings.
-    Code fences, blockquotes and nested lists are not handled and render as plain
-    paragraphs.
+    Nested lists are not handled and render flat.
     """
     out: list[str] = []
     lines = md.splitlines()
@@ -101,6 +100,27 @@ def markdown_to_html(md: str) -> str:
         line = lines[i]
         if not line.strip():
             i += 1
+        elif m := re.match(r"^\s*(```|~~~)", line):
+            fence = m.group(1)
+            i += 1
+            code = []
+            while i < len(lines) and not lines[i].lstrip().startswith(fence):
+                code.append(lines[i])
+                i += 1
+            i += 1  # the closing fence, if there is one
+            out.append(
+                f'<pre style="background:#f3f4f6;padding:10px 12px;border-radius:4px;overflow-x:auto;'
+                f'font-size:13px;line-height:1.45;margin:0 0 14px"><code>{html.escape(chr(10).join(code))}</code></pre>'
+            )
+        elif re.match(r"^\s{0,3}>", line):
+            quoted = []
+            while i < len(lines) and re.match(r"^\s{0,3}>", lines[i]):
+                quoted.append(_inline(re.sub(r"^\s{0,3}>\s?", "", lines[i])))
+                i += 1
+            out.append(
+                f'<blockquote style="margin:0 0 14px;padding:2px 0 2px 12px;'
+                f'border-left:3px solid {_RULE};color:{_MUTED}">{"<br>".join(quoted)}</blockquote>'
+            )
         elif m := re.match(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$", line):
             if not seen_title:
                 out.append(
@@ -141,7 +161,7 @@ def markdown_to_html(md: str) -> str:
         else:
             para = []
             while i < len(lines) and lines[i].strip() and not re.match(
-                r"^\s{0,3}#{1,6}\s|^\s*([-*\u2022]|\d+[.)])\s+", lines[i]
+                r"^\s{0,3}#{1,6}\s|^\s*([-*\u2022]|\d+[.)])\s+|^\s*(```|~~~)|^\s{0,3}>", lines[i]
             ):
                 para.append(_inline(lines[i]))
                 i += 1
