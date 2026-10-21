@@ -17,10 +17,6 @@ from email.message import EmailMessage
 from typing import Any, Dict
 from zoneinfo import ZoneInfo
 
-from psycopg.rows import dict_row
-
-from src.server.database import pool
-
 logger = logging.getLogger(__name__)
 
 # Per socket operation (connect, STARTTLS, login, send). Short because delivery is
@@ -33,34 +29,17 @@ SUBJECT_PREFIX = "[LangAlpha]"
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,3}\s+(.+?)\s*#*\s*$", re.M)
 
 
-async def _final_report_text(thread_id: str, run_id: str | None = None) -> str:
-    """Last non-empty main-agent text message of the run (default: the thread's latest).
+async def _final_report_text(thread_id: str, run_id: str | None) -> str:
+    """The last text the run's agent wrote: the report, not the narration before its tool calls.
 
-    Earlier text chunks in a run are progress narration before tool calls;
-    only the last one is the report.
+    Read from the checkpoint by run. Turns no longer keep their stream in the
+    database, so this is the one place the finished text lives.
     """
-    async with pool.get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                """
-                SELECT ev->'data'->>'content' AS content
-                FROM (
-                    SELECT sse_events FROM conversation_responses
-                    WHERE conversation_thread_id = %s AND sse_events IS NOT NULL
-                      AND (%s::uuid IS NULL OR conversation_response_id = %s::uuid)
-                    ORDER BY run_seq DESC LIMIT 1
-                ) r, jsonb_array_elements(r.sse_events) WITH ORDINALITY AS t(ev, n)
-                WHERE ev->>'event' = 'message_chunk'
-                  AND ev->'data'->>'content_type' = 'text'
-                  AND ev->'data'->>'role' = 'assistant'
-                  AND COALESCE(ev->'data'->>'content', '') <> ''
-                  AND ev->'data'->>'agent' LIKE 'model:%%'
-                ORDER BY n DESC LIMIT 1
-                """,
-                (thread_id, run_id, run_id),
-            )
-            row = await cur.fetchone()
-    return (row or {}).get("content") or ""
+    if not run_id:
+        return ""
+    from src.server.services.automation_excerpt import read_run_answer
+
+    return (await read_run_answer(thread_id, run_id)).text or ""
 
 
 # Inline styles throughout: mail clients (Outlook especially) drop or rewrite <style> blocks.
